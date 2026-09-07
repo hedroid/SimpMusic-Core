@@ -912,7 +912,7 @@ internal class DataStoreManagerImpl(
 
     override val themeMode =
         settingsDataStore.data.map { preferences ->
-            preferences[THEME_MODE] ?: DataStoreManager.THEME_MODE_DARK
+            preferences[THEME_MODE] ?: DataStoreManager.THEME_MODE_SYSTEM
         }
 
     override suspend fun setThemeMode(mode: String) {
