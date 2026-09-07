@@ -368,6 +368,17 @@ object LIMIT_CACHE_SIZE {
     }
 }
 
+// A SponsorBlock segment shorter than this is not skipped. Two reasons, and the second is the
+// load-bearing one: the interruption of a seek costs more than the segment itself, and a segment
+// shorter than the player's own seek error skips FOREVER - the seek lands short, back inside the
+// segment, which immediately re-triggers it. Observed on a real 0.37s segment.
+const val SPONSOR_BLOCK_MIN_SEGMENT_SECONDS = 1.0
+
+// Land past the end of a segment rather than exactly on it, for the same reason: a keyframe seek
+// may land short, and `current in firstPart..secondPart` is a closed range, so landing exactly on
+// the end still counts as being inside it.
+const val SPONSOR_BLOCK_SKIP_MARGIN_MS = 500L
+
 sealed class SponsorBlockType(
     val value: String,
 ) {
