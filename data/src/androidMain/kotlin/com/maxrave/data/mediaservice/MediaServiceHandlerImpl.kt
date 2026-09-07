@@ -18,6 +18,8 @@ import com.maxrave.common.DESC
 import com.maxrave.common.LOCAL_PLAYLIST_ID
 import com.maxrave.common.LOCAL_PLAYLIST_ID_SAVED_QUEUE
 import com.maxrave.common.MERGING_DATA_TYPE
+import com.maxrave.common.SPONSOR_BLOCK_MIN_SEGMENT_SECONDS
+import com.maxrave.common.SPONSOR_BLOCK_SKIP_MARGIN_MS
 import com.maxrave.common.TITLE
 import com.maxrave.data.db.Converters
 import com.maxrave.data.lastfm.LastfmScrobbler
@@ -423,13 +425,18 @@ internal class MediaServiceHandlerImpl(
                                     if (skipSegments != null) {
                                         for (skip in skipSegments) {
                                             if (listCategory.contains(skip.category)) {
+                                                if (skip.segment[1] - skip.segment[0] < SPONSOR_BLOCK_MIN_SEGMENT_SECONDS) {
+                                                    continue
+                                                }
                                                 val firstPart = ((skip.segment[0] / skip.videoDuration) * 100).toFloat()
                                                 val secondPart =
                                                     ((skip.segment[1] / skip.videoDuration) * 100).toFloat()
                                                 if (current in firstPart..secondPart) {
                                                     Logger.w(TAG, "Seek to $secondPart")
                                                     Logger.d(TAG, "Seek to Cr: $current, First: $firstPart, Second: $secondPart")
-                                                    skipSegment((secondPart * player.duration).toLong() / 100)
+                                                    skipSegment(
+                                                        (secondPart * player.duration).toLong() / 100 + SPONSOR_BLOCK_SKIP_MARGIN_MS,
+                                                    )
                                                 }
                                             }
                                         }
