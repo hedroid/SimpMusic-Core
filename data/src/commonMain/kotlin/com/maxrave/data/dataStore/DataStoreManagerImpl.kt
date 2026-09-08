@@ -159,7 +159,7 @@ internal class DataStoreManagerImpl(
 
     override val language: Flow<String> =
         settingsDataStore.data.map { preferences ->
-            preferences[stringPreferencesKey(SELECTED_LANGUAGE)] ?: SUPPORTED_LANGUAGE.codes.first()
+            preferences[stringPreferencesKey(SELECTED_LANGUAGE)] ?: "" // empty = follow the system locale
         }
 
     override fun getString(key: String): Flow<String?> =
