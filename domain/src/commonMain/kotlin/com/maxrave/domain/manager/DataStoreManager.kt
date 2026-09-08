@@ -127,7 +127,15 @@ interface DataStoreManager {
 
     suspend fun setLyricsProvider(provider: String)
 
+    /**
+     * Target language for lyric translation, always resolved to a concrete language code:
+     * the user's stored choice, or the app language's code when nothing (or an empty string)
+     * is stored. Consumers should never have to deal with "".
+     */
     val translationLanguage: Flow<String>
+
+    /** The stored translation-language choice verbatim — "" means "follow the app language". */
+    val rawTranslationLanguage: Flow<String>
 
     suspend fun setTranslationLanguage(language: String)
 
@@ -455,7 +463,14 @@ interface DataStoreManager {
 
     suspend fun setAutoDownloadLikedSongs(enabled: Boolean)
 
+    /**
+     * Preferred translation language for YouTube subtitles, always resolved to a concrete
+     * language code (mirrors [translationLanguage]).
+     */
     val youtubeSubtitleLanguage: Flow<String>
+
+    /** The stored YouTube-subtitle-language choice verbatim — "" means "follow the app language". */
+    val rawYoutubeSubtitleLanguage: Flow<String>
 
     suspend fun setYoutubeSubtitleLanguage(language: String)
 
