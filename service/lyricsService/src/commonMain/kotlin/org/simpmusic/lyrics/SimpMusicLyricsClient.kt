@@ -50,10 +50,7 @@ class SimpMusicLyricsClient {
         language: String,
     ): Result<TranslatedLyricsResponse> =
         runCatching {
-            if (language.length != 2) {
-                throw IllegalArgumentException("Language code must be a 2-letter code")
-            }
-            lyricsService.findTranslatedLyrics(videoId, language).bodyOrThrow<TranslatedLyricsResponse>()
+            lyricsService.findTranslatedLyrics(videoId, language.toServerLanguageCode()).bodyOrThrow<TranslatedLyricsResponse>()
         }
 
     suspend fun insertLyrics(lyricsBody: LyricsBody): Result<LyricsResponse> =
@@ -74,9 +71,6 @@ class SimpMusicLyricsClient {
 
     suspend fun insertTranslatedLyrics(translatedLyricsBody: TranslatedLyricsBody): Result<TranslatedLyricsResponse> =
         runCatching {
-            if (translatedLyricsBody.language.length != 2) {
-                throw IllegalArgumentException("Language code must be a 2-letter code")
-            }
             if (isInsertingTranslatedLyrics && insertingTranslatedLyrics.first == translatedLyricsBody.videoId) {
                 throw IllegalStateException("Already inserting translated lyrics, please wait until the current operation is complete.")
             }
@@ -85,8 +79,18 @@ class SimpMusicLyricsClient {
                 hmacService.getMacTimestampPair(
                     HmacUri.TRANSLATED_HMAC_URI,
                 )
-            lyricsService.insertTranslatedLyrics(translatedLyricsBody, hmacTimestamp).bodyOrThrow<TranslatedLyricsResponse>()
+            lyricsService.insertTranslatedLyrics(
+                translatedLyricsBody.copy(language = translatedLyricsBody.language.toServerLanguageCode()),
+                hmacTimestamp,
+            ).bodyOrThrow<TranslatedLyricsResponse>()
         }
+
+    /**
+     * The lyrics server only accepts bare 2-letter codes. Richer BCP-47 codes ("zh-Hant")
+     * are meaningful for YouTube's tlang and the AI prompt, so collapse to the primary
+     * subtag only at this boundary — everything upstream keeps the full code.
+     */
+    private fun String.toServerLanguageCode(): String = substringBefore('-').lowercase()
 
     suspend fun voteLyrics(
         lyricsId: String,
