@@ -44,6 +44,26 @@ class AiService(
                 OpenAI(token = apiKey)
             }
 
+            AIHost.DEEPSEEK -> {
+                OpenAI(
+                    config =
+                        OpenAIConfig(
+                            token = apiKey,
+                            host = OpenAIHost(baseUrl = AIHost.DEEPSEEK_BASE_URL),
+                        ),
+                )
+            }
+
+            AIHost.ZHIPU -> {
+                OpenAI(
+                    config =
+                        OpenAIConfig(
+                            token = apiKey,
+                            host = OpenAIHost(baseUrl = AIHost.ZHIPU_BASE_URL),
+                        ),
+                )
+            }
+
             AIHost.CUSTOM_OPENAI -> {
                 val baseUrl = customBaseUrl ?: "https://api.openai.com/v1/"
                 val config =
@@ -61,13 +81,12 @@ class AiService(
         if (!customModelId.isNullOrEmpty()) {
             ModelId(customModelId)
         } else {
-            when (aiHost) {
-                AIHost.GEMINI -> ModelId("gemini-2.0-flash")
-                AIHost.OPENAI -> ModelId("gpt-4o")
-                AIHost.CUSTOM_OPENAI -> ModelId("gpt-4o")
-            }
+            ModelId(aiHost.defaultModelId)
         }
     }
+
+    /** Lists model IDs exposed by the current host's OpenAI-compatible `GET /models` endpoint. */
+    suspend fun listModels(): List<String> = openAI.models().map { it.id.id }.sorted()
 
     suspend fun translateLyrics(
         inputLyrics: Lyrics,
@@ -199,8 +218,22 @@ data class TranslationResponse(
     val translations: Map<String, String> = emptyMap(),
 )
 
-enum class AIHost {
-    GEMINI,
-    OPENAI,
-    CUSTOM_OPENAI,
+enum class AIHost(
+    /** Fallback model when the user has not set a custom model ID. */
+    val defaultModelId: String,
+) {
+    GEMINI("gemini-2.5-flash-lite"),
+    OPENAI("gpt-5.6-luna"),
+    DEEPSEEK("deepseek-v4-flash"),
+    ZHIPU("glm-4.7-flash"),
+    CUSTOM_OPENAI("gpt-5.6-luna"),
+    ;
+
+    companion object {
+        /** OpenAI-compatible endpoint of DeepSeek. */
+        const val DEEPSEEK_BASE_URL: String = "https://api.deepseek.com/v1/"
+
+        /** OpenAI-compatible endpoint of Zhipu (智谱) BigModel. */
+        const val ZHIPU_BASE_URL: String = "https://open.bigmodel.cn/api/paas/v4/"
+    }
 }

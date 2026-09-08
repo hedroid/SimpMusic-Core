@@ -31,4 +31,8 @@ interface CommonRepository {
     suspend fun writeTextToFile(text: String, filePath: String): Boolean
 
     suspend fun getCookiesFromInternalDatabase(url: String, packageName: String): CookieItem
+
+    // AI
+    /** Model IDs available on the currently configured AI provider (OpenAI-compatible `GET /models`). */
+    suspend fun listAiModels(): Result<List<String>>
 }

@@ -618,6 +618,8 @@ interface DataStoreManager {
         // AI
         const val AI_PROVIDER_GEMINI = "gemini"
         const val AI_PROVIDER_OPENAI = "openai"
+        const val AI_PROVIDER_DEEPSEEK = "deepseek"
+        const val AI_PROVIDER_ZHIPU = "zhipu"
         const val AI_PROVIDER_CUSTOM_OPENAI = "custom_openai"
 
         const val LOCAL_PLAYLIST_FILTER_OLDER_FIRST = "older_first"
