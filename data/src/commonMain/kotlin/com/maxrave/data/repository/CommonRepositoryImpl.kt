@@ -199,6 +199,8 @@ internal class CommonRepositoryImpl(
                             when (provider) {
                                 DataStoreManager.AI_PROVIDER_GEMINI -> AIHost.GEMINI
                                 DataStoreManager.AI_PROVIDER_OPENAI -> AIHost.OPENAI
+                                DataStoreManager.AI_PROVIDER_DEEPSEEK -> AIHost.DEEPSEEK
+                                DataStoreManager.AI_PROVIDER_ZHIPU -> AIHost.ZHIPU
                                 DataStoreManager.AI_PROVIDER_CUSTOM_OPENAI -> AIHost.CUSTOM_OPENAI
                                 else -> AIHost.GEMINI // Default to Gemini if not set
                             }
@@ -313,6 +315,8 @@ internal class CommonRepositoryImpl(
         withContext(Dispatchers.IO) {
             localDataSource.deleteNotification(id)
         }
+
+    override suspend fun listAiModels(): Result<List<String>> = aiClient.listModels()
 
     override suspend fun writeTextToFile(
         text: String,

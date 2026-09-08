@@ -67,4 +67,10 @@ class AiClient {
 
             result
         }
+
+    suspend fun listModels(): Result<List<String>> =
+        runCatching {
+            aiService?.listModels()
+                ?: throw IllegalStateException("AI service is not initialized. Please set host and apiKey.")
+        }
 }
