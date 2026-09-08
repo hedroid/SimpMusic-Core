@@ -464,13 +464,14 @@ internal class DataStoreManagerImpl(
 
     override val translationLanguage =
         settingsDataStore.data.map { preferences ->
-            val languageValue = language.first()
-            preferences[TRANSLATION_LANGUAGE] ?: if (languageValue.length >= 2) {
-                languageValue
-                    .substring(0..1)
-            } else {
-                "en"
-            }
+            // "" is the stored form of "follow the app language", so it resolves exactly
+            // like a missing key — consumers must never see an empty code.
+            preferences[TRANSLATION_LANGUAGE]?.takeIf { it.isNotEmpty() } ?: defaultLanguageCode()
+        }
+
+    override val rawTranslationLanguage: Flow<String> =
+        settingsDataStore.data.map { preferences ->
+            preferences[TRANSLATION_LANGUAGE] ?: ""
         }
 
     override suspend fun setTranslationLanguage(language: String) {
@@ -1479,13 +1480,13 @@ internal class DataStoreManagerImpl(
 
     override val youtubeSubtitleLanguage =
         settingsDataStore.data.map { preferences ->
-            val languageValue = language.first()
-            preferences[YOUTUBE_SUBTITLE_LANGUAGE] ?: if (languageValue.length >= 2) {
-                languageValue
-                    .substring(0..1)
-            } else {
-                "en"
-            }
+            // Same contract as translationLanguage: "" means "follow the app language".
+            preferences[YOUTUBE_SUBTITLE_LANGUAGE]?.takeIf { it.isNotEmpty() } ?: defaultLanguageCode()
+        }
+
+    override val rawYoutubeSubtitleLanguage: Flow<String> =
+        settingsDataStore.data.map { preferences ->
+            preferences[YOUTUBE_SUBTITLE_LANGUAGE] ?: ""
         }
 
     override suspend fun setYoutubeSubtitleLanguage(language: String) {
@@ -1493,6 +1494,19 @@ internal class DataStoreManagerImpl(
             settingsDataStore.edit { settings ->
                 settings[YOUTUBE_SUBTITLE_LANGUAGE] = language
             }
+        }
+    }
+
+    /**
+     * The app language as a translation target: its 2-letter code, with Traditional Chinese
+     * kept as "zh-Hant" so YouTube's tlang and the AI prompt produce Traditional output.
+     */
+    private suspend fun defaultLanguageCode(): String {
+        val languageValue = language.first()
+        return when {
+            languageValue.startsWith("zh-Hant") -> "zh-Hant"
+            languageValue.length >= 2 -> languageValue.substring(0..1)
+            else -> "en"
         }
     }
 
