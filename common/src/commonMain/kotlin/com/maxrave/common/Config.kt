@@ -238,6 +238,35 @@ object SUPPORTED_LANGUAGE {
         Logger.w("Config", "getCodeFromLanguage: ${codes.getOrNull(index)}")
         return (codes.getOrNull(index) ?: "en-US")
     }
+
+    /**
+     * The display name closest to a BCP-47 tag (usually the runtime locale). Needed while
+     * the stored app language is empty ("follow system"): getLanguageFromCode would fall
+     * back to English, so the settings dialog would preselect English on a Chinese system.
+     * Matching walks from exact (zh-Hant-TW) through language+region (zh-TW) and script
+     * prefix (zh-Hant) down to bare language (zh -> zh-CN). Hebrew arrives as "he".
+     */
+    fun getLanguageFromLanguageTag(tag: String): String {
+        val normalized =
+            tag.replace('_', '-')
+                .lowercase()
+                .let { if (it.startsWith("he-")) "iw-" + it.substring(3) else it }
+        val parts = normalized.split('-')
+        val code =
+            codes.firstOrNull { it.equals(normalized, ignoreCase = true) }
+                ?: if (parts.size >= 2) {
+                    codes.firstOrNull { c -> c.startsWith(parts[0] + "-", ignoreCase = true) && c.endsWith("-" + parts.last(), ignoreCase = true) }
+                } else {
+                    null
+                }
+                ?: if (parts.size >= 3) {
+                    codes.firstOrNull { c -> c.startsWith(parts[0] + "-" + parts[1], ignoreCase = true) }
+                } else {
+                    null
+                }
+                ?: codes.firstOrNull { it.startsWith(parts[0] + "-", ignoreCase = true) }
+        return code?.let { getLanguageFromCode(it) } ?: "English"
+    }
 }
 
 /**
