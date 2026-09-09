@@ -1040,6 +1040,41 @@ internal class CrossfadeExoPlayerAdapter(
         }
     }
 
+    override fun updateCurrentItemTexts(
+        title: String,
+        artist: String,
+    ) {
+        // Never touch the stored playlist or reload the track: replaceMediaItem above
+        // re-loads the current item from scratch, which would restart playback on every
+        // lyric line. The active player holds the current track; swapping its item in
+        // place (same URI) preserves position, and notifyMediaItemChanged makes the
+        // session re-read the metadata so the notification/capsule refresh immediately.
+        if (isCastActive) return
+        val player = currentPlayer ?: return
+        val index = player.currentMediaItemIndex
+        if (index < 0 || index >= player.mediaItemCount) return
+        val current = player.getMediaItemAt(index)
+        // The lyric rides the title slot — that is the line capsule layouts promote —
+        // with the real title/artist demoted to the second line; artist/subtitle/description
+        // are kept in sync so any renderer slot shows the same text.
+        player.replaceMediaItem(
+            index,
+            current
+                .buildUpon()
+                .setMediaMetadata(
+                    current.mediaMetadata
+                        .buildUpon()
+                        .setTitle(title)
+                        .setArtist(artist)
+                        .setSubtitle(artist)
+                        .setDescription(artist)
+                        .build(),
+                )
+                .build(),
+        )
+        forwardingPlayer.notifyMediaItemChanged()
+    }
+
     override fun getMediaItemAt(index: Int): GenericMediaItem? = playlist.getOrNull(index)
 
     override fun getCurrentMediaTimeLine(): List<GenericMediaItem> =

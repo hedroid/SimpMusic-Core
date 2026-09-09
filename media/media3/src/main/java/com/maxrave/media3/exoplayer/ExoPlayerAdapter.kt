@@ -148,6 +148,32 @@ class ExoPlayerAdapter(
         notifyTimelineChanged("TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED")
     }
 
+    override fun updateCurrentItemTexts(
+        title: String,
+        artist: String,
+    ) {
+        val index = exoPlayer.currentMediaItemIndex
+        if (index < 0 || index >= exoPlayer.mediaItemCount) return
+        val current = exoPlayer.getMediaItemAt(index)
+        // Same-URI item swap: ExoPlayer keeps playback position, and the metadata change
+        // fires onMediaMetadataChanged so the session refreshes the notification by itself.
+        exoPlayer.replaceMediaItem(
+            index,
+            current
+                .buildUpon()
+                .setMediaMetadata(
+                    current.mediaMetadata
+                        .buildUpon()
+                        .setTitle(title)
+                        .setArtist(artist)
+                        .setSubtitle(artist)
+                        .setDescription(artist)
+                        .build(),
+                )
+                .build(),
+        )
+    }
+
     override fun getMediaItemAt(index: Int): GenericMediaItem? =
         if (index in 0..<exoPlayer.mediaItemCount) {
             exoPlayer.getMediaItemAt(index).toGenericMediaItem()

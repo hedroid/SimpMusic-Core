@@ -65,6 +65,19 @@ interface MediaPlayerInterface {
         mediaItem: GenericMediaItem,
     )
 
+    /**
+     * Swaps the title and artist of the currently playing item's metadata WITHOUT reloading the
+     * track (same-URI replacement on the active player only; the adapter's stored queue keeps the
+     * original). Used by notification lyrics: the lyric line goes into the title slot — the line
+     * every media renderer (notification card, lock screen, OEM capsules such as Samsung's Now
+     * Bar) renders first — with the real title/artist demoted into the second line. Pass the
+     * item's real texts to restore.
+     */
+    fun updateCurrentItemTexts(
+        title: String,
+        artist: String,
+    )
+
     fun getMediaItemAt(index: Int): GenericMediaItem?
 
     fun getCurrentMediaTimeLine(): List<GenericMediaItem>

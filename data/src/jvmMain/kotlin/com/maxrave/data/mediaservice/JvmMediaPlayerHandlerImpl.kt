@@ -107,6 +107,7 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.pow
+import com.maxrave.domain.data.model.metadata.Line
 
 private val TAG = "JvmMediaPlayerHandler"
 
@@ -169,6 +170,9 @@ class JvmMediaPlayerHandlerImpl(
     override var onUpdateNotification: (List<GenericCommandButton>) -> Unit = {}
     override var showToast: (ToastType) -> Unit = {}
     override var pushPlayerError: (PlayerError) -> Unit = {}
+
+    // Desktop posts no media-style notification, so there is nowhere to render a lyric line.
+    override fun updateLyricLines(lines: List<Line>?) = Unit
     private val _simpleMediaState = MutableStateFlow<SimpleMediaState>(SimpleMediaState.Initial)
     override val simpleMediaState: StateFlow<SimpleMediaState> = _simpleMediaState.asStateFlow()
 

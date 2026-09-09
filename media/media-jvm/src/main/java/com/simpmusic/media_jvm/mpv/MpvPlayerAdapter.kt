@@ -715,6 +715,12 @@ class MpvPlayerAdapter(
         }
     }
 
+    // Desktop posts no media-style notification, so there is nowhere to render a lyric line.
+    override fun updateCurrentItemTexts(
+        title: String,
+        artist: String,
+    ) = Unit
+
     override fun getMediaItemAt(index: Int): GenericMediaItem? = playlist.getOrNull(index)
 
     override fun getCurrentMediaTimeLine(): List<GenericMediaItem> =

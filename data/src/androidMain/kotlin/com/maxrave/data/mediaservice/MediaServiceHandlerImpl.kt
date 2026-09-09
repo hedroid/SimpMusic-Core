@@ -106,6 +106,7 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.pow
+import com.maxrave.domain.data.model.metadata.Line
 
 private val TAG = "Media3ServiceHandlerImpl"
 
@@ -200,6 +201,82 @@ internal class MediaServiceHandlerImpl(
 
     private val _castState = MutableStateFlow(GenericCastState.NOT_CASTING)
     override val castState: StateFlow<GenericCastState> = _castState.asStateFlow()
+
+    // Notification lyrics: the active line is written into the current media item's artist slot
+    // (the second line every media renderer reads) via an in-place metadata swap; the adapter's
+    // stored queue keeps the real artist, so a null line simply restores it.
+    private var lyricLines: List<Line>? = null
+    private var currentLyricLine: String? = null
+
+    // MediaId the current line override was applied to. An in-place swap can itself surface
+    // as a transition event, so resets must key off the mediaId, not off transition events.
+    private var lyricMediaId: String? = null
+
+    override fun updateLyricLines(lines: List<Line>?) {
+        lyricLines = lines
+        if (lines == null) applyLyricLine(null)
+    }
+
+    private fun resetLyricLineForNewTrack(newItem: GenericMediaItem?) {
+        lyricLines = null
+        if (newItem?.mediaId != null && newItem.mediaId == lyricMediaId) return
+        lyricMediaId = null
+        applyLyricLine(null)
+    }
+
+    /** Last non-empty line whose start time has passed — keeps showing it through instrumental gaps. */
+    private fun currentLyricLineAt(positionMs: Long): String? {
+        val lines = lyricLines ?: return null
+        var text: String? = null
+        for (line in lines) {
+            val start = line.startTimeMs.toLongOrNull() ?: continue
+            if (start <= positionMs) {
+                // Some providers leave raw LRC time tags embedded in the line — line-level
+                // "[00:12.34]" and word-level "<00:14.5>" (enhanced LRC), decimal comma
+                // variants included. They must never reach a notification line.
+                val words =
+                    line.words
+                        .replace(LRC_TIME_TAG, "")
+                        .replace(Regex("\\s{2,}"), " ")
+                        .trim()
+                if (words.isNotEmpty()) text = words
+            } else {
+                break
+            }
+        }
+        return text
+    }
+
+    private companion object {
+        val LRC_TIME_TAG = Regex("""[\[<]\d{1,3}:\d{1,2}(?:[.:,]\d{1,3})?[\]>]""")
+    }
+
+    private fun applyLyricLine(text: String?) {
+        if (text == currentLyricLine) return
+        val hadOverride = currentLyricLine != null
+        currentLyricLine = text
+        // Nothing was overridden, so a null line has nothing to restore — skipping also avoids
+        // the redundant item replace (and its transition bounce) on every fresh track.
+        if (text == null && !hadOverride) return
+        val item = player.currentMediaItem ?: return
+        val metadata = item.metadata ?: return
+        lyricMediaId = text?.let { item.mediaId }
+        if (text != null) {
+            // Lyric on top (title slot — the line every renderer, capsule layouts included,
+            // shows first), real title and artist demoted to the second line.
+            val secondLine =
+                listOfNotNull(
+                    metadata.title?.takeIf { it.isNotBlank() },
+                    metadata.artist?.takeIf { it.isNotBlank() },
+                ).joinToString(" - ")
+            player.updateCurrentItemTexts(title = text, artist = secondLine)
+        } else {
+            player.updateCurrentItemTexts(
+                title = metadata.title.orEmpty(),
+                artist = metadata.artist.orEmpty(),
+            )
+        }
+    }
 
     // List of Specific variables
 
@@ -441,7 +518,20 @@ internal class MediaServiceHandlerImpl(
                                             }
                                         }
                                     }
-                                }
+                            }
+                        }
+                    }
+                }
+            val notificationLyricsJob =
+                launch {
+                    simpleMediaState
+                        .filter { it is SimpleMediaState.Progress }
+                        .map { (it as SimpleMediaState.Progress).progress }
+                        .collect { position ->
+                            if (dataStoreManager.notificationLyrics.first() == TRUE) {
+                                applyLyricLine(currentLyricLineAt(position))
+                            } else if (currentLyricLine != null) {
+                                applyLyricLine(null)
                             }
                         }
                 }
@@ -2569,6 +2659,7 @@ internal class MediaServiceHandlerImpl(
         mayBeNormalizeVolume()
         Logger.w(TAG, "REASON onMediaItemTransition: $reason")
         Logger.d(TAG, "Media Item Transition Media Item: ${mediaItem?.metadata?.title}")
+        resetLyricLineForNewTrack(mediaItem)
         if (mediaItem?.mediaId != _nowPlaying.value?.mediaId) {
             _nowPlaying.value = mediaItem
         }
