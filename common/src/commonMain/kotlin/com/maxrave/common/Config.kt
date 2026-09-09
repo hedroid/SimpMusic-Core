@@ -153,63 +153,24 @@ object SUPPORTED_LOCATION {
 }
 
 object SUPPORTED_LANGUAGE {
+    // Trimmed to the locales that still ship UI translations (values/ + values-ja/ko/zh-rCN/zh-rTW).
+    // The lyric-translation and YouTube-subtitle settings are NOT tied to this list — they take
+    // any BCP-47 code and default to the COMMON_TRANSLATION_LANGUAGES shortlist in composeApp.
     val items: Array<CharSequence> =
         arrayOf(
             "English",
-            "Tiếng Việt",
-            "Italiano",
-            "Deutsch",
-            "Русский",
-            "Türkçe",
-            "Suomi",
-            "Polski",
-            "Português",
-            "Français",
-            "Español",
             "简体中文 (Simplified Chinese)",
-            "Bahasa Indonesia",
-            "اللغة العربية",
-            "日本語",
             "繁體中文 (Traditional Chinese)",
-            "Українська",
-            "עברית",
-            "Azerbaijani",
-            "हिन्दी",
-            "ภาษาไทย",
-            "Nederlands",
+            "日本語",
             "한국어",
-            "Català",
-            "فارسی",
-            "български",
         )
     val codes: Array<String> =
         arrayOf(
             "en-US",
-            "vi-VN",
-            "it-IT",
-            "de-DE",
-            "ru-RU",
-            "tr-TR",
-            "fi-FI",
-            "pl-PL",
-            "pt-PT",
-            "fr-FR",
-            "es-ES",
             "zh-CN",
-            "id-ID",
-            "ar-SA",
-            "ja-JP",
             "zh-Hant-TW",
-            "uk-UA",
-            "iw-IL",
-            "az-AZ",
-            "hi-IN",
-            "th-TH",
-            "nl-NL",
+            "ja-JP",
             "ko-KR",
-            "ca-ES",
-            "fa-AF",
-            "bg-BG",
         )
 
     fun getLanguageFromCode(code: String?): String {
