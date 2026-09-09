@@ -449,6 +449,19 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    override val notificationLyrics =
+        settingsDataStore.data.map { preferences ->
+            preferences[NOTIFICATION_LYRICS] ?: TRUE
+        }
+
+    override suspend fun setNotificationLyrics(enable: Boolean) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[NOTIFICATION_LYRICS] = if (enable) TRUE else FALSE
+            }
+        }
+    }
+
     override val lyricsProvider =
         settingsDataStore.data.map { preferences ->
             preferences[LYRICS_PROVIDER] ?: SIMPMUSIC
@@ -1793,6 +1806,7 @@ internal class DataStoreManagerImpl(
         val LYRICS_PROVIDER = stringPreferencesKey("lyrics_provider")
         val TRANSLATION_LANGUAGE = stringPreferencesKey("translation_language")
         val USE_TRANSLATION_LANGUAGE = stringPreferencesKey("use_translation_language")
+        val NOTIFICATION_LYRICS = stringPreferencesKey("notification_lyrics")
 
         val SPONSOR_BLOCK_ENABLED = stringPreferencesKey("sponsor_block_enabled")
         val MAX_SONG_CACHE_SIZE = intPreferencesKey("maxSongCacheSize")

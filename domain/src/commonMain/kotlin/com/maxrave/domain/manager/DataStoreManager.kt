@@ -123,6 +123,14 @@ interface DataStoreManager {
 
     suspend fun setEnableTranslateLyric(enable: Boolean)
 
+    /**
+     * Show the active lyric line in the media notification's artist slot, so it also reaches
+     * lock screen / media card / OEM capsules (e.g. Samsung Now Bar) that render that slot.
+     */
+    val notificationLyrics: Flow<String>
+
+    suspend fun setNotificationLyrics(enable: Boolean)
+
     val lyricsProvider: Flow<String>
 
     suspend fun setLyricsProvider(provider: String)

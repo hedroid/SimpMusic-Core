@@ -3,6 +3,7 @@ package com.maxrave.domain.mediaservice.handler
 import com.maxrave.domain.data.entities.NewFormatEntity
 import com.maxrave.domain.data.entities.SongEntity
 import com.maxrave.domain.data.model.browse.album.Track
+import com.maxrave.domain.data.model.metadata.Line
 import com.maxrave.domain.data.model.mediaService.SponsorSkipSegments
 import com.maxrave.domain.data.player.GenericCastState
 import com.maxrave.domain.data.player.GenericCommandButton
@@ -34,6 +35,15 @@ interface MediaPlayerHandler {
     var onUpdateNotification: (List<GenericCommandButton>) -> Unit
     var pushPlayerError: (PlayerError) -> Unit
     var showToast: (ToastType) -> Unit
+
+    /**
+     * Latest synced lyric lines for the current track, pushed by the UI layer whenever they load
+     * or clear. While the "notification lyrics" setting is on, the handler tracks the active line
+     * from the playback position and feeds it into the current media item's artist slot, which is
+     * the second line every renderer reads (media card, lock screen, OEM capsules such as
+     * Samsung's Now Bar). Null restores the real artist.
+     */
+    fun updateLyricLines(lines: List<Line>?)
 
     // Playback control
     suspend fun onPlayerEvent(playerEvent: PlayerEvent)
