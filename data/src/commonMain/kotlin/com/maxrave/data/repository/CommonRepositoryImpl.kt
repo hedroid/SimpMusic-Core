@@ -2,6 +2,7 @@ package com.maxrave.data.repository
 
 import com.maxrave.data.db.MusicDatabase
 import com.maxrave.data.db.datasource.LocalDataSource
+import com.maxrave.data.dataStore.systemLanguageTag
 import com.maxrave.data.io.fileSystem
 import com.maxrave.domain.data.entities.NotificationEntity
 import com.maxrave.domain.data.model.cookie.CookieItem
@@ -62,11 +63,17 @@ internal class CommonRepositoryImpl(
                         youTube.locale =
                             YouTubeLocale(
                                 location,
-                                try {
-                                    language.substring(0..1)
-                                } catch (e: Exception) {
-                                    "en"
-                                },
+                                // Empty stored language = follow system: resolve the runtime
+                                // locale, or the substring would throw and pin hl to "en".
+                                language
+                                    .ifEmpty { systemLanguageTag() }
+                                    .let {
+                                        try {
+                                            it.substring(0..1)
+                                        } catch (e: Exception) {
+                                            "en"
+                                        }
+                                    },
                             )
                     }
                 }

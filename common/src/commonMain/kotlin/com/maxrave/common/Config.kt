@@ -159,8 +159,8 @@ object SUPPORTED_LANGUAGE {
     val items: Array<CharSequence> =
         arrayOf(
             "English",
-            "简体中文 (Simplified Chinese)",
-            "繁體中文 (Traditional Chinese)",
+            "简体中文",
+            "繁體中文",
             "日本語",
             "한국어",
         )
