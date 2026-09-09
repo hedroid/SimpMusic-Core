@@ -11,6 +11,7 @@ import coil3.request.ErrorResult
 import coil3.request.ImageRequest
 import coil3.request.allowHardware
 import coil3.toBitmap
+import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +23,18 @@ class CoilBitmapLoader(
     private val context: Context,
     private val coroutineScope: CoroutineScope,
 ) : BitmapLoader {
+    // media3's DefaultMediaNotificationProvider posts the notification FIRST and attaches the
+    // artwork only when the returned future completes — and every newer refresh discards that
+    // pending attach. With lyric-line metadata swaps re-posting the notification every few
+    // seconds, a purely async future kept losing the race: the notification (and the QS media
+    // capsule rendered from its artwork) stayed artless most of the time. A synchronous hit for
+    // recently served URIs makes the first post carry the art. The cache holds the same Bitmap
+    // instances Coil's memory cache already owns, so it adds no pixel memory of its own.
+    private val recentBitmaps =
+        object : LinkedHashMap<Uri, Bitmap>(8, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Uri, Bitmap>): Boolean = size > 4
+        }
+
     override fun supportsMimeType(mimeType: String): Boolean = true
 
     override fun decodeBitmap(data: ByteArray): ListenableFuture<Bitmap> =
@@ -30,8 +43,9 @@ class CoilBitmapLoader(
                 ?: error("Could not decode image data")
         }
 
-    override fun loadBitmap(uri: Uri): ListenableFuture<Bitmap> =
-        coroutineScope.future(Dispatchers.IO) {
+    override fun loadBitmap(uri: Uri): ListenableFuture<Bitmap> {
+        synchronized(recentBitmaps) { recentBitmaps[uri] }?.let { return Futures.immediateFuture(it) }
+        return coroutineScope.future(Dispatchers.IO) {
             val result =
                 (
                     context.imageLoader.execute(
@@ -46,9 +60,12 @@ class CoilBitmapLoader(
                 throw ExecutionException(result.throwable)
             }
             try {
-                result.image?.toBitmap() ?: throw ExecutionException(NullPointerException())
+                val bitmap = result.image?.toBitmap() ?: throw ExecutionException(NullPointerException())
+                synchronized(recentBitmaps) { recentBitmaps[uri] = bitmap }
+                bitmap
             } catch (e: Exception) {
                 throw ExecutionException(e)
             }
         }
+    }
 }
