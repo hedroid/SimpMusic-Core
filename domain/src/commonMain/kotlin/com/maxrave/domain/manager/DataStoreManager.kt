@@ -131,6 +131,16 @@ interface DataStoreManager {
 
     suspend fun setNotificationLyrics(enable: Boolean)
 
+    /**
+     * Which text the notification-lyrics line carries when a translation exists:
+     * [NOTIFICATION_LYRICS_MODE_ORIGINAL] (the default) or the original with the
+     * translation appended. The translation alone is never a valid choice — it would
+     * replace the lyrics the user is actually listening to.
+     */
+    val notificationLyricsMode: Flow<String>
+
+    suspend fun setNotificationLyricsMode(mode: String)
+
     val lyricsProvider: Flow<String>
 
     suspend fun setLyricsProvider(provider: String)
@@ -632,6 +642,9 @@ interface DataStoreManager {
 
         const val LYRICS_STYLE_CLASSIC = "CLASSIC"
         const val LYRICS_STYLE_APPLE_MUSIC = "APPLE_MUSIC"
+
+        const val NOTIFICATION_LYRICS_MODE_ORIGINAL = "ORIGINAL"
+        const val NOTIFICATION_LYRICS_MODE_ORIGINAL_AND_TRANSLATION = "ORIGINAL_AND_TRANSLATION"
 
         const val CROSSFADE_DURATION_AUTO = 0
 

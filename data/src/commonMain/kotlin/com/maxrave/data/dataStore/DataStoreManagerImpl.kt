@@ -462,6 +462,19 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    override val notificationLyricsMode =
+        settingsDataStore.data.map { preferences ->
+            preferences[NOTIFICATION_LYRICS_MODE] ?: DataStoreManager.NOTIFICATION_LYRICS_MODE_ORIGINAL
+        }
+
+    override suspend fun setNotificationLyricsMode(mode: String) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[NOTIFICATION_LYRICS_MODE] = mode
+            }
+        }
+    }
+
     override val lyricsProvider =
         settingsDataStore.data.map { preferences ->
             preferences[LYRICS_PROVIDER] ?: SIMPMUSIC
@@ -1513,12 +1526,19 @@ internal class DataStoreManagerImpl(
     /**
      * The app language as a translation target: its 2-letter code, with Traditional Chinese
      * kept as "zh-Hant" so YouTube's tlang and the AI prompt produce Traditional output.
+     * An empty stored app language means "follow system", so the runtime locale supplies the
+     * tag — pinning English here would translate a Chinese system's lyrics into English.
      */
-    private suspend fun defaultLanguageCode(): String {
-        val languageValue = language.first()
+    private suspend fun defaultLanguageCode(): String = languageTagToTargetCode(language.first().ifEmpty { systemLanguageTag() })
+
+    private fun languageTagToTargetCode(tag: String): String {
+        val normalized = tag.replace('_', '-').lowercase()
         return when {
-            languageValue.startsWith("zh-Hant") -> "zh-Hant"
-            languageValue.length >= 2 -> languageValue.substring(0..1)
+            // Locale tags of Traditional-Chinese regions arrive without a script subtag.
+            normalized.startsWith("zh-hant") || normalized.startsWith("zh-tw") ||
+                normalized.startsWith("zh-hk") || normalized.startsWith("zh-mo") -> "zh-Hant"
+
+            normalized.length >= 2 -> normalized.substring(0..1)
             else -> "en"
         }
     }
@@ -1807,6 +1827,7 @@ internal class DataStoreManagerImpl(
         val TRANSLATION_LANGUAGE = stringPreferencesKey("translation_language")
         val USE_TRANSLATION_LANGUAGE = stringPreferencesKey("use_translation_language")
         val NOTIFICATION_LYRICS = stringPreferencesKey("notification_lyrics")
+        val NOTIFICATION_LYRICS_MODE = stringPreferencesKey("notification_lyrics_mode")
 
         val SPONSOR_BLOCK_ENABLED = stringPreferencesKey("sponsor_block_enabled")
         val MAX_SONG_CACHE_SIZE = intPreferencesKey("maxSongCacheSize")
