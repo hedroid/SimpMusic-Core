@@ -21,6 +21,8 @@ object NeteaseQrEncoder {
         val ecPerBlock: Int,
         val blockCount: Int,
         val alignment: IntArray,
+        /** v>=7 需要绘制版本信息块(BCH18,6) */
+        val version: Int = 0,
     )
 
     private val VERSIONS =
@@ -31,7 +33,11 @@ object NeteaseQrEncoder {
             VersionSpec(33, 64, 18, 2, intArrayOf(6, 26)),
             VersionSpec(37, 86, 24, 2, intArrayOf(6, 30)),
             // v6-M: 4 blocks x 27 data, ec 16; v6 起尺寸 41,<v7 无需版本信息块
-            VersionSpec(41, 108, 16, 4, intArrayOf(6, 34)),
+            VersionSpec(41, 108, 16, 4, intArrayOf(6, 34), version = 6),
+            // v7-M: 4 x 31, ec 18;v7 起需要版本信息块
+            VersionSpec(45, 124, 18, 4, intArrayOf(6, 22, 38), version = 7),
+            // v8-M: 2x38 + 2x39, ec 22
+            VersionSpec(49, 154, 22, 4, intArrayOf(6, 24, 42), version = 8),
         )
 
     // GF(256) over 0x11D
@@ -60,7 +66,7 @@ object NeteaseQrEncoder {
         forceMask: Int? = null,
     ): Array<BooleanArray> {
         val bytes = text.map { (it.code and 0xFF).toByte() } // 内容是 ASCII URL
-        require(bytes.size <= 106) { "QR content too long for v6-M: ${bytes.size} bytes" }
+        require(bytes.size <= 152) { "QR content too long for v8-M: ${bytes.size} bytes" }
         val spec = VERSIONS.first { bytes.size + 2 <= it.dataCodewords } // 2 = 模式4bit + 计数8bit 上取整的保守估计
         val bits = buildBitStream(bytes, spec.dataCodewords)
         val (dataBlocks, ecBlocks) = interleave(bits, spec)
@@ -221,6 +227,15 @@ object NeteaseQrEncoder {
             }
         }
 
+        // 预留版本信息区(v>=7):右上 6x3 与左下 3x6
+        if (spec.version >= 7) {
+            for (i in 0 until 18) {
+                val a = n - 11 + i % 3
+                val b = i / 3
+                setFunction(b, a, false)
+                setFunction(a, b, false)
+            }
+        }
         // 预留 format 区域(内容稍后回填)
         for (i in 0 until 9) {
             if (!isFunction[8][i]) setFunction(8, i, false)
@@ -268,6 +283,22 @@ object NeteaseQrEncoder {
         setFunction(8, 8, fb(7))
         setFunction(7, 8, fb(8))
         for (i in 9 until 15) setFunction(14 - i, 8, fb(i))
+        // 版本信息块(v>=7):BCH(18,6), 生成多项式 0x1F25
+        if (spec.version >= 7) {
+            // Nayuki:逐位移位消项,余式 13 位,G=0x1F25
+            var rem = spec.version
+            for (i in 0 until 12) {
+                rem = (rem shl 1) xor (if ((rem ushr 11) and 1 == 1) 0x1F25 else 0)
+            }
+            val versionBits = (spec.version shl 12) or (rem and 0x1FFF)
+            for (i in 0 until 18) {
+                val bit = (versionBits ushr i) and 1 == 1
+                val a = n - 11 + i % 3
+                val b = i / 3
+                setFunction(b, a, bit)
+                setFunction(a, b, bit)
+            }
+        }
         // 副本二(位序与副本一镜像,对照 python-qrcode setup_type_info 验证):
         // 横向(行 8 右段):bit14..7 → (8, n-1..n-8);纵向(列 8 底段):bit6..0 → (n-7..n-1, 8)
         for (i in 0 until 8) setFunction(8, n - 1 - i, fb(14 - i))
