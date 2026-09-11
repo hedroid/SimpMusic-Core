@@ -12,6 +12,7 @@ import com.maxrave.ktorext.getEngine
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.ClientRequestException
 import io.ktor.client.request.forms.FormDataContent
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -218,6 +219,27 @@ class NeteaseClient(
 
     // ------------------------------------------------------------------ login flows
 
+    /**
+     * NeriPlayer ensureWeapiSession:登录前先 GET 一次首页,收割服务端签发的 __csrf/NMTID
+     * 种子 cookie —— 风控(-462)会拒绝带着"自造 cookie"直接提交的登录。
+     */
+    suspend fun ensureWeapiSession() {
+        if (sessionCookies["__csrf"]?.isNotEmpty() == true || cookieProvider()["__csrf"]?.isNotEmpty() == true) return
+        runCatching {
+            val response =
+                http.get("https://music.163.com/") {
+                    header(HttpHeaders.UserAgent, desktopUa)
+                }
+            response.headers.getAll(HttpHeaders.SetCookie).orEmpty().let {
+                if (it.isNotEmpty()) mergeSetCookies(it)
+            }
+            com.maxrave.logger.Logger.d(
+                TAG,
+                "weapi warmup -> ${response.status.value}, sessionCookies=${sessionCookies.keys}",
+            )
+        }
+    }
+
     /** 创建扫码登录会话 */
     suspend fun createQrSession(): Result<NeteaseQrSession> =
         runCatching {
@@ -312,6 +334,7 @@ class NeteaseClient(
         countryCode: String = "86",
     ): Result<JsonObject> =
         runCatching {
+            ensureWeapiSession()
             callWeApi(
                 "/w/login/cellphone",
                 mapOf(
