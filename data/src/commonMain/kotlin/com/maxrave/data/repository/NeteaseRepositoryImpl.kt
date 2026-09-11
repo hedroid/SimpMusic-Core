@@ -1,5 +1,7 @@
 package com.maxrave.data.repository
 
+import DatabaseDao
+import com.maxrave.domain.data.entities.NeteaseAccountEntity
 import com.maxrave.domain.data.entities.PlaylistEntity
 import com.maxrave.domain.data.entities.SongEntity
 import com.maxrave.domain.data.model.home.Content
@@ -34,6 +36,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 
@@ -46,6 +50,7 @@ import kotlinx.serialization.json.Json
  */
 class NeteaseRepositoryImpl(
     private val dataStoreManager: DataStoreManager,
+    private val dao: DatabaseDao,
 ) : MusicSourceProvider {
     override val source: MusicSource = MusicSource.NETEASE
 
@@ -62,7 +67,7 @@ class NeteaseRepositoryImpl(
         )
 
     override val isLoggedIn: Flow<Boolean> =
-        dataStoreManager.neteaseCookie.map { it.isNotEmpty() }
+        dataStoreManager.neteaseCookie.map { it.isNotEmpty() && it != "{}" && it.contains("MUSIC_U") }
 
     val accountName: Flow<String> = dataStoreManager.neteaseAccountName
     val accountThumbUrl: Flow<String> = dataStoreManager.neteaseAccountThumbUrl
@@ -85,6 +90,17 @@ class NeteaseRepositoryImpl(
             persistCookies(withUser)
             dataStoreManager.setNeteaseAccountName(valid.nickname ?: "NetEase user")
             dataStoreManager.setNeteaseAccountThumbUrl(valid.avatarUrl ?: "")
+            // 多账户:按 userId 入表并标记当前使用(GoogleAccountEntity 同构)
+            dao.getAllNeteaseAccount().forEach { dao.updateNeteaseAccountUsed(false, it.userId) }
+            dao.insertNeteaseAccount(
+                NeteaseAccountEntity(
+                    userId = valid.userId,
+                    nickname = valid.nickname ?: "NetEase user",
+                    avatarUrl = valid.avatarUrl ?: "",
+                    cookies = json.encodeToString(withUser),
+                    isUsed = true,
+                ),
+            )
             valid
         }.onFailure {
             // 校验失败则清掉,不留半登录态
@@ -93,23 +109,50 @@ class NeteaseRepositoryImpl(
         }
     }
 
-    suspend fun logout() {
-        client.logout()
-        dataStoreManager.setNeteaseAccountName("")
-        dataStoreManager.setNeteaseAccountThumbUrl("")
-    }
 
     private suspend fun loadPersistedCookies(): Map<String, String> =
         runCatching {
             json.decodeFromString<Map<String, String>>(dataStoreManager.neteaseCookie.first())
         }.getOrDefault(emptyMap())
 
+    suspend fun logout() {
+        client.logout()
+        dataStoreManager.setNeteaseCookie("")
+        dataStoreManager.setNeteaseAccountName("")
+        dataStoreManager.setNeteaseAccountThumbUrl("")
+        dao.deleteAllNeteaseAccount()
+    }
+
     private suspend fun persistCookies(cookies: Map<String, String>) {
+        if (cookies.isEmpty()) {
+            dataStoreManager.setNeteaseCookie("")
+            return
+        }
         // NonCancellable:登录收尾协程若被取消,写盘也必须完成(现场日志显示挂起发生在
         // 这条链路上,取消风暴下最稳妥的是不让 DataStore 写入参与取消)
         withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
             dataStoreManager.setNeteaseCookie(json.encodeToString(cookies))
         }
+    }
+
+    // ---------------------------------------------------------------- 多账户(YTM 同构)
+
+    fun getNeteaseAccounts(): Flow<List<NeteaseAccountEntity>> =
+        flow {
+            emit(dao.getAllNeteaseAccount())
+        }.flowOn(Dispatchers.IO)
+
+    /** 切换账户:换 DataStore cookie + 内存会话 + 账户名/头像 */
+    suspend fun setUsedNeteaseAccount(userId: Long) {
+        val accounts = dao.getAllNeteaseAccount()
+        val target = accounts.firstOrNull { it.userId == userId } ?: return
+        accounts.forEach { dao.updateNeteaseAccountUsed(isUsed = it.userId == userId, userId = it.userId) }
+        dataStoreManager.setNeteaseCookie(target.cookies)
+        dataStoreManager.setNeteaseAccountName(target.nickname)
+        dataStoreManager.setNeteaseAccountThumbUrl(target.avatarUrl)
+        runCatching { json.decodeFromString<Map<String, String>>(target.cookies) }
+            .getOrDefault(emptyMap())
+            .let { client.seedCookies(it) }
     }
 
     // ---------------------------------------------------------------- MusicSourceProvider

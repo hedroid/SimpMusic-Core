@@ -15,6 +15,7 @@ import com.maxrave.domain.data.entities.AutoEqIndexMetaEntity
 import com.maxrave.domain.data.entities.EpisodeEntity
 import com.maxrave.domain.data.entities.FollowedArtistSingleAndAlbum
 import com.maxrave.domain.data.entities.GoogleAccountEntity
+import com.maxrave.domain.data.entities.NeteaseAccountEntity
 import com.maxrave.domain.data.entities.LocalPlaylistEntity
 import com.maxrave.domain.data.entities.LyricsEntity
 import com.maxrave.domain.data.entities.NewFormatEntity
@@ -36,12 +37,12 @@ import com.maxrave.domain.data.entities.analytics.PlaybackEventEntity
     entities = [
         NewFormatEntity::class, SongInfoEntity::class, SearchHistory::class, SongEntity::class, ArtistEntity::class,
         AlbumEntity::class, PlaylistEntity::class, LocalPlaylistEntity::class, LyricsEntity::class, QueueEntity::class,
-        SetVideoIdEntity::class, PairSongLocalPlaylist::class, GoogleAccountEntity::class, FollowedArtistSingleAndAlbum::class,
+        SetVideoIdEntity::class, PairSongLocalPlaylist::class, GoogleAccountEntity::class, NeteaseAccountEntity::class, FollowedArtistSingleAndAlbum::class,
         NotificationEntity::class, TranslatedLyricsEntity::class, PodcastsEntity::class, EpisodeEntity::class,
         YourYouTubePlaylistList::class, PlaybackEventEntity::class, EventArtistEntity::class,
         AutoEqEntryEntity::class, AutoEqIndexMetaEntity::class, AutoEqCurveEntity::class
     ],
-    version = 26,
+    version = 27,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 2, to = 3), AutoMigration(
@@ -93,6 +94,10 @@ import com.maxrave.domain.data.entities.analytics.PlaybackEventEntity
         AutoMigration(25, 26),
         AutoMigration(24, 26),
         AutoMigration(23, 26),
+        // 27 adds the netease_account table (multi-account), nothing else
+        AutoMigration(26, 27),
+        AutoMigration(25, 27),
+        AutoMigration(24, 27),
     ],
 )
 @TypeConverters(Converters::class)

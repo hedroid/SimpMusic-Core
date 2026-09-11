@@ -44,7 +44,7 @@ val repositoryModule =
     module {
         // 网易云音源适配层 —— lazy: 未启用网易云时不应付出任何初始化成本
         single<NeteaseRepositoryImpl> {
-            NeteaseRepositoryImpl(get())
+            NeteaseRepositoryImpl(get(), get())
         }
 
         single<AccountRepository>(createdAtStart = true) {

@@ -892,6 +892,22 @@ interface DatabaseDao {
     @Query("DELETE FROM googleaccountentity WHERE email = :email")
     suspend fun deleteGoogleAccount(email: String)
 
+    // NeteaseAccountEntity
+    @Insert(onConflict = OnConflictStrategy.Companion.REPLACE)
+    suspend fun insertNeteaseAccount(neteaseAccountEntity: com.maxrave.domain.data.entities.NeteaseAccountEntity): Long
+
+    @Query("SELECT * FROM netease_account")
+    suspend fun getAllNeteaseAccount(): List<com.maxrave.domain.data.entities.NeteaseAccountEntity>
+
+    @Query("UPDATE netease_account SET isUsed = :isUsed WHERE userId = :userId")
+    suspend fun updateNeteaseAccountUsed(
+        isUsed: Boolean,
+        userId: Long,
+    ): Int
+
+    @Query("DELETE FROM netease_account")
+    suspend fun deleteAllNeteaseAccount()
+
     @Query("UPDATE song SET inLibrary = :inLibrary WHERE videoId = :videoId")
     suspend fun setInLibrary(
         videoId: String,
