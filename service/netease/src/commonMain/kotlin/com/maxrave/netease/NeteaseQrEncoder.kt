@@ -53,7 +53,10 @@ object NeteaseQrEncoder {
     ): Int = if (a == 0 || b == 0) 0 else exp[log[a] + log[b]]
 
     /** 生成 errorLevel=M、自动选 version 与 mask 的二维码模块矩阵;true=深色模块 */
-    fun encode(text: String): Array<BooleanArray> {
+    fun encode(
+        text: String,
+        forceMask: Int? = null,
+    ): Array<BooleanArray> {
         val bytes = text.map { (it.code and 0xFF).toByte() } // 内容是 ASCII URL
         require(bytes.size <= 84) { "QR content too long for v5-M: ${bytes.size} bytes" }
         val spec = VERSIONS.first { bytes.size + 2 <= it.dataCodewords } // 2 = 模式4bit + 计数8bit 上取整的保守估计
@@ -61,6 +64,7 @@ object NeteaseQrEncoder {
         val (dataBlocks, ecBlocks) = interleave(bits, spec)
         val total = dataBlocks.sum() + ecBlocks.sum() // 展平后的码字流长度
 
+        if (forceMask != null) return buildMatrix(spec, dataBlocks + ecBlocks, total, forceMask)
         var bestMatrix: Array<BooleanArray>? = null
         var bestPenalty = Int.MAX_VALUE
         for (mask in 0 until 8) {
@@ -122,23 +126,23 @@ object NeteaseQrEncoder {
         return dataOut to ecOut
     }
 
+    /** 标准综合除法:msg = data 后补 ecLen 个 0,逐位消首项,余式即末尾 ecLen 个码字 */
     private fun reedSolomon(
         data: List<Int>,
         ecLen: Int,
     ): List<Int> {
         var gen = listOf(1)
         for (i in 0 until ecLen) gen = polyMul(gen, listOf(1, exp[i]))
-        val res = MutableList(data.size + ecLen) { 0 }
-        data.forEach { b ->
-            val factor = b xor res.removeAt(0)
-            res.add(0)
+        val msg = (data + List(ecLen) { 0 }).toIntArray()
+        for (i in 0 until data.size) {
+            val factor = msg[i]
             if (factor != 0) {
                 for (j in gen.indices) {
-                    res[j] = res[j] xor gfMul(gen[j], factor)
+                    msg[i + j] = msg[i + j] xor gfMul(gen[j], factor)
                 }
             }
         }
-        return res.subList(0, ecLen)
+        return msg.drop(data.size).take(ecLen)
     }
 
     private fun polyMul(
@@ -249,9 +253,10 @@ object NeteaseQrEncoder {
 
         // format 信息:ECC M(2bit=00) + mask(3bit),BCH(15,5) 再异或 0x5412
         val data = mask // M=0 已隐含在高位
+        // BCH(15,5):按多项式最高位(而非 popcount)消项 —— popcount 对稀疏值会漏消
         var v = data shl 10
-        while (v.countOneBits() >= 11) {
-            v = v xor (0x537 shl (v.countOneBits() - 11))
+        while (v >= 0x400) {
+            v = v xor (0x537 shl (v.countLeadingZeroBits().let { 31 - it } - 10))
         }
         val format = ((data shl 10) or v) xor 0x5412
         fun fb(i: Int): Boolean = (format ushr (14 - i)) and 1 == 1
@@ -261,9 +266,10 @@ object NeteaseQrEncoder {
         setFunction(8, 8, fb(7))
         setFunction(7, 8, fb(8))
         for (i in 9 until 15) setFunction(14 - i, 8, fb(i))
-        // 副本二:bit0..7 → (8, n-1-i);bit8..14 → (n-15+i, 8)
-        for (i in 0 until 8) setFunction(8, n - 1 - i, fb(i))
-        for (i in 8 until 15) setFunction(n - 15 + i, 8, fb(i))
+        // 副本二(位序与副本一镜像,对照 python-qrcode setup_type_info 验证):
+        // 横向(行 8 右段):bit14..7 → (8, n-1..n-8);纵向(列 8 底段):bit6..0 → (n-7..n-1, 8)
+        for (i in 0 until 8) setFunction(8, n - 1 - i, fb(14 - i))
+        for (i in 0 until 7) setFunction(n - 7 + i, 8, fb(6 - i))
         return m
     }
 
