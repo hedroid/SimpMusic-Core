@@ -30,7 +30,9 @@ import com.maxrave.netease.searchSongs
 import com.maxrave.netease.songUrl
 import com.maxrave.netease.toplistPlaylists
 import com.maxrave.netease.userPlaylists
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
@@ -74,12 +76,13 @@ class NeteaseRepositoryImpl(
         if (!client.hasLoginCookie(withUser)) {
             return Result.failure(IllegalArgumentException("cookie 缺少 MUSIC_U"))
         }
-        client.replaceCookies(withUser)
-        Logger.d(TAG, "saveLoginCookies: replaced, verifying account…")
+        client.seedCookies(withUser) // 先只进内存会话,验证通过才落盘
+        Logger.d(TAG, "saveLoginCookies: seeded, verifying account…")
         return client.getAccountStatus().mapCatching { account ->
             Logger.d(TAG, "saveLoginCookies: account=$account")
             val valid =
                 account ?: throw IllegalStateException("MUSIC_U 无效或已过期")
+            persistCookies(withUser)
             dataStoreManager.setNeteaseAccountName(valid.nickname ?: "NetEase user")
             dataStoreManager.setNeteaseAccountThumbUrl(valid.avatarUrl ?: "")
             valid
@@ -102,7 +105,11 @@ class NeteaseRepositoryImpl(
         }.getOrDefault(emptyMap())
 
     private suspend fun persistCookies(cookies: Map<String, String>) {
-        dataStoreManager.setNeteaseCookie(json.encodeToString(cookies))
+        // NonCancellable:登录收尾协程若被取消,写盘也必须完成(现场日志显示挂起发生在
+        // 这条链路上,取消风暴下最稳妥的是不让 DataStore 写入参与取消)
+        withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+            dataStoreManager.setNeteaseCookie(json.encodeToString(cookies))
+        }
     }
 
     // ---------------------------------------------------------------- MusicSourceProvider
