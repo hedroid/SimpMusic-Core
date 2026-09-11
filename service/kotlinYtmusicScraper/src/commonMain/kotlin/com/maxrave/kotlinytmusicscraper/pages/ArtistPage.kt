@@ -16,6 +16,7 @@ import com.maxrave.kotlinytmusicscraper.models.VideoItem
 import com.maxrave.kotlinytmusicscraper.models.YTItem
 import com.maxrave.kotlinytmusicscraper.models.oddElements
 import com.maxrave.kotlinytmusicscraper.models.splitBySeparator
+import com.maxrave.kotlinytmusicscraper.utils.parseYear
 
 data class ArtistSection(
     val title: String,
@@ -197,9 +198,9 @@ data class ArtistPage(
                         year =
                             renderer.subtitle
                                 ?.runs
-                                ?.lastOrNull()
-                                ?.text
-                                ?.toIntOrNull(),
+                                // Localized years ("2016年") never survive toIntOrNull — scan the runs.
+                                ?.mapNotNull { it.text.parseYear() }
+                                ?.firstOrNull(),
                         thumbnail =
                             renderer.thumbnailRenderer.musicThumbnailRenderer?.getThumbnailUrl()
                                 ?: return null,

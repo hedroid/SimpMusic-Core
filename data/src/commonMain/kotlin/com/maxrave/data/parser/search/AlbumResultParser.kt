@@ -27,7 +27,7 @@ internal fun parseSearchAlbum(result: SearchResult): ArrayList<AlbumsResult> {
                 thumbnails = listOf(Thumbnail(544, Regex("([wh])120").replace(album.thumbnail, "$1544"), 544)),
                 title = album.title,
                 type = "Album",
-                year = album.year.toString(),
+                year = album.year?.toString() ?: "",
             ),
         )
     }

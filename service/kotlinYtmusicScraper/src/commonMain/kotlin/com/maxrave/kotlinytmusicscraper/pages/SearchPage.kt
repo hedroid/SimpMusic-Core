@@ -12,6 +12,7 @@ import com.maxrave.kotlinytmusicscraper.models.YTItem
 import com.maxrave.kotlinytmusicscraper.models.oddElements
 import com.maxrave.kotlinytmusicscraper.models.splitBySeparator
 import com.maxrave.kotlinytmusicscraper.utils.parseTime
+import com.maxrave.kotlinytmusicscraper.utils.parseYear
 
 data class SearchResult(
     val items: List<YTItem>,
@@ -185,7 +186,7 @@ object SearchPage {
                                 .getOrNull(2)
                                 ?.firstOrNull()
                                 ?.text
-                                ?.toIntOrNull(),
+                                ?.parseYear(),
                         thumbnail =
                             renderer.thumbnail?.musicThumbnailRenderer?.getThumbnailUrl()
                                 ?: return null,

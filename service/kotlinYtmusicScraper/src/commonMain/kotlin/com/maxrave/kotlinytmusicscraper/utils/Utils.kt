@@ -36,6 +36,14 @@ fun String.parseTime(): Int? {
     return null
 }
 
+// Subtitles carry the year localized ("2016", "2016年", "2016년"), so toIntOrNull() only works
+// in English and every other locale parsed null — which then reached the UI as the literal
+// string "null". Pick the digits out of the run instead.
+fun String.parseYear(): Int? {
+    val digits = filter { it.isDigit() }
+    return if (digits.length == 4) digits.toIntOrNull() else null
+}
+
 fun generateNetscapeCookies(
     cookies: Map<String, String>,
     domain: String = ".example.com",

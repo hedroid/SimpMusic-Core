@@ -57,7 +57,7 @@ internal fun parseArtistData(data: ArtistPage): ArtistBrowse {
                 isExplicit = false,
                 thumbnails = listOf(Thumbnail(544, album.thumbnail, 544)),
                 title = album.title,
-                year = album.year.toString(),
+                year = album.year?.toString() ?: "",
             ),
         )
     }
@@ -68,7 +68,7 @@ internal fun parseArtistData(data: ArtistPage): ArtistBrowse {
                 browseId = single.browseId,
                 thumbnails = listOf(Thumbnail(544, single.thumbnail, 544)),
                 title = single.title,
-                year = single.year.toString(),
+                year = single.year?.toString() ?: "",
             ),
         )
     }

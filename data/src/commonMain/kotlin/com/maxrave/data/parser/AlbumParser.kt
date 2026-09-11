@@ -51,7 +51,7 @@ internal fun parseAlbumData(data: AlbumPage): AlbumBrowse {
                 category = null,
                 feedbackTokens = null,
                 resultType = null,
-                year = data.album.year.toString(),
+                year = data.album.year?.toString(),
             ),
         )
     }
@@ -67,7 +67,7 @@ internal fun parseAlbumData(data: AlbumPage): AlbumBrowse {
         trackCount = songs.size,
         tracks = songs,
         type = "Album",
-        year = data.album.year.toString(),
+        year = data.album.year?.toString(),
         otherVersion =
             data.otherVersion.map {
                 ResultAlbum(
@@ -75,7 +75,7 @@ internal fun parseAlbumData(data: AlbumPage): AlbumBrowse {
                     isExplicit = it.explicit,
                     thumbnails = listOf(Thumbnail(800, it.thumbnail, 800)),
                     title = it.title,
-                    year = data.album.year.toString(),
+                    year = data.album.year?.toString() ?: "",
                 )
             },
     )

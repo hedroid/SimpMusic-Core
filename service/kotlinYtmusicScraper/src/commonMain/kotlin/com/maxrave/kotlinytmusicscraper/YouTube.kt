@@ -81,6 +81,7 @@ import com.maxrave.kotlinytmusicscraper.parser.getPlaylistContinuation
 import com.maxrave.kotlinytmusicscraper.parser.getReloadParams
 import com.maxrave.kotlinytmusicscraper.parser.getSuggestionSongItems
 import com.maxrave.kotlinytmusicscraper.parser.hasReloadParams
+import com.maxrave.kotlinytmusicscraper.utils.parseYear
 import com.maxrave.logger.Logger
 import com.mohamedrejeb.ksoup.html.parser.KsoupHtmlHandler
 import com.mohamedrejeb.ksoup.html.parser.KsoupHtmlParser
@@ -403,9 +404,10 @@ class YouTube {
                             ?.musicResponsiveHeaderRenderer
                             ?.subtitle
                             ?.runs
-                            ?.lastOrNull()
-                            ?.text
-                            ?.toIntOrNull(),
+                            // "Single • 2016" in English, "单曲 • 2016年" in Chinese — the year
+                            // is not always the last run, so scan for whichever run parses.
+                            ?.mapNotNull { it.text.parseYear() }
+                            ?.firstOrNull(),
                     thumbnail =
                         response.contents.twoColumnBrowseResultsRenderer.tabs
                             .firstOrNull()
