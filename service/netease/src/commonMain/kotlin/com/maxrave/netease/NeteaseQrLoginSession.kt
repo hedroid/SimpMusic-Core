@@ -65,9 +65,10 @@ class NeteaseQrLoginSession {
             val fp = fingerprint
             // WebView 指纹 cookie 先入会话(真实浏览器环境的 NMTID/__csrf/sDeviceId)
             fp?.cookies?.forEach { (k, v) -> if (v.isNotBlank()) cookies[k] = v }
+            // chainId 总长压在 ~12 字符:chainId 绑定版扫码 URL 已 93 字节,v6-M 上限 106
             chainId =
-                "v1_${fp?.sDeviceId?.ifBlank { "unknown-${(0..999_999).random()}" } ?: "unknown-${(0..999_999).random()}"}" +
-                    "_web_login_${kotlin.random.Random.nextLong(1_000_000_000L, 9_000_000_000L)}"
+                fp?.sDeviceId?.take(12)?.ifBlank { null }
+                    ?: kotlin.random.Random.nextLong(1_000_000_000_000L, 9_000_000_000_000L).toString()
             val body = weApiPost("/login/qrcode/unikey", mapOf("type" to 1, "noCheckToken" to true)).text.toJson()
             val code = body.nInt("code") ?: -1
             val key = body.nStr("unikey").orEmpty()

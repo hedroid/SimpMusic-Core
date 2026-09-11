@@ -30,6 +30,8 @@ object NeteaseQrEncoder {
             VersionSpec(29, 44, 26, 1, intArrayOf(6, 22)),
             VersionSpec(33, 64, 18, 2, intArrayOf(6, 26)),
             VersionSpec(37, 86, 24, 2, intArrayOf(6, 30)),
+            // v6-M: 4 blocks x 27 data, ec 16; v6 起尺寸 41,<v7 无需版本信息块
+            VersionSpec(41, 108, 16, 4, intArrayOf(6, 34)),
         )
 
     // GF(256) over 0x11D
@@ -58,7 +60,7 @@ object NeteaseQrEncoder {
         forceMask: Int? = null,
     ): Array<BooleanArray> {
         val bytes = text.map { (it.code and 0xFF).toByte() } // 内容是 ASCII URL
-        require(bytes.size <= 84) { "QR content too long for v5-M: ${bytes.size} bytes" }
+        require(bytes.size <= 106) { "QR content too long for v6-M: ${bytes.size} bytes" }
         val spec = VERSIONS.first { bytes.size + 2 <= it.dataCodewords } // 2 = 模式4bit + 计数8bit 上取整的保守估计
         val bits = buildBitStream(bytes, spec.dataCodewords)
         val (dataBlocks, ecBlocks) = interleave(bits, spec)
