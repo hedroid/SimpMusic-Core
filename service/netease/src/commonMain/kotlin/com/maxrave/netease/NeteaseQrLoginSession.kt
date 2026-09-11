@@ -69,7 +69,9 @@ class NeteaseQrLoginSession {
                     extraHeaders = mapOf("x-loginmethod" to "QrCode"),
                 )
             val body = result.text.toJson()
-            when (body.nInt("code") ?: -1) {
+            val codeValue = body.nInt("code") ?: -1
+            com.maxrave.logger.Logger.d(TAG, "poll code=$codeValue")
+            when (codeValue) {
                 801 -> NeteaseQrStatus.WaitingForScan
                 802 -> NeteaseQrStatus.ScannedWaitingForConfirm
                 803 -> {
