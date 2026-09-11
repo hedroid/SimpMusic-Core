@@ -592,6 +592,112 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    // ------------------------------------------------ 网易云音源(feat/netease-source)
+
+    override val neteaseCookie =
+        settingsDataStore.data.map { preferences ->
+            preferences[NETEASE_COOKIE] ?: ""
+        }
+
+    override suspend fun setNeteaseCookie(cookie: String) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[NETEASE_COOKIE] = cookie
+            }
+        }
+    }
+
+    override val neteaseAccountName =
+        settingsDataStore.data.map { preferences ->
+            preferences[NETEASE_ACCOUNT_NAME] ?: ""
+        }
+
+    override suspend fun setNeteaseAccountName(name: String) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[NETEASE_ACCOUNT_NAME] = name
+            }
+        }
+    }
+
+    override val neteaseAccountThumbUrl =
+        settingsDataStore.data.map { preferences ->
+            preferences[NETEASE_ACCOUNT_THUMB] ?: ""
+        }
+
+    override suspend fun setNeteaseAccountThumbUrl(url: String) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[NETEASE_ACCOUNT_THUMB] = url
+            }
+        }
+    }
+
+    override val selectedSource =
+        settingsDataStore.data.map { preferences ->
+            preferences[SELECTED_SOURCE] ?: "YOUTUBE_MUSIC"
+        }
+
+    override suspend fun setSelectedSource(source: String) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[SELECTED_SOURCE] = source
+            }
+        }
+    }
+
+    override val neteaseQuality =
+        settingsDataStore.data.map { preferences ->
+            preferences[NETEASE_QUALITY] ?: "EXHIGH"
+        }
+
+    override suspend fun setNeteaseQuality(quality: String) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[NETEASE_QUALITY] = quality
+            }
+        }
+    }
+
+    override val neteaseDownloadQuality =
+        settingsDataStore.data.map { preferences ->
+            preferences[NETEASE_DOWNLOAD_QUALITY] ?: "LOSSLESS"
+        }
+
+    override suspend fun setNeteaseDownloadQuality(quality: String) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[NETEASE_DOWNLOAD_QUALITY] = quality
+            }
+        }
+    }
+
+    override val neteaseFollowSync =
+        settingsDataStore.data.map { preferences ->
+            preferences[NETEASE_FOLLOW_SYNC] ?: FALSE
+        }
+
+    override suspend fun setNeteaseFollowSync(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[NETEASE_FOLLOW_SYNC] = if (enabled) TRUE else FALSE
+            }
+        }
+    }
+
+    override val neteaseAutoSwitch =
+        settingsDataStore.data.map { preferences ->
+            preferences[NETEASE_AUTO_SWITCH] ?: TRUE
+        }
+
+    override suspend fun setNeteaseAutoSwitch(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[NETEASE_AUTO_SWITCH] = if (enabled) TRUE else FALSE
+            }
+        }
+    }
+
     override val equalizerEnabled: Flow<String> =
         settingsDataStore.data.map { preferences ->
             preferences[EQUALIZER_ENABLED] ?: FALSE
@@ -1837,6 +1943,14 @@ internal class DataStoreManagerImpl(
         val VIDEO_QUALITY = stringPreferencesKey("video_quality")
         val PLAYER_VOLUME = floatPreferencesKey("player_volume")
         val SPDC = stringPreferencesKey("sp_dc")
+        val NETEASE_COOKIE = stringPreferencesKey("netease_cookie")
+        val NETEASE_ACCOUNT_NAME = stringPreferencesKey("netease_account_name")
+        val NETEASE_ACCOUNT_THUMB = stringPreferencesKey("netease_account_thumb")
+        val SELECTED_SOURCE = stringPreferencesKey("selected_source")
+        val NETEASE_QUALITY = stringPreferencesKey("netease_quality")
+        val NETEASE_DOWNLOAD_QUALITY = stringPreferencesKey("netease_download_quality")
+        val NETEASE_FOLLOW_SYNC = stringPreferencesKey("netease_follow_sync")
+        val NETEASE_AUTO_SWITCH = stringPreferencesKey("netease_auto_switch")
         val SPOTIFY_LYRICS = stringPreferencesKey("spotify_lyrics")
         val SYNC_FOLLOW_TO_YOUTUBE = stringPreferencesKey("sync_follow_to_youtube")
         val EQUALIZER_AUTOEQ_PROFILE = stringPreferencesKey("equalizer_autoeq_profile")

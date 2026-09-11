@@ -76,6 +76,7 @@ kotlin {
                 implementation(projects.lyricsService)
                 implementation(projects.spotify)
                 implementation(projects.kotlinYtmusicScraper)
+                implementation(projects.netease)
                 implementation(projects.kizzy)
                 implementation(projects.listenTogether)
 

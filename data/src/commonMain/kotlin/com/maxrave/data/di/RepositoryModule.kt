@@ -5,6 +5,7 @@ import com.maxrave.data.io.fileDir
 import com.maxrave.data.repository.AccountRepositoryImpl
 import com.maxrave.data.repository.AlbumRepositoryImpl
 import com.maxrave.data.repository.AnalyticsRepositoryImpl
+import com.maxrave.data.repository.NeteaseRepositoryImpl
 import com.maxrave.data.repository.ArtistRepositoryImpl
 import com.maxrave.data.repository.AutoEqRepositoryImpl
 import com.maxrave.data.lyrics.LyricsRomanizerRepositoryImpl
@@ -41,6 +42,11 @@ import org.koin.dsl.module
 
 val repositoryModule =
     module {
+        // 网易云音源适配层 —— lazy: 未启用网易云时不应付出任何初始化成本
+        single<NeteaseRepositoryImpl> {
+            NeteaseRepositoryImpl(get())
+        }
+
         single<AccountRepository>(createdAtStart = true) {
             AccountRepositoryImpl(get(), get())
         }

@@ -1,0 +1,47 @@
+[
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "commons-codec",
+        "name": "commons-codec"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "commons-codec",
+        "name": "commons-codec"
+      }
+    },
+    "file": "/Users/heweijie/.gradle/caches/modules-2/files-2.1/commons-codec/commons-codec/1.22.1/da09bcdb330deef7cfee70f30c6889fda70d5ebf/commons-codec-1.22.1.jar",
+    "sourceSetName": null
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "org.slf4j",
+        "name": "slf4j-android"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "org.slf4j",
+        "name": "slf4j-android"
+      }
+    },
+    "file": "/Users/heweijie/.gradle/caches/modules-2/files-2.1/org.slf4j/slf4j-android/1.7.36/136797e409128939b88a89b8a8880550b7c12e8/slf4j-android-1.7.36.jar",
+    "sourceSetName": null
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "org.slf4j",
+        "name": "slf4j-api"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "org.slf4j",
+        "name": "slf4j-api"
+      }
+    },
+    "file": "/Users/heweijie/.gradle/caches/modules-2/files-2.1/org.slf4j/slf4j-api/1.7.36/6c62681a2f655b49963a5983b8b0950a6120ae14/slf4j-api-1.7.36.jar",
+    "sourceSetName": null
+  }
+]

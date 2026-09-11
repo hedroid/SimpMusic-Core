@@ -1,0 +1,1 @@
+/Users/heweijie/.konan/kotlin-native-prebuilt-macos-aarch64-2.4.10

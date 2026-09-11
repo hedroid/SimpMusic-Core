@@ -1,0 +1,512 @@
+[
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "org.jetbrains.kotlin",
+        "name": "kotlin-stdlib"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "org.jetbrains.kotlin",
+        "name": "kotlin-stdlib"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/org.jetbrains.kotlin-kotlin-stdlib-2.4.10-commonMain-pEpArg.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "SimpMusic",
+        "name": "ktorExt"
+      },
+      "componentId": {
+        "type": "project",
+        "projectPath": ":ktorExt",
+        "buildPath": ":"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/ktorExt/build/classes/kotlin/metadata/commonMain",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-client-core"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-client-core"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-client-core-3.5.2-jvmAndPosixMain--7nPhQ.klib",
+    "sourceSetName": "jvmAndPosixMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-client-core"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-client-core"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-client-core-3.5.2-commonMain--7nPhQ.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-client-encoding"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-client-encoding"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-client-encoding-3.5.2-commonMain-esRxgQ.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-serialization-kotlinx-json"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-serialization-kotlinx-json"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-serialization-kotlinx-json-3.5.2-commonMain-TyAjGQ.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-client-content-negotiation"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-client-content-negotiation"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-client-content-negotiation-3.5.2-commonMain-HYKlnw.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-client-logging"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-client-logging"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-client-logging-3.5.2-commonMain-h47Few.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "commons-codec",
+        "name": "commons-codec"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "commons-codec",
+        "name": "commons-codec"
+      }
+    },
+    "file": "/Users/heweijie/.gradle/caches/modules-2/files-2.1/commons-codec/commons-codec/1.22.1/da09bcdb330deef7cfee70f30c6889fda70d5ebf/commons-codec-1.22.1.jar",
+    "sourceSetName": null
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "org.slf4j",
+        "name": "slf4j-android"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "org.slf4j",
+        "name": "slf4j-android"
+      }
+    },
+    "file": "/Users/heweijie/.gradle/caches/modules-2/files-2.1/org.slf4j/slf4j-android/1.7.36/136797e409128939b88a89b8a8880550b7c12e8/slf4j-android-1.7.36.jar",
+    "sourceSetName": null
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "com.ionspin.kotlin",
+        "name": "bignum"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "com.ionspin.kotlin",
+        "name": "bignum"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/com.ionspin.kotlin-bignum-0.3.10-commonMain-8p_zqQ.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-client-cio"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-client-cio"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-client-cio-3.5.2-commonMain-VKtVXQ.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "org.jetbrains.kotlinx",
+        "name": "kotlinx-coroutines-core"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "org.jetbrains.kotlinx",
+        "name": "kotlinx-coroutines-core"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/org.jetbrains.kotlinx-kotlinx-coroutines-core-1.11.0-concurrentMain-BviMwQ.klib",
+    "sourceSetName": "concurrentMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "org.jetbrains.kotlinx",
+        "name": "kotlinx-coroutines-core"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "org.jetbrains.kotlinx",
+        "name": "kotlinx-coroutines-core"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/org.jetbrains.kotlinx-kotlinx-coroutines-core-1.11.0-commonMain-BviMwQ.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-http"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-http"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-http-3.5.2-commonMain-IO4VSw.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-http-cio"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-http-cio"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-http-cio-3.5.2-jvmAndPosixMain-MJz0bQ.klib",
+    "sourceSetName": "jvmAndPosixMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-http-cio"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-http-cio"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-http-cio-3.5.2-commonMain-MJz0bQ.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-events"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-events"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-events-3.5.2-commonMain-uuFDaw.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-websocket-serialization"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-websocket-serialization"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-websocket-serialization-3.5.2-commonMain-iH8_IQ.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-sse"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-sse"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-sse-3.5.2-commonMain-F-gmyQ.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-serialization-kotlinx"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-serialization-kotlinx"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-serialization-kotlinx-3.5.2-commonMain-AxA5jw.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "org.jetbrains.kotlinx",
+        "name": "kotlinx-serialization-json"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "org.jetbrains.kotlinx",
+        "name": "kotlinx-serialization-json"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/org.jetbrains.kotlinx-kotlinx-serialization-json-1.11.0-commonMain-1M5Mww.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "org.jetbrains.kotlinx",
+        "name": "kotlinx-serialization-json-io"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "org.jetbrains.kotlinx",
+        "name": "kotlinx-serialization-json-io"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/org.jetbrains.kotlinx-kotlinx-serialization-json-io-1.11.0-commonMain-LT4sUA.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-serialization"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-serialization"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-serialization-3.5.2-commonMain-wM1nNg.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "org.slf4j",
+        "name": "slf4j-api"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "org.slf4j",
+        "name": "slf4j-api"
+      }
+    },
+    "file": "/Users/heweijie/.gradle/caches/modules-2/files-2.1/org.slf4j/slf4j-api/1.7.36/6c62681a2f655b49963a5983b8b0950a6120ae14/slf4j-api-1.7.36.jar",
+    "sourceSetName": null
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-websockets"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-websockets"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-websockets-3.5.2-commonMain-yPKxUA.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-network-tls"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-network-tls"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-network-tls-3.5.2-commonMain-bglXaA.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-utils"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-utils"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-utils-3.5.2-commonMain-obK1Wg.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "org.jetbrains.kotlinx",
+        "name": "kotlinx-serialization-core"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "org.jetbrains.kotlinx",
+        "name": "kotlinx-serialization-core"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/org.jetbrains.kotlinx-kotlinx-serialization-core-1.11.0-commonMain-POu6Pw.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-io"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-io"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-io-3.5.2-jvmAndPosixMain-gdWjcQ.klib",
+    "sourceSetName": "jvmAndPosixMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-io"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-io"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-io-3.5.2-commonMain-gdWjcQ.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "org.jetbrains.kotlinx",
+        "name": "kotlinx-io-core"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "org.jetbrains.kotlinx",
+        "name": "kotlinx-io-core"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/org.jetbrains.kotlinx-kotlinx-io-core-0.9.1-commonMain-LSdToQ.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "io.ktor",
+        "name": "ktor-network"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "io.ktor",
+        "name": "ktor-network"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/io.ktor-ktor-network-3.5.2-commonMain-yv2n3Q.klib",
+    "sourceSetName": "commonMain"
+  },
+  {
+    "moduleId": {
+      "groupAndName": {
+        "group": "org.jetbrains.kotlinx",
+        "name": "kotlinx-io-bytestring"
+      },
+      "componentId": {
+        "type": "module",
+        "group": "org.jetbrains.kotlinx",
+        "name": "kotlinx-io-bytestring"
+      }
+    },
+    "file": "/Users/heweijie/Documents/SimpMusic/core/service/netease/build/kotlinTransformedMetadataLibraries/commonMain/org.jetbrains.kotlinx-kotlinx-io-bytestring-0.9.1-commonMain-ypuSdQ.klib",
+    "sourceSetName": "commonMain"
+  }
+]

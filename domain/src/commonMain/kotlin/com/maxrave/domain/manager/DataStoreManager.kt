@@ -187,6 +187,46 @@ interface DataStoreManager {
 
     suspend fun setSpdc(spdc: String)
 
+    // ------------------------------------------------ 网易云音源(feat/netease-source)
+
+    /** 网易云会话 cookie,JSON 形式的 Map(k=v),空串=未登录 */
+    val neteaseCookie: Flow<String>
+
+    suspend fun setNeteaseCookie(cookie: String)
+
+    val neteaseAccountName: Flow<String>
+
+    suspend fun setNeteaseAccountName(name: String)
+
+    val neteaseAccountThumbUrl: Flow<String>
+
+    suspend fun setNeteaseAccountThumbUrl(url: String)
+
+    /** 当前激活音源(扇形切换写入),值为 [com.maxrave.domain.source.MusicSource].name */
+    val selectedSource: Flow<String>
+
+    suspend fun setSelectedSource(source: String)
+
+    /** 网易云在线音质(NeteaseQuality.name,8 档) */
+    val neteaseQuality: Flow<String>
+
+    suspend fun setNeteaseQuality(quality: String)
+
+    /** 网易云下载音质 */
+    val neteaseDownloadQuality: Flow<String>
+
+    suspend fun setNeteaseDownloadQuality(quality: String)
+
+    /** 关注与网易云同步(双向:关注/取关同步到账号) */
+    val neteaseFollowSync: Flow<String>
+
+    suspend fun setNeteaseFollowSync(enabled: Boolean)
+
+    /** 无版权/VIP 试听音乐自动切另一音源 */
+    val neteaseAutoSwitch: Flow<String>
+
+    suspend fun setNeteaseAutoSwitch(enabled: Boolean)
+
     /**
      * Whether following an artist in the app also subscribes to their YouTube channel.
      *

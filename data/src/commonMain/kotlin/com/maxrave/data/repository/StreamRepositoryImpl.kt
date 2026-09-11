@@ -90,6 +90,12 @@ internal class StreamRepositoryImpl(
         muxed: Boolean,
     ): Flow<String?> =
         flow {
+
+            // TODO(NETEASE_NEXT): 音源分支 —— songEntity.source == NETEASE 时改走
+            // NeteaseRepositoryImpl.getStreamUrl(videoId, isDownloading)(8 档音质自动降级);
+            // 返回 null(灰歌/仅试听)且 neteaseAutoSwitch 开启时,按 title+artist 搜 YT
+            // 同名曲自动换源播放(参考 NeriPlayer 的 scoreNeteaseAutoBiliCandidate 打分)。
+            // NewFormatEntity 落库时同样按 source 区分(FLAC/MP3 vs Opus/AAC)。
             val itag =
                 if (isDownloading) {
                     QUALITY.itagOf(dataStoreManager.downloadQuality.first())

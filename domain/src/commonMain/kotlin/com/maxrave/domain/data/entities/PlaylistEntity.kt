@@ -1,10 +1,12 @@
 package com.maxrave.domain.data.entities
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.maxrave.domain.data.type.PlaylistType
 import com.maxrave.domain.data.type.RecentlyType
 import com.maxrave.domain.extension.now
+import com.maxrave.domain.source.MusicSource
 import com.maxrave.domain.utils.isRadioPlaylistId
 import kotlinx.datetime.LocalDateTime
 
@@ -12,6 +14,9 @@ import kotlinx.datetime.LocalDateTime
 data class PlaylistEntity(
     @PrimaryKey(autoGenerate = false)
     val id: String = "",
+    /** 见 SongEntity.source:方案B 独立来源列 */
+    @ColumnInfo(defaultValue = "YOUTUBE_MUSIC")
+    val source: String = MusicSource.YOUTUBE_MUSIC.name,
     val author: String? = "",
     val description: String = "",
     val duration: String = "",

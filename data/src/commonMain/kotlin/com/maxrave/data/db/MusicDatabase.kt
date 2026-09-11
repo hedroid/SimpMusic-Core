@@ -41,7 +41,7 @@ import com.maxrave.domain.data.entities.analytics.PlaybackEventEntity
         YourYouTubePlaylistList::class, PlaybackEventEntity::class, EventArtistEntity::class,
         AutoEqEntryEntity::class, AutoEqIndexMetaEntity::class, AutoEqCurveEntity::class
     ],
-    version = 25,
+    version = 26,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 2, to = 3), AutoMigration(
@@ -87,6 +87,12 @@ import com.maxrave.domain.data.entities.analytics.PlaybackEventEntity
         AutoMigration(24, 25),
         AutoMigration(23, 25),
         AutoMigration(22, 25),
+        // 26 adds SongEntity.source / PlaylistEntity.source (NOT NULL with a YOUTUBE_MUSIC
+        // default, so every pre-multi-source row lands on the right side) — plain ADD COLUMN,
+        // no spec needed.
+        AutoMigration(25, 26),
+        AutoMigration(24, 26),
+        AutoMigration(23, 26),
     ],
 )
 @TypeConverters(Converters::class)
