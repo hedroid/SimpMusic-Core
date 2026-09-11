@@ -14,6 +14,7 @@ package com.maxrave.netease
 
 import com.maxrave.ktorext.getEngine
 import com.maxrave.logger.Logger
+import com.maxrave.netease.model.NeteaseFingerprint
 import com.maxrave.netease.model.NeteaseQrSession
 import com.maxrave.netease.model.NeteaseQrStatus
 import io.ktor.client.HttpClient
@@ -35,6 +36,14 @@ import kotlinx.serialization.json.jsonObject
 import kotlin.random.Random
 
 class NeteaseQrLoginSession {
+    /** NeriPlayer 易盾指纹:unikey/check 携带 ydDeviceToken + x-login-chain-id 以通过 -462 风控 */
+    private var fingerprint: NeteaseFingerprint? = null
+    private var chainId: String = ""
+
+    fun setFingerprint(fp: NeteaseFingerprint?) {
+        fingerprint = fp
+    }
+
     private val http =
         HttpClient(getEngine()) {
             expectSuccess = false
@@ -53,20 +62,43 @@ class NeteaseQrLoginSession {
 
     suspend fun createSession(): Result<NeteaseQrSession> =
         runCatching {
+            val fp = fingerprint
+            // WebView 指纹 cookie 先入会话(真实浏览器环境的 NMTID/__csrf/sDeviceId)
+            fp?.cookies?.forEach { (k, v) -> if (v.isNotBlank()) cookies[k] = v }
+            chainId =
+                "v1_${fp?.sDeviceId?.ifBlank { "unknown-${(0..999_999).random()}" } ?: "unknown-${(0..999_999).random()}"}" +
+                    "_web_login_${kotlin.random.Random.nextLong(1_000_000_000L, 9_000_000_000L)}"
             val body = weApiPost("/login/qrcode/unikey", mapOf("type" to 1, "noCheckToken" to true)).text.toJson()
             val code = body.nInt("code") ?: -1
             val key = body.nStr("unikey").orEmpty()
             check(code == 200 && key.isNotEmpty()) { "QR unikey failed, code=$code" }
-            NeteaseQrSession(key = key, qrContent = "https://music.163.com/login?codekey=$key")
+            // NeriPlayer buildScanLoginUrl:chainId 绑定进扫码链接
+            NeteaseQrSession(
+                key = key,
+                qrContent = "https://music.163.com/st/platform/scanlogin?codekey=$key&chainId=$chainId",
+            )
         }
 
     suspend fun checkLogin(key: String): Result<NeteaseQrStatus> =
         runCatching {
+            val ydToken = fingerprint?.ydToken.orEmpty()
+            val params =
+                buildMap<String, Any?> {
+                    put("type", 1)
+                    put("noCheckToken", true)
+                    put("key", key)
+                    if (ydToken.isNotBlank()) put("ydDeviceToken", ydToken)
+                }
+            val headers =
+                buildMap<String, String> {
+                    put("x-loginmethod", "QrCode")
+                    if (chainId.isNotBlank()) put("x-login-chain-id", chainId)
+                }
             val result =
                 weApiPost(
                     "/login/qrcode/client/login",
-                    mapOf("type" to 1, "noCheckToken" to true, "key" to key),
-                    extraHeaders = mapOf("x-loginmethod" to "QrCode"),
+                    params,
+                    extraHeaders = headers,
                 )
             val body = result.text.toJson()
             val codeValue = body.nInt("code") ?: -1
@@ -74,6 +106,10 @@ class NeteaseQrLoginSession {
             when (codeValue) {
                 801 -> NeteaseQrStatus.WaitingForScan
                 802 -> NeteaseQrStatus.ScannedWaitingForConfirm
+                -462 -> {
+                    Logger.d(TAG, "poll risk-controlled (-462)")
+                    NeteaseQrStatus.RiskControl
+                }
                 803 -> {
                     mergeBodyCookies(body)
                     val verified = verifyConfirmedLogin(result.refreshToken)
@@ -192,6 +228,7 @@ class NeteaseQrLoginSession {
     }
 
     private fun String.toJson(): JsonObject = json.parseToJsonElement(this).jsonObject
+
 
     private fun JsonObject.nInt(key: String): Int? = (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.intOrNull
 

@@ -22,7 +22,17 @@ sealed class NeteaseQrStatus {
 
     /** 800: 二维码过期,需要重新生成 */
     data object Expired : NeteaseQrStatus()
+
+    /** -462: 风控拦截(需设备指纹/滑块),换码无效,建议改用网页登录 */
+    data object RiskControl : NeteaseQrStatus()
 }
+
+/** 易盾设备指纹快照(NeriPlayer NeteaseYdDeviceSnapshot):token + sDeviceId + WebView 会话 cookie */
+data class NeteaseFingerprint(
+    val ydToken: String = "",
+    val sDeviceId: String = "",
+    val cookies: Map<String, String> = emptyMap(),
+)
 
 /** 账号信息(/w/nuser/account/get 摘要) */
 data class NeteaseAccount(

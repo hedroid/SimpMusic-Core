@@ -44,6 +44,7 @@ kotlin {
                 implementation(projects.common)
                 implementation(libs.logging)
                 implementation(libs.kotlinx.bigint)
+                implementation(libs.kotlinx.datetime)
             }
         }
 
