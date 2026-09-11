@@ -142,6 +142,15 @@ class NeteaseRepositoryImpl(
             emit(dao.getAllNeteaseAccount())
         }.flowOn(Dispatchers.IO)
 
+    /** 访客模式:清当前会话但保留账户表(区别于 logout 清光),随时可点回账户切换回来 */
+    suspend fun useGuest() {
+        client.logout()
+        dataStoreManager.setNeteaseCookie("")
+        dataStoreManager.setNeteaseAccountName("")
+        dataStoreManager.setNeteaseAccountThumbUrl("")
+        dao.getAllNeteaseAccount().forEach { dao.updateNeteaseAccountUsed(isUsed = false, userId = it.userId) }
+    }
+
     /** 切换账户:换 DataStore cookie + 内存会话 + 账户名/头像 */
     suspend fun setUsedNeteaseAccount(userId: Long) {
         val accounts = dao.getAllNeteaseAccount()
