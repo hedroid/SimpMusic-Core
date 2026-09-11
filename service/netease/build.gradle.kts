@@ -41,6 +41,7 @@ kotlin {
                 implementation(libs.ktor.client.logging)
 
                 implementation(libs.common)
+                implementation(projects.common)
                 implementation(libs.logging)
                 implementation(libs.kotlinx.bigint)
             }

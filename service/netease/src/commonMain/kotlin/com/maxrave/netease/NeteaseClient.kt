@@ -42,8 +42,16 @@ class NeteaseClient(
     private val http =
         HttpClient(getEngine()) {
             expectSuccess = false
+            install(io.ktor.client.plugins.HttpTimeout) {
+                requestTimeoutMillis = 15_000
+                connectTimeoutMillis = 10_000
+            }
         }
     private val json = Json { ignoreUnknownKeys = true }
+
+    private companion object {
+        const val TAG = "NeteaseClient"
+    }
     private val deviceId: String = NeteaseCrypto.generateDeviceId()
 
     private val cookieMutex = Mutex()
@@ -123,6 +131,10 @@ class NeteaseClient(
             }
         // 合并 Set-Cookie(登录类接口靠它拿 MUSIC_U)
         val setCookies = response.headers.getAll(HttpHeaders.SetCookie).orEmpty()
+        com.maxrave.logger.Logger.d(
+            TAG,
+            "POST $url -> ${response.status.value}, setCookies=${setCookies.map { it.substringBefore('=') }}",
+        )
         if (setCookies.isNotEmpty()) {
             mergeSetCookies(setCookies)
         }
@@ -200,7 +212,24 @@ class NeteaseClient(
             when (body["code"].primitiveInt() ?: -1) {
                 801 -> NeteaseQrStatus.WaitingForScan
                 802 -> NeteaseQrStatus.ScannedWaitingForConfirm
-                803 -> NeteaseQrStatus.Confirmed(currentCookies())
+                803 -> {
+                    // 803 的 cookie 同时出现在 Set-Cookie 头和 body.cookie;引擎(尤其 HTTP/2)可能
+                    // 不透传全部 Set-Cookie,以 body 兜底合并,避免"扫码成功但拿不到 MUSIC_U"
+                    val bodyCookie = (body["cookie"] as? JsonPrimitive)?.content.orEmpty()
+                    val fromBody =
+                        bodyCookie.split(";")
+                            .mapNotNull { part ->
+                                val name = part.substringBefore('=', "").trim()
+                                val value = part.substringAfter('=', "").trim()
+                                if (name.isEmpty()) null else name to value
+                            }.toMap()
+                    val merged = currentCookies() + fromBody
+                    com.maxrave.logger.Logger.d(
+                        TAG,
+                        "QR 803 confirmed, headerCookies=${currentCookies().keys} bodyCookies=${fromBody.keys}",
+                    )
+                    NeteaseQrStatus.Confirmed(merged)
+                }
                 else -> NeteaseQrStatus.Expired // 800 及未知码一律按过期重新生成
             }
         }

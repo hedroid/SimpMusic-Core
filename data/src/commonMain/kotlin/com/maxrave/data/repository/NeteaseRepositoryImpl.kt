@@ -7,6 +7,7 @@ import com.maxrave.domain.data.model.home.HomeItem
 import com.maxrave.domain.data.model.searchResult.songs.Thumbnail
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.source.MusicSource
+import com.maxrave.logger.Logger
 import com.maxrave.domain.source.MusicSourceProvider
 import com.maxrave.domain.source.ProviderLyrics
 import com.maxrave.domain.source.ProviderRadioSession
@@ -46,6 +47,10 @@ class NeteaseRepositoryImpl(
 ) : MusicSourceProvider {
     override val source: MusicSource = MusicSource.NETEASE
 
+    private companion object {
+        const val TAG = "NeteaseRepo"
+    }
+
     private val json = Json { ignoreUnknownKeys = true }
 
     val client =
@@ -65,11 +70,14 @@ class NeteaseRepositoryImpl(
     /** 任意登录方式拿到 cookie 后走这里:校验 + 落盘 + 缓存账号摘要 */
     suspend fun saveLoginCookies(cookies: Map<String, String>): Result<NeteaseAccount> {
         val withUser = cookies.filterValues { it.isNotBlank() }
+        Logger.d(TAG, "saveLoginCookies: keys=${withUser.keys} hasMusicU=${client.hasLoginCookie(withUser)}")
         if (!client.hasLoginCookie(withUser)) {
             return Result.failure(IllegalArgumentException("cookie 缺少 MUSIC_U"))
         }
         client.replaceCookies(withUser)
+        Logger.d(TAG, "saveLoginCookies: replaced, verifying account…")
         return client.getAccountStatus().mapCatching { account ->
+            Logger.d(TAG, "saveLoginCookies: account=$account")
             val valid =
                 account ?: throw IllegalStateException("MUSIC_U 无效或已过期")
             dataStoreManager.setNeteaseAccountName(valid.nickname ?: "NetEase user")
@@ -77,6 +85,7 @@ class NeteaseRepositoryImpl(
             valid
         }.onFailure {
             // 校验失败则清掉,不留半登录态
+            Logger.e(TAG, "saveLoginCookies failed", it)
             logout()
         }
     }

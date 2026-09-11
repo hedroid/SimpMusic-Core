@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="NeteaseAccountProbe[jvm]" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-09-11T10:02:11.214Z" hostname="bogon" time="0.484">
+  <properties/>
+  <testcase name="probeAccountStatus[jvm]" classname="com.maxrave.netease.NeteaseAccountProbe" time="0.482"/>
+  <system-out><![CDATA[PROBE cookies keys: [MUSIC_R_U, MUSIC_A_T, MUSIC_R_T, MUSIC_SNS, __csrf, MUSIC_U]
+]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+SLF4J(W): Class path contains SLF4J bindings targeting slf4j-api versions 1.7.x or earlier.
+SLF4J(W): Ignoring binding found at [jar:file:/Users/heweijie/.gradle/caches/modules-2/files-2.1/org.slf4j/slf4j-android/1.7.36/136797e409128939b88a89b8a8880550b7c12e8/slf4j-android-1.7.36.jar!/org/slf4j/impl/StaticLoggerBinder.class]
+SLF4J(W): See https://www.slf4j.org/codes.html#ignoredBindings for an explanation.
+]]></system-err>
+</testsuite>
