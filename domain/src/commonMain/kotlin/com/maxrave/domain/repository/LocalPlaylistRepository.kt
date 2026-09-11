@@ -79,6 +79,9 @@ interface LocalPlaylistRepository {
 
     fun getAllDownloadingLocalPlaylists(): Flow<List<LocalPlaylistEntity>>
 
+    /** Fully-downloaded local playlists, the piece the Library's downloaded-playlists grid has always been missing. */
+    fun getDownloadedLocalPlaylists(): Flow<List<LocalPlaylistEntity>>
+
     fun listTrackFlow(id: Long): Flow<List<String>>
 
     /**

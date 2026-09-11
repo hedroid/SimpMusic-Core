@@ -269,17 +269,31 @@ internal class DownloadUtils(
                     val audio = it.value.first?.state
                     val video = it.value.second?.state
                     val combineState =
-                        when (audio to video) {
-                            Download.STATE_COMPLETED to Download.STATE_COMPLETED -> DownloadState.STATE_DOWNLOADED
-                            Download.STATE_FAILED to Download.STATE_FAILED -> DownloadState.STATE_NOT_DOWNLOADED
-                            Download.STATE_QUEUED to Download.STATE_QUEUED -> DownloadState.STATE_PREPARING
-                            Download.STATE_COMPLETED to null -> DownloadState.STATE_DOWNLOADED
-                            Download.STATE_FAILED to null -> DownloadState.STATE_NOT_DOWNLOADED
-                            Download.STATE_QUEUED to null -> DownloadState.STATE_PREPARING
-                            null to Download.STATE_COMPLETED -> DownloadState.STATE_DOWNLOADING
-                            null to Download.STATE_QUEUED -> DownloadState.STATE_PREPARING
-                            null to Download.STATE_FAILED -> DownloadState.STATE_NOT_DOWNLOADED
-                            else -> DownloadState.STATE_DOWNLOADING
+                        // Removal transits through STOPPED/REMOVING/RESTARTING; classifying those
+                        // as NOT_DOWNLOADED (rather than the "downloading" fall-through below)
+                        // keeps removeDownload() from writing the song back as "downloading" —
+                        // which container watchers read as a live download and re-queue.
+                        if (audio == Download.STATE_STOPPED ||
+                            audio == Download.STATE_REMOVING ||
+                            audio == Download.STATE_RESTARTING ||
+                            video == Download.STATE_STOPPED ||
+                            video == Download.STATE_REMOVING ||
+                            video == Download.STATE_RESTARTING
+                        ) {
+                            DownloadState.STATE_NOT_DOWNLOADED
+                        } else {
+                            when (audio to video) {
+                                Download.STATE_COMPLETED to Download.STATE_COMPLETED -> DownloadState.STATE_DOWNLOADED
+                                Download.STATE_FAILED to Download.STATE_FAILED -> DownloadState.STATE_NOT_DOWNLOADED
+                                Download.STATE_QUEUED to Download.STATE_QUEUED -> DownloadState.STATE_PREPARING
+                                Download.STATE_COMPLETED to null -> DownloadState.STATE_DOWNLOADED
+                                Download.STATE_FAILED to null -> DownloadState.STATE_NOT_DOWNLOADED
+                                Download.STATE_QUEUED to null -> DownloadState.STATE_PREPARING
+                                null to Download.STATE_COMPLETED -> DownloadState.STATE_DOWNLOADING
+                                null to Download.STATE_QUEUED -> DownloadState.STATE_PREPARING
+                                null to Download.STATE_FAILED -> DownloadState.STATE_NOT_DOWNLOADED
+                                else -> DownloadState.STATE_DOWNLOADING
+                            }
                         }
                     _downloadTask.update {
                         it.toMutableMap().apply {
