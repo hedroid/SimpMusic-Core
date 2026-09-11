@@ -57,6 +57,11 @@ class NeteaseClient(
     private val cookieMutex = Mutex()
     private var sessionCookies: Map<String, String> = emptyMap()
 
+    // NeriPlayer buildRequest 原样:Android 风格 UA,eapi 用
+    private val eapiUa =
+        "Mozilla/5.0 (Linux; Android 10; SimpMusic) AppleWebKit/537.36 (KHTML, like Gecko) " +
+            "Chrome/124.0.0.0 Mobile Safari/537.36"
+
     private val desktopUa =
         "Mozilla/5.0 (Macintosh; Intel Mac 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) " +
             "Chrome/129.0.0.0 Safari/537.36"
@@ -103,23 +108,49 @@ class NeteaseClient(
     suspend fun callEApi(
         path: String,
         params: Map<String, Any?>,
-    ): JsonObject = post(
-        url = "https://interface.music.163.com/eapi$path",
-        form = NeteaseCrypto.eApiEncrypt(path, params),
-    )
+    ): JsonObject {
+        val body =
+            post(
+                url = "https://interface.music.163.com/eapi$path",
+                form = NeteaseCrypto.eApiEncrypt(path, params),
+                profile = HeaderProfile.EAPI,
+            )
+        if (path.contains("login")) {
+            // 只记 code/message/cookie 键名,不落敏感值
+            com.maxrave.logger.Logger.d(
+                TAG,
+                "eapi$path code=${(body["code"] as? kotlinx.serialization.json.JsonPrimitive)?.content} " +
+                    "msg=${(body["message"] as? kotlinx.serialization.json.JsonPrimitive)?.content} " +
+                    "bodyCookie=${(body["cookie"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.take(40)}",
+            )
+        }
+        return body
+    }
+
+    /** NeriPlayer buildRequest 的两种头模式:eapi 模拟官方客户端,不吃浏览器头 */
+    private enum class HeaderProfile {
+        WEAPI,
+        EAPI,
+    }
 
     private suspend fun post(
         url: String,
         form: Map<String, String>,
         extraHeaders: Map<String, String> = emptyMap(),
+        profile: HeaderProfile = HeaderProfile.WEAPI,
     ): JsonObject {
         val response =
             http.post(url) {
                 header(HttpHeaders.Cookie, buildCookieHeader())
-                header(HttpHeaders.Origin, "https://music.163.com")
-                header("Referer", "https://music.163.com")
-                header(HttpHeaders.UserAgent, desktopUa)
-                header("x-os", "web")
+                if (profile == HeaderProfile.WEAPI) {
+                    header(HttpHeaders.Origin, "https://music.163.com")
+                    header("Referer", "https://music.163.com")
+                    header(HttpHeaders.UserAgent, desktopUa)
+                    header("x-os", "web")
+                } else {
+                    header("Referer", "https://music.163.com")
+                    header(HttpHeaders.UserAgent, eapiUa)
+                }
                 extraHeaders.forEach { (k, v) -> header(k, v) }
                 setBody(
                     FormDataContent(
@@ -141,6 +172,15 @@ class NeteaseClient(
         val text = response.bodyAsText()
         if (!response.status.value.let { it in 200..299 }) {
             throw ClientRequestException(response, "HTTP ${response.status.value}: ${text.take(200)}")
+        }
+        if (url.contains("login") || url.contains("captcha")) {
+            val bodyObj = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()
+            com.maxrave.logger.Logger.d(
+                TAG,
+                "login-body code=${(bodyObj?.get("code") as? kotlinx.serialization.json.JsonPrimitive)?.content} " +
+                    "msg=${(bodyObj?.get("message") as? kotlinx.serialization.json.JsonPrimitive)?.content} " +
+                    "hasCookieField=${bodyObj?.containsKey("cookie") == true}",
+            )
         }
         return json.parseToJsonElement(text).jsonObject
     }
@@ -265,14 +305,14 @@ class NeteaseClient(
             )
         }
 
-    /** 手机号+验证码登录 */
+    /** 手机号+验证码登录(weapi,与网页版同通道;响应 Set-Cookie 与 body.cookie 都会被收下) */
     suspend fun loginByCaptcha(
         phone: String,
         captcha: String,
         countryCode: String = "86",
     ): Result<JsonObject> =
         runCatching {
-            callEApi(
+            callWeApi(
                 "/w/login/cellphone",
                 mapOf(
                     "phone" to phone,
