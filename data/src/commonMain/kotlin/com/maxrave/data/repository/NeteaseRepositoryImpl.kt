@@ -296,13 +296,21 @@ class NeteaseRepositoryImpl(
     // 主页复用适配:把网易数据映射进上游 HomeScreen 的 Mood/Chart 形状
     // ----------------------------------------------------------------------------
 
-    /** 网易专属:主页 chips 精选标签(全量 34 个太多,精选与 YT mood 语义接近的常用项) */
+    /** 网易专属:chips 的兜底精选(目录接口失败时用) */
     val curatedHomeTags =
         listOf("华语", "欧美", "日语", "韩语", "流行", "摇滚", "民谣", "电子", "说唱", "ACG")
 
+    /** 网易专属:主页 chips = 目录接口的热门标签(与分类区块同源,网页版热门分类同款);
+     *  失败退回精选兜底 */
+    suspend fun getHotChips(): List<String> =
+        client.playlistCatalog().getOrNull()?.let { groups ->
+            groups.flatMap { (_, tags) -> tags.filter { it.hot }.map { it.name } }
+        }?.take(15)?.takeIf { it.isNotEmpty() } ?: curatedHomeTags
+
     /**
-     * 分类区块:网页版 discover/playlist 的完整分类目录(weapi /playlist/catalogue)
-     * 映射进 YT Mood 形状 —— 语种/风格/场景/情感/主题五组全量子类(100+)。
+     * 分类区块:网页版 discover/playlist 的分类目录(weapi /playlist/catalogue)默认视图 ——
+     * 每组只显示热门子类(hot=true,网页默认同款),全页 ≈20 张卡;
+     * 全量目录的完整入口后续以独立"全部分类"页承接。
      */
     suspend fun getMoodSections(): Result<Mood?> =
         client.playlistCatalog().mapCatching { groups ->
@@ -311,11 +319,15 @@ class NeteaseRepositoryImpl(
             Mood(
                 sections =
                     groups.mapIndexed { index, (title, tags) ->
+                        val hotTags = tags.filter { it.hot }
                         MoodSection(
                             title = title,
-                            items = tags.map { MoodItem(title = it.name, params = it.name, stripeColor = colors[index % colors.size]) },
+                            items =
+                                hotTags.map {
+                                    MoodItem(title = it.name, params = it.name, stripeColor = colors[index % colors.size])
+                                },
                         )
-                    },
+                    }.filter { it.items.isNotEmpty() },
             )
         }
 
