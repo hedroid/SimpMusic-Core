@@ -6,6 +6,9 @@
  */
 package com.maxrave.netease
 
+import com.maxrave.netease.model.NeteaseAlbum
+import com.maxrave.netease.model.NeteaseDjRadio
+import com.maxrave.netease.model.NeteaseHighQualityTag
 import com.maxrave.netease.model.NeteaseLyrics
 import com.maxrave.netease.model.NeteasePlaylist
 import com.maxrave.netease.model.NeteaseQuality
@@ -305,6 +308,174 @@ suspend fun NeteaseClient.subscribeArtist(
     }
 
 // ----------------------------------------------------------------------------
+// 专辑 / 红心 / 歌单写操作 —— YTM 有对应入口的走共享形状,红心数据用于库页识别
+// ----------------------------------------------------------------------------
+
+/** 专辑详情(weapi /v1/album/{id}),返回专辑元数据+曲目 */
+suspend fun NeteaseClient.albumDetail(albumId: Long): Result<Pair<NeteaseAlbum, List<NeteaseSong>>> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/v1/album/$albumId",
+                mapOf(
+                    "n" to 100000,
+                    "s" to 8,
+                ),
+            )
+        val album = body.obj("album")?.toAlbum() ?: error("album $albumId not found")
+        album to (body.array("songs")?.map { it.toSong() } ?: emptyList())
+    }
+
+/** 用户收藏的专辑(eapi mine/rn/resource/list pageType=3,NeriPlayer getUserStaredAlbums) */
+suspend fun NeteaseClient.userStaredAlbums(
+    userId: Long,
+    limit: Int = 1000,
+): Result<List<NeteaseAlbum>> =
+    runCatching {
+        val body =
+            callEApi(
+                "/mine/rn/resource/list",
+                mapOf(
+                    "userId" to userId,
+                    "offset" to 0,
+                    "limit" to limit,
+                    "pageType" to "3", // 专辑页签
+                    "needRcmd" to "0",
+                    "isVistor" to "false",
+                    "includeStarPodcast" to "true",
+                ),
+                host = "https://interface3.music.163.com",
+            )
+        // 响应条目:{ id:"...", resType:"ALBUM", dataInfo:{ data:{专辑}, picUrl } }
+        // 专辑本体在 dataInfo.data,封面兜底在 dataInfo.picUrl(真机冒烟确认)
+        body.obj("data")
+            ?.obj("mainCollectInfo")
+            ?.obj("mineAllTabDto")
+            ?.array("dataList")
+            ?.mapNotNull { element ->
+                val wrapper = element.jsonObject.obj("dataInfo")
+                val albumObj = wrapper?.obj("data") ?: return@mapNotNull null
+                if (albumObj["id"].nLong() == null) {
+                    null
+                } else {
+                    val album = albumObj.toAlbum()
+                    album.copy(coverUrl = album.coverUrl ?: wrapper.str("picUrl"))
+                }
+            } ?: emptyList()
+    }
+
+/** "我喜欢的音乐"红心歌单 ID:网易固定把它排在用户歌单首位(specialType==5) */
+suspend fun NeteaseClient.likedPlaylistId(userId: Long): Result<Long?> =
+    runCatching {
+        userPlaylists(userId).getOrThrow()
+            .firstOrNull { pl -> pl.rawSpecialType == 5 || pl.specialType == NeteasePlaylist.SpecialType.FAVORITE }
+            ?.id
+    }
+
+/** 用户红心歌曲 ID 全量(weapi /song/like/get,数组在顶层 ids),用于库页红心歌单的曲目填充 */
+suspend fun NeteaseClient.userLikedSongIds(userId: Long): Result<List<Long>> =
+    runCatching {
+        val body = callWeApi("/song/like/get", mapOf("uid" to userId))
+        body.array("ids")?.mapNotNull { it.nLong() } ?: emptyList()
+    }
+
+/** 添加歌曲到自己的歌单(weapi /playlist/manipulate/tracks,NeriPlayer addSongsToPlaylist) */
+suspend fun NeteaseClient.addToPlaylist(
+    playlistId: Long,
+    songIds: List<Long>,
+): Result<Boolean> =
+    runCatching {
+        require(playlistId > 0L) { "playlistId must be positive" }
+        val ids = songIds.filter { it > 0L }.distinct()
+        require(ids.isNotEmpty()) { "songIds must contain a positive id" }
+        val body =
+            callWeApi(
+                "/playlist/manipulate/tracks",
+                mapOf(
+                    "op" to "add",
+                    "pid" to playlistId,
+                    "id" to playlistId,
+                    "tracks" to ids.joinToString(","),
+                    "trackIds" to ids.joinToString(",", prefix = "[", postfix = "]"),
+                    "imme" to "true",
+                ),
+            )
+        (body["code"] as? JsonPrimitive)?.content == "200"
+    }
+
+// ----------------------------------------------------------------------------
+// 网易云专属浏览能力(YTM 无对应入口):相似歌单、高质量分类标签、DJ 电台
+// ----------------------------------------------------------------------------
+
+/**
+ * 相似歌单:网易没有 JSON 接口,NeriPlayer 的做法是抓 playlist 页 HTML 正则解析
+ * (cver u-cover 块:封面/歌单链接/歌单名/创建者),这里原样移植。
+ */
+suspend fun NeteaseClient.relatedPlaylists(playlistId: Long): Result<List<NeteasePlaylist>> =
+    runCatching {
+        val html = getText("/playlist", mapOf("id" to playlistId.toString()))
+        // (?s) 内联 DOTALL —— common 的 RegexOption 没有 DOT_MATCHES_ALL(那是 JVM 专属)
+        val regex =
+            Regex(
+                pattern = """(?s)<div class="cver u-cover u-cover-3">.*?<img src="([^"]+)">.*?<a class="sname f-fs1 s-fc0" href="([^"]+)"[^>]*>([^<]+?)</a>.*?<a class="nm nm f-thide s-fc3" href="([^"]+)"[^>]*>([^<]+?)</a>""",
+                options = setOf(RegexOption.IGNORE_CASE),
+            )
+        regex.findAll(html).mapNotNull { m ->
+            val id = m.groupValues[2].removePrefix("/playlist?id=").toLongOrNull() ?: return@mapNotNull null
+            NeteasePlaylist(
+                id = id,
+                name = m.groupValues[3],
+                // 封面 URL 末尾的 ?param=WxH 是尺寸参数,去掉拿原图
+                coverUrl = m.groupValues[1].replace(Regex("""\?param=\d+y\d+$"""), ""),
+                trackCount = 0,
+                playCount = null,
+                description = null,
+            )
+        }.toList()
+    }
+
+/** 高质量歌单分类标签(weapi /playlist/highquality/tags),配合 [highQualityPlaylists] 的 cat 参数 */
+suspend fun NeteaseClient.highQualityTags(): Result<List<NeteaseHighQualityTag>> =
+    runCatching {
+        val body = callWeApi("/playlist/highquality/tags", emptyMap())
+        body.array("tags")?.mapNotNull { element ->
+            val obj = element.jsonObject
+            val name = obj.str("name") ?: return@mapNotNull null
+            NeteaseHighQualityTag(
+                id = obj["id"].nInt() ?: 0,
+                name = name,
+                category = obj["category"].nInt() ?: 0,
+            )
+        } ?: emptyList()
+    }
+
+/** 用户订阅的 DJ 电台(weapi /user/djradio/get/subed) */
+suspend fun NeteaseClient.userDjRadios(
+    userId: Long,
+    limit: Int = 100,
+    offset: Int = 0,
+): Result<List<NeteaseDjRadio>> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/user/djradio/get/subed",
+                mapOf(
+                    "uid" to userId,
+                    "limit" to limit,
+                    "offset" to offset,
+                ),
+            )
+        body.array("djRadios")?.mapNotNull { it.toDjRadioOrNull() } ?: emptyList()
+    }
+
+/** 电台详情(eapi /djradio/get,响应 djRadio 对象;NeriPlayer 走的 api/v6/playlist/detail 已失效,真机冒烟验证过此端点) */
+suspend fun NeteaseClient.djRadioDetail(radioId: Long): Result<NeteaseDjRadio> =
+    runCatching {
+        val body = callEApi("/djradio/get", mapOf("id" to radioId))
+        body.obj("djRadio")?.toDjRadioOrNull() ?: error("dj radio $radioId not found")
+    }
+
+// ----------------------------------------------------------------------------
 // C 档能力(下个版本实现):云盘、歌曲评论/热评、歌手详情/百科/相似歌手。
 // 接口位保留在这里,实现为显式 TODO 桩,避免下个版本翻 git 历史找端点。
 // ----------------------------------------------------------------------------
@@ -364,6 +535,35 @@ internal fun JsonElement.toPlaylist(): NeteasePlaylist {
         description = obj.str("description"),
         specialType = NeteasePlaylist.SpecialType.NORMAL,
         rawSpecialType = obj["specialType"].nInt() ?: 0,
+    )
+}
+
+/** 从 album 形状映射(artists 数组或 artist 对象两种来源) */
+internal fun JsonElement.toAlbum(): NeteaseAlbum {
+    val obj = jsonObject
+    return NeteaseAlbum(
+        id = obj["id"].nLong() ?: 0L,
+        name = obj.str("name").orEmpty(),
+        artistName =
+            obj.array("artists")?.firstOrNull()?.jsonObject?.str("name")
+                ?: obj.obj("artist")?.str("name"),
+        coverUrl = obj.str("picUrl") ?: obj.str("coverImgUrl"),
+        trackCount = obj["size"].nInt() ?: obj["trackCount"].nInt() ?: 0,
+        publishTimeMs = obj["publishTime"].nLong(),
+        description = obj.str("description"),
+    )
+}
+
+/** 从 djRadio/电台形状映射;没有 id 返回 null(调用方 mapNotNull 过滤) */
+internal fun JsonElement.toDjRadioOrNull(): NeteaseDjRadio? {
+    val obj = jsonObject
+    val id = obj["id"].nLong() ?: return null
+    return NeteaseDjRadio(
+        id = id,
+        name = obj.str("name").orEmpty(),
+        coverUrl = obj.str("coverUrl") ?: obj.str("coverImgUrl") ?: obj.str("picUrl"),
+        programCount = obj["programCount"].nInt() ?: obj["trackCount"].nInt() ?: 0,
+        djNickname = obj.obj("dj")?.str("nickname"),
     )
 }
 

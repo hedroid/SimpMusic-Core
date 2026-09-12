@@ -14,6 +14,7 @@ import io.ktor.client.plugins.ClientRequestException
 import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -109,11 +110,14 @@ class NeteaseClient(
     suspend fun callEApi(
         path: String,
         params: Map<String, Any?>,
+        host: String = "https://interface.music.163.com",
     ): JsonObject {
         val body =
             post(
-                url = "https://interface.music.163.com/eapi$path",
-                form = NeteaseCrypto.eApiEncrypt(path, params),
+                url = "$host/eapi$path",
+                // 摘要里的路径必须是 /api/...(NeriPlayer 传的是完整 encodedPath 再替换),
+                // 之前直接传 path 少了 /api 前缀,服务端校验过不了
+                form = NeteaseCrypto.eApiEncrypt("/eapi$path", params),
                 profile = HeaderProfile.EAPI,
             )
         if (path.contains("login")) {
@@ -126,6 +130,40 @@ class NeteaseClient(
             )
         }
         return body
+    }
+
+    /** 明文 API POST(NeriPlayer CryptoMode.API):不加密的表单直传 music.163.com/api,带浏览器头 */
+    suspend fun callApi(
+        path: String,
+        params: Map<String, Any?>,
+    ): JsonObject =
+        post(
+            url = "https://music.163.com/api$path",
+            form = params.mapValues { (_, v) -> v?.toString() ?: "" },
+        )
+
+    /** 明文 API GET,返回 JSON */
+    suspend fun callApiGet(
+        path: String,
+        query: Map<String, Any?>,
+    ): JsonObject =
+        json.parseToJsonElement(
+            getText(path, query.mapValues { (_, v) -> v?.toString() ?: "" }),
+        ).jsonObject
+
+    /** 明文 GET,返回原始响应体(相似歌单要从 playlist 页 HTML 里抓) */
+    suspend fun getText(
+        path: String,
+        query: Map<String, String> = emptyMap(),
+    ): String {
+        val response =
+            http.get("https://music.163.com$path") {
+                header(HttpHeaders.Cookie, buildCookieHeader())
+                header("Referer", "https://music.163.com")
+                header(HttpHeaders.UserAgent, desktopUa)
+                query.forEach { (k, v) -> parameter(k, v) }
+            }
+        return response.bodyAsText()
     }
 
     /** NeriPlayer buildRequest 的两种头模式:eapi 模拟官方客户端,不吃浏览器头 */

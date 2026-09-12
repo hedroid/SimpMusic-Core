@@ -126,3 +126,30 @@ data class NeteaseRadioSession(
     /** 下一次拉取的种子 */
     val popAdjust: Boolean?,
 )
+
+/** 专辑 DTO(YTM 有专辑详情/收藏专辑入口,共享形状) */
+data class NeteaseAlbum(
+    val id: Long,
+    val name: String,
+    val artistName: String?,
+    val coverUrl: String?,
+    val trackCount: Int,
+    val publishTimeMs: Long?,
+    val description: String?,
+)
+
+/** DJ 电台(网易云专属能力,YTM 无对应入口) */
+data class NeteaseDjRadio(
+    val id: Long,
+    val name: String,
+    val coverUrl: String?,
+    val programCount: Int,
+    val djNickname: String?,
+)
+
+/** 高质量歌单分类标签(网易云专属能力) */
+data class NeteaseHighQualityTag(
+    val id: Int,
+    val name: String,
+    val category: Int,
+)
