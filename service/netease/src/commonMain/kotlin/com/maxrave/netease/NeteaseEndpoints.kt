@@ -8,6 +8,13 @@ package com.maxrave.netease
 
 import com.maxrave.netease.model.NeteaseAlbum
 import com.maxrave.netease.model.NeteaseArtist
+import com.maxrave.netease.model.NeteaseArtistDetail
+import com.maxrave.netease.model.NeteaseArtistDynamic
+import com.maxrave.netease.model.NeteaseArtistIntroduction
+import com.maxrave.netease.model.NeteaseCloudDiskPage
+import com.maxrave.netease.model.NeteaseCloudFile
+import com.maxrave.netease.model.NeteaseComment
+import com.maxrave.netease.model.NeteaseCommentPage
 import com.maxrave.netease.model.NeteaseDjRadio
 import com.maxrave.netease.model.NeteaseHighQualityTag
 import com.maxrave.netease.model.NeteaseLyrics
@@ -590,27 +597,194 @@ suspend fun NeteaseClient.djRadioDetail(radioId: Long): Result<NeteaseDjRadio> =
     }
 
 // ----------------------------------------------------------------------------
-// C 档能力(下个版本实现):云盘、歌曲评论/热评、歌手详情/百科/相似歌手。
-// 接口位保留在这里,实现为显式 TODO 桩,避免下个版本翻 git 历史找端点。
+// C 档:歌手详情/百科/相似歌手、歌曲评论、云盘 —— 端点真实现,UI 入口下个需求接
 // ----------------------------------------------------------------------------
 
-/**
- * TODO(NETEASE_C_TIER): 云盘 — /cloud/vip/info 额度、/cloud/get 文件列表、
- * /cloud/upload 上传本地歌曲(VIP 最高 60GB),播放走云盘专属 songId 取流。
- */
-suspend fun NeteaseClient.cloudDiskStub(): Result<Unit> = Result.failure(UnsupportedOperationException("cloud disk: next release"))
+/** 歌手详情(NeriPlayer getArtistDetail:明文 api/artist/head/info/get) */
+suspend fun NeteaseClient.artistDetail(artistId: Long): Result<NeteaseArtistDetail> =
+    runCatching {
+        val body = callApi("/artist/head/info/get", mapOf("id" to artistId))
+        val artist =
+            body.obj("data")?.obj("artist")
+                ?: body.obj("artist")
+                ?: error("artist $artistId not found")
+        NeteaseArtistDetail(
+            id = artist["id"].nLong() ?: artistId,
+            name = artist.str("name").orEmpty(),
+            alias = artist.array("alias")?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull } ?: emptyList(),
+            // head/info/get 的头像字段是 avatar(cover 是对象,只做兜底)
+            picUrl = (artist.str("avatar") ?: artist.str("picUrl"))?.toHttpsUrl(),
+            briefDesc = artist.str("briefDesc"),
+            albumSize = artist["albumSize"].nInt(),
+            musicSize = artist["musicSize"].nInt(),
+            mvSize = artist["mvSize"].nInt(),
+            identifyTitle = body.obj("data")?.obj("identify")?.str("imageDesc") ?: body.obj("identify")?.str("imageDesc"),
+        )
+    }
+
+/** 歌手动态(NeriPlayer getArtistDynamic:明文 api/artist/detail/dynamic,关注状态/视频数) */
+suspend fun NeteaseClient.artistDynamic(artistId: Long): Result<NeteaseArtistDynamic> =
+    runCatching {
+        val body = callApi("/artist/detail/dynamic", mapOf("id" to artistId))
+        NeteaseArtistDynamic(
+            followed = (body["followed"] as? JsonPrimitive)?.content == "true",
+            // videoNum 是 [{cat,num}] 分组数组,求和
+            videoCount = body.array("videoNum")?.sumOf { (it as? JsonObject)?.get("num").nLong() ?: 0L },
+        )
+    }
+
+/** 歌手百科(weapi /artist/introduction,分段字段为 ti/txt) */
+suspend fun NeteaseClient.artistIntroduction(artistId: Long): Result<NeteaseArtistIntroduction> =
+    runCatching {
+        val body = callWeApi("/artist/introduction", mapOf("id" to artistId))
+        NeteaseArtistIntroduction(
+            briefDesc = body.str("briefDesc"),
+            sections =
+                body.array("introduction")?.mapNotNull { element ->
+                    val obj = element.jsonObject
+                    val text = obj.str("txt") ?: obj.str("text") ?: return@mapNotNull null
+                    obj.str("ti").orEmpty() to text
+                } ?: emptyList(),
+        )
+    }
+
+/** 歌手热门歌曲(NeriPlayer getArtistSongs:明文 api/v1/artist/songs,order=hot 默认热门50) */
+suspend fun NeteaseClient.artistSongs(
+    artistId: Long,
+    order: String = "hot",
+    limit: Int = 50,
+    offset: Int = 0,
+): Result<NeteaseSearchResult<NeteaseSong>> =
+    runCatching {
+        val body =
+            callApi(
+                "/v1/artist/songs",
+                mapOf(
+                    "id" to artistId,
+                    "private_cloud" to "true",
+                    "work_type" to "1",
+                    "order" to order,
+                    "offset" to offset,
+                    "limit" to limit,
+                ),
+            )
+        NeteaseSearchResult(
+            items = body.array("songs")?.map { it.toSong() } ?: emptyList(),
+            totalCount = body["total"].nInt(),
+        )
+    }
+
+/** 歌手专辑(NeriPlayer getArtistAlbums:明文 api/artist/albums/{id}) */
+suspend fun NeteaseClient.artistAlbums(
+    artistId: Long,
+    limit: Int = 30,
+    offset: Int = 0,
+): Result<Pair<List<NeteaseAlbum>, Boolean>> =
+    runCatching {
+        val body =
+            callApi(
+                "/artist/albums/$artistId",
+                mapOf(
+                    "limit" to limit,
+                    "offset" to offset,
+                    "total" to "true",
+                ),
+            )
+        (body.array("hotAlbums")?.map { it.toAlbum() } ?: emptyList()) to
+            ((body["more"] as? JsonPrimitive)?.content == "true")
+    }
+
+/** 相似歌手(weapi /discovery/simiArtist,NCA 验证的路径,注意没有 /v1 前缀) */
+suspend fun NeteaseClient.similarArtists(artistId: Long): Result<List<NeteaseArtist>> =
+    runCatching {
+        val body = callWeApi("/discovery/simiArtist", mapOf("artistid" to artistId))
+        body.array("artists")?.mapNotNull { element ->
+            val obj = element.jsonObject
+            val id = obj["id"].nLong() ?: return@mapNotNull null
+            NeteaseArtist(
+                id = id,
+                name = obj.str("name").orEmpty(),
+                picUrl = (obj.str("picUrl") ?: obj.str("img1v1Url"))?.toHttpsUrl(),
+                musicSize = obj["musicSize"].nInt(),
+                albumSize = obj["albumSize"].nInt(),
+            )
+        } ?: emptyList()
+    }
+
+/** 歌曲评论(weapi /v1/resource/comments/R_SO_4_{id}):热评 + 最新评论 + 总数 */
+suspend fun NeteaseClient.songComments(
+    songId: Long,
+    limit: Int = 20,
+    offset: Int = 0,
+): Result<NeteaseCommentPage> =
+    runCatching {
+        val body =
+            callWeApi(
+                // R_SO_4_ 前缀 = 单曲资源(歌单 R_PL_、专辑 R_AL_)
+                "/v1/resource/comments/R_SO_4_$songId",
+                mapOf(
+                    "limit" to limit,
+                    "offset" to offset,
+                    "beforeTime" to "",
+                ),
+            )
+        fun parse(array: JsonArray?): List<NeteaseComment> =
+            array?.mapNotNull { element ->
+                val obj = element.jsonObject
+                NeteaseComment(
+                    commentId = obj["commentId"].nLong() ?: return@mapNotNull null,
+                    userId = obj.obj("user")?.get("userId").nLong(),
+                    nickname = obj.obj("user")?.str("nickname"),
+                    avatarUrl = obj.obj("user")?.str("avatarUrl")?.toHttpsUrl(),
+                    content = obj.str("content").orEmpty(),
+                    timeMs = obj["time"].nLong(),
+                    likedCount = obj["likedCount"].nLong(),
+                    location = obj.obj("ipLocation")?.str("location") ?: obj.str("ipLocation"),
+                )
+            } ?: emptyList()
+        NeteaseCommentPage(
+            hotComments = parse(body.array("hotComments")),
+            latestComments = parse(body.array("comments")),
+            totalCount = body["total"].nInt() ?: 0,
+            hasMore = (body["more"] as? JsonPrimitive)?.content == "true",
+        )
+    }
 
 /**
- * TODO(NETEASE_C_TIER): 歌曲评论 — /comment/music (hotComments/newComments),
- * 播放页新增评论区入口。
+ * 云盘文件列表(weapi /v1/cloud/get)。simpleSong 即可播形状,songId(云端分配的大数值 ID)
+ * 直接走取流端点播放;本地文件上传(/cloud/upload 二进制流)留到 UI 接入时按需做。
  */
-suspend fun NeteaseClient.songCommentsStub(songId: Long): Result<Unit> = Result.failure(UnsupportedOperationException("song comments: next release"))
-
-/**
- * TODO(NETEASE_C_TIER): 歌手详情 — /artist/detail(百科+封面)、/artist/similar(相似歌手)、
- * /artist/songs(热门50)。打通后 SongEntity.artistId 填网易歌手 ID,播放页/艺人页可跳转。
- */
-suspend fun NeteaseClient.artistDetailStub(artistId: Long): Result<Unit> = Result.failure(UnsupportedOperationException("artist detail: next release"))
+suspend fun NeteaseClient.cloudDiskFiles(
+    limit: Int = 30,
+    offset: Int = 0,
+): Result<NeteaseCloudDiskPage> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/v1/cloud/get",
+                mapOf(
+                    "limit" to limit,
+                    "offset" to offset,
+                ),
+            )
+        NeteaseCloudDiskPage(
+            files =
+                body.array("data")?.mapNotNull { element ->
+                    val obj = element.jsonObject
+                    val songId = obj["songId"].nLong() ?: return@mapNotNull null
+                    NeteaseCloudFile(
+                        songId = songId,
+                        fileName = obj.str("fileName"),
+                        sizeBytes = obj["fileSize"].nLong(),
+                        bitrate = obj["bitrate"].nLong(),
+                        addTimeMs = obj["addTime"].nLong(),
+                        song = obj.obj("simpleSong")?.takeIf { it["id"].nLong() != null }?.toSong(),
+                    )
+                } ?: emptyList(),
+            totalCount = body["count"].nInt() ?: 0,
+            hasMore = (body["hasMore"] as? JsonPrimitive)?.content == "true",
+        )
+    }
 
 
 // ----------------------------------------------------------------------------

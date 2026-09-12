@@ -124,6 +124,56 @@ class NewEndpointsProbe {
                     "first=${lines.firstOrNull()?.let { "${it.text} ${it.startMs}-${it.endMs} words=${it.words.size}" }}\n" +
                     "lrc=\n${NeteaseLyricsConverter.yrcToLrc(sample)}"
             }
+            section("artistDetail(周杰伦 6452)") {
+                client.artistDetail(6452L).fold(
+                    { "id=${it.id} ${it.name} alias=${it.alias} 专辑${it.albumSize} 歌曲${it.musicSize} MV${it.mvSize} 认证=${it.identifyTitle} 简介=${it.briefDesc?.take(60)} 封面=${it.picUrl?.take(50)}" },
+                    { "ERR ${it.message}" },
+                )
+            }
+            section("artistDynamic(6452)") {
+                client.artistDynamic(6452L).fold(
+                    { "followed=${it.followed} fans=${it.followerCount} videos=${it.videoCount}" },
+                    { "ERR ${it.message}" },
+                )
+            }
+            section("artistIntroduction(6452)") {
+                client.artistIntroduction(6452L).fold(
+                    { "brief=${it.briefDesc?.take(60)} sections=${it.sections.map { s -> s.first + "(" + s.second.take(30) + ")" }}" },
+                    { "ERR ${it.message}" },
+                )
+            }
+            section("artistSongs(6452 热门)") {
+                client.artistSongs(6452L, limit = 3).fold(
+                    { r -> "total=${r.totalCount} first=${r.items.joinToString { s -> s.name }}" },
+                    { "ERR ${it.message}" },
+                )
+            }
+            section("artistAlbums(6452)") {
+                client.artistAlbums(6452L, limit = 3).fold(
+                    { (albums, more) -> "more=$more " + albums.joinToString { a -> "${a.name}(${a.trackCount}首,${a.publishTimeMs})" } },
+                    { "ERR ${it.message}" },
+                )
+            }
+            section("similarArtists(6452)") {
+                client.similarArtists(6452L).fold(
+                    { it.joinToString(" / ") { a -> "${a.name}(${a.id})" }.ifEmpty { "(空)" } },
+                    { "ERR ${it.message}" },
+                )
+            }
+            section("songComments(晴天 186016)") {
+                client.songComments(186016L, limit = 2).fold(
+                    { page -> "total=${page.totalCount} more=${page.hasMore} hot=${page.hotComments.size} latest=${page.latestComments.size}\n" +
+                        (page.hotComments.firstOrNull()?.let { c -> "hot#1 [${c.nickname}](${c.location}) 赞${c.likedCount}: ${c.content.take(50)}" } ?: "(无热评)") },
+                    { "ERR ${it.message}" },
+                )
+            }
+            section("cloudDiskFiles") {
+                client.cloudDiskFiles(limit = 3).fold(
+                    { page -> "total=${page.totalCount} more=${page.hasMore} files=${page.files.size}\n" +
+                        page.files.joinToString("\n") { f -> "${f.songId} | ${f.fileName} | ${f.sizeBytes}B ${f.bitrate} | song=${f.song?.name}" }.ifEmpty { "(云盘为空)" } },
+                    { "ERR ${it.message}" },
+                )
+            }
 
             out.writeText(sb.toString())
             println(sb)

@@ -217,3 +217,75 @@ data class NeteaseLyricLine(
         val charCount: Int,
     )
 }
+
+// ----------------------------------------------------------------------------
+// C 档:歌手详情/百科/相似、歌曲评论、云盘
+// ----------------------------------------------------------------------------
+
+/** 歌手详情(api/artist/head/info/get:头像/简介/统计) */
+data class NeteaseArtistDetail(
+    val id: Long,
+    val name: String,
+    val alias: List<String> = emptyList(),
+    val picUrl: String? = null,
+    val briefDesc: String? = null,
+    val albumSize: Int? = null,
+    val musicSize: Int? = null,
+    val mvSize: Int? = null,
+    /** 认证身份(音乐人/歌手等),无认证为 null */
+    val identifyTitle: String? = null,
+)
+
+/** 歌手动态信息(api/artist/detail/dynamic:关注状态/粉丝数) */
+data class NeteaseArtistDynamic(
+    val followed: Boolean? = null,
+    val followerCount: Long? = null,
+    val videoCount: Long? = null,
+)
+
+/** 歌手百科(weapi /artist/introduction/{id}:分段介绍) */
+data class NeteaseArtistIntroduction(
+    val briefDesc: String? = null,
+    /** (标题, 正文) 分段,如"艺人历程/荣誉成就" */
+    val sections: List<Pair<String, String>> = emptyList(),
+)
+
+/** 歌曲评论单条(weapi /comment/music) */
+data class NeteaseComment(
+    val commentId: Long,
+    val userId: Long?,
+    val nickname: String?,
+    val avatarUrl: String?,
+    val content: String,
+    val timeMs: Long?,
+    val likedCount: Long?,
+    /** IP 归属地(评论展示要求) */
+    val location: String?,
+)
+
+/** 歌曲评论页:热评 + 最新 + 总数 */
+data class NeteaseCommentPage(
+    val hotComments: List<NeteaseComment>,
+    val latestComments: List<NeteaseComment>,
+    val totalCount: Int,
+    val hasMore: Boolean,
+)
+
+/** 云盘单个文件(weapi /v1/cloud/get:simpleSong 是可播放的歌曲形状) */
+data class NeteaseCloudFile(
+    val songId: Long,
+    val fileName: String?,
+    val sizeBytes: Long?,
+    /** 码率原始值,服务端单位混用(320000 与 3495 并存),仅展示用 */
+    val bitrate: Long?,
+    val addTimeMs: Long?,
+    /** 云盘文件的元数据,缺艺人/封面时为空字段,可按 songId 直接取流播放 */
+    val song: NeteaseSong?,
+)
+
+/** 云盘文件分页 */
+data class NeteaseCloudDiskPage(
+    val files: List<NeteaseCloudFile>,
+    val totalCount: Int,
+    val hasMore: Boolean,
+)
