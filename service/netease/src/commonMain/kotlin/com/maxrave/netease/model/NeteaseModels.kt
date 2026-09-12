@@ -98,6 +98,8 @@ data class NeteasePlaylist(
     val name: String,
     val creatorId: Long? = null,
     val creatorNickname: String? = null,
+    /** 歌单创建时间(毫秒),歌单页年份列用 */
+    val createTimeMs: Long? = null,
     val coverUrl: String?,
     val trackCount: Int,
     val playCount: Long?,

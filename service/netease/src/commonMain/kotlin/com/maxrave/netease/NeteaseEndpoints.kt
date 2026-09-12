@@ -984,6 +984,7 @@ internal fun JsonElement.toPlaylist(): NeteasePlaylist {
         name = obj.str("name").orEmpty(),
         creatorId = obj.obj("creator")?.get("userId").nLong(),
         creatorNickname = obj.obj("creator")?.str("nickname"),
+        createTimeMs = obj["createTime"].nLong(),
         coverUrl = (obj.str("coverImgUrl") ?: obj.str("picUrl") ?: obj.str("coverUrl"))?.toHttpsUrl(),
         trackCount = obj["trackCount"].nInt() ?: obj["songCount"].nInt() ?: 0,
         playCount = obj["playCount"].nLong() ?: obj["playcount"].nLong(),

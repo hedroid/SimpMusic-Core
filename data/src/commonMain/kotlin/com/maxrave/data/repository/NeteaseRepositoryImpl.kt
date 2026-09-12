@@ -534,7 +534,8 @@ class NeteaseRepositoryImpl(
                     title = meta.name,
                     trackCount = meta.trackCount,
                     tracks = tracks.map { it.toTrackPlaylist() },
-                    year = "",
+                    // 年份取歌单创建年份(YT 歌单页同位置语义)
+                    year = meta.createTimeMs?.let { (it / 31_536_000_000L + 1970).toString() } ?: "",
                 )
             browse to null // 一次性返回全部曲目,无 continuation
         }
