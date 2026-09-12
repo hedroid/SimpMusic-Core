@@ -42,7 +42,7 @@ import com.maxrave.domain.data.entities.analytics.PlaybackEventEntity
         YourYouTubePlaylistList::class, PlaybackEventEntity::class, EventArtistEntity::class,
         AutoEqEntryEntity::class, AutoEqIndexMetaEntity::class, AutoEqCurveEntity::class
     ],
-    version = 27,
+    version = 28,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 2, to = 3), AutoMigration(

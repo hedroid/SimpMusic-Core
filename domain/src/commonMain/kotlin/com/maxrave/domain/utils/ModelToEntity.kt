@@ -275,6 +275,9 @@ fun AlbumBrowse.toAlbumEntity(id: String): AlbumEntity =
 
 fun PlaylistBrowse.toPlaylistEntity(): PlaylistEntity =
     PlaylistEntity(
+        // 歌单 id 自带音源特征:纯数字=网易(YT 恒为 VL/UC 前缀) —— 持久化边界回填,
+        // 与 Track.toSongEntity 同一规则,不依赖调用方传"当前源"
+        source = if (this.id.toLongOrNull() != null) MusicSource.NETEASE.name else MusicSource.YOUTUBE_MUSIC.name,
         id = this.id,
         author = this.author.name,
         description = this.description ?: "",

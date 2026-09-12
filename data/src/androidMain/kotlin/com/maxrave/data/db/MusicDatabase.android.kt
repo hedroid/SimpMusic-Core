@@ -28,6 +28,15 @@ actual fun getDatabaseBuilder(converters: Converters) : RoomDatabase.Builder<Mus
         .databaseBuilder(getKoin().get(), MusicDatabase::class.java, DB_NAME)
         .addTypeConverter(converters)
         .addMigrations(
+            // 27→28:修正历史网易行 —— 修复前插入的网易歌单/歌曲 source 落成了 YOUTUBE_MUSIC。
+            // 判据:纯数字主键(YT 的 id 恒含字母)。
+            object : Migration(27, 28) {
+                override fun migrate(connection: androidx.sqlite.SQLiteConnection) {
+                    connection.execSQL("UPDATE playlist SET source='NETEASE' WHERE id NOT GLOB '*[^0-9]*'")
+                    connection.execSQL("UPDATE song SET source='NETEASE' WHERE videoId NOT GLOB '*[^0-9]*'")
+                    Logger.w("MIGRATION_27_28", "netease source backfill done")
+                }
+            },
             object : Migration(5, 6) {
                 override fun migrate(connection: SQLiteConnection) {
                     val playlistSongMaps = mutableListOf<PairSongLocalPlaylist>()
