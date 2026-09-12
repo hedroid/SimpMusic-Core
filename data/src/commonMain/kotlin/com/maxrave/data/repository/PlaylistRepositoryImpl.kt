@@ -50,6 +50,7 @@ internal class PlaylistRepositoryImpl(
     private val dataStoreManager: DataStoreManager,
     private val localDataSource: LocalDataSource,
     private val youTube: YouTube,
+    private val neteaseRepository: NeteaseRepositoryImpl,
 ) : PlaylistRepository {
     override fun getAllPlaylists(limit: Int): Flow<List<PlaylistEntity>> =
         flow {
@@ -442,6 +443,16 @@ internal class PlaylistRepositoryImpl(
     ): Flow<Resource<Pair<PlaylistBrowse, String?>>> =
         flow {
             runCatching {
+                // 网易歌单:id 为纯数字(YT 永远 VL/UC 前缀),同页面换数据源
+                if (playlistId.toLongOrNull() != null) {
+                    neteaseRepository
+                        .getPlaylistBrowseData(playlistId)
+                        .fold(
+                            onSuccess = { emit(Resource.Success(it)) },
+                            onFailure = { emit(Resource.Error(it.message ?: "netease playlist error")) },
+                        )
+                    return@flow
+                }
                 var id = ""
                 id +=
                     if (!playlistId.startsWith("VL")) {

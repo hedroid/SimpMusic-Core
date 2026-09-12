@@ -96,6 +96,8 @@ data class NeteaseSong(
 data class NeteasePlaylist(
     val id: Long,
     val name: String,
+    val creatorId: Long? = null,
+    val creatorNickname: String? = null,
     val coverUrl: String?,
     val trackCount: Int,
     val playCount: Long?,

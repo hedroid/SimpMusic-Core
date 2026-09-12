@@ -504,6 +504,41 @@ class NeteaseRepositoryImpl(
             )
         }
 
+    /**
+     * 歌单详情数据(数字 id=网易歌单),映射进 YT PlaylistBrowse 形状 ——
+     * PlaylistScreen/PlaylistViewModel 零改动,数据源切换对页面透明。
+     * 曲目:track/all 优先(普通歌单稳定),空则带 n 的 detail 兜底(雷达类特殊歌单)。
+     */
+    suspend fun getPlaylistBrowseData(playlistId: String): Result<Pair<com.maxrave.domain.data.model.browse.playlist.PlaylistBrowse, String?>> =
+        runCatching {
+            val id = playlistId.toLongOrNull() ?: error("netease playlistId 非数字: $playlistId")
+            val (meta, trackIds) =
+                client.playlistDetail(id).getOrNull() ?: error("歌单不存在: $playlistId")
+            val tracks =
+                client.playlistTracks(id, limit = 500).getOrNull()?.takeIf { it.isNotEmpty() }
+                    ?: client.playlistTracksViaDetail(id, limit = 500).getOrNull().orEmpty()
+            if (tracks.isEmpty() && trackIds.isEmpty()) error("歌单曲目为空: $playlistId")
+            val browse =
+                com.maxrave.domain.data.model.browse.playlist.PlaylistBrowse(
+                    author =
+                        com.maxrave.domain.data.model.browse.playlist.Author(
+                            id = meta.creatorId?.toString() ?: "",
+                            name = meta.creatorNickname ?: "网易云音乐",
+                        ),
+                    description = meta.description,
+                    duration = "",
+                    durationSeconds = 0,
+                    id = meta.id.toString(),
+                    privacy = "PUBLIC",
+                    thumbnails = meta.coverUrl.toThumbnails(),
+                    title = meta.name,
+                    trackCount = meta.trackCount,
+                    tracks = tracks.map { it.toTrackPlaylist() },
+                    year = "",
+                )
+            browse to null // 一次性返回全部曲目,无 continuation
+        }
+
     /** 图表区块:网易排行榜映射进 YT Chart 形状(榜单卡点击进歌单;地区下拉对网易隐藏 → countries=null);
      *  数据走 [toplistCached],与 feed 的"排行榜"行共用一份请求 */
     suspend fun getHomeChart(): Result<Chart?> =
@@ -659,6 +694,35 @@ private fun List<NeteaseSong>.toSongHomeItem(title: String): HomeItem =
 /** 歌单卡副标题净化:纯数字/空白视为无描述(网易推荐接口的 description 是 0/1/2 序号) */
 private fun String?.sanitizeCardSubtitle(): String? =
     this?.trim()?.takeIf { it.isNotEmpty() && !it.all(Char::isDigit) }
+
+/** NeteaseSong → 歌单页曲目形状(PlaylistBrowse.tracks = browse.album.Track) */
+internal fun NeteaseSong.toTrackPlaylist(): com.maxrave.domain.data.model.browse.album.Track =
+    com.maxrave.domain.data.model.browse.album.Track(
+        album =
+            com.maxrave.domain.data.model.searchResult.songs.Album(
+                id = albumId?.toString() ?: "",
+                name = albumName ?: "",
+            ),
+        artists =
+            artists.mapIndexed { index, name ->
+                com.maxrave.domain.data.model.searchResult.songs.Artist(
+                    id = artistIds.getOrNull(index)?.toString(),
+                    name = name,
+                )
+            },
+        duration = durationMs.toMinutesSeconds(),
+        durationSeconds = (durationMs / 1000).toInt(),
+        isAvailable = hasCopyright ?: true,
+        isExplicit = false,
+        likeStatus = "INDIFFERENT",
+        thumbnails = coverUrl.toThumbnails(),
+        title = name,
+        videoId = id.toString(),
+        videoType = "MUSIC_VIDEO_TYPE_ATV",
+        category = null,
+        feedbackTokens = null,
+        resultType = "song",
+    )
 
 private fun String?.toThumbnails(): List<Thumbnail> =
     takeUnless { it.isNullOrEmpty() }?.let {
