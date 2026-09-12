@@ -105,7 +105,7 @@ data class NeteasePlaylist(
     /** 网易原生 specialType(5=红心歌单"我喜欢的音乐"),仅解析期使用 */
     val rawSpecialType: Int = 0,
 ) {
-    enum class SpecialType { NORMAL, DAILY, RADAR_PRIVATE, RADAR_FANS, TOPLIST, FAVORITE }
+    enum class SpecialType { NORMAL, DAILY, RADAR_PRIVATE, RADAR_FANS, RADAR, TOPLIST, FAVORITE }
 }
 
 /** 歌词(/song/lyric/v1 全量) */
@@ -153,3 +153,67 @@ data class NeteaseHighQualityTag(
     val name: String,
     val category: Int,
 )
+
+/** 歌手摘要(搜索/歌曲署名通用形状) */
+data class NeteaseArtist(
+    val id: Long,
+    val name: String,
+    val picUrl: String? = null,
+    val musicSize: Int? = null,
+    val albumSize: Int? = null,
+)
+
+/** 搜索分页结果(items + 命中总数,供 UI 分页判断) */
+data class NeteaseSearchResult<T>(
+    val items: List<T>,
+    val totalCount: Int?,
+)
+
+/** 主页歌曲 feed 来源目录(NeriPlayer NeteaseHomeSongSource 的 core 版,标题文案归 UI) */
+enum class NeteaseSongFeed(val requiresLogin: Boolean) {
+    TOP_SOARING(false), // 飙升榜
+    PERSONAL_RADAR(false), // 私人雷达(固定歌单,未登录也有基础数据)
+    DAILY_RECOMMEND(true), // 每日推荐歌曲
+    PRIVATE_FM(true), // 私人FM
+    PERSONALIZED_NEW_SONGS(false), // 推荐新歌
+    TOP_HOT(false), // 热歌榜
+    TOP_NEW(false), // 新歌榜
+}
+
+/** 主页歌单 feed 来源目录 */
+enum class NeteasePlaylistFeed(val requiresLogin: Boolean) {
+    PERSONALIZED(false), // 推荐歌单
+    DAILY_RESOURCE(true), // 每日推荐歌单
+    HIGH_QUALITY(false), // 高质量歌单
+    HOT_PLAYLISTS(false), // 热门歌单
+    ACG_PLAYLISTS(false), // ACG 歌单(高质量接口按 cat 过滤)
+}
+
+/** 网易链接识别结果(分享文本/URL → 结构化目标) */
+sealed class NeteaseLinkTarget {
+    data class Song(val id: Long) : NeteaseLinkTarget()
+
+    data class Playlist(val id: Long) : NeteaseLinkTarget()
+
+    data class Artist(val id: Long) : NeteaseLinkTarget()
+
+    data class Album(val id: Long) : NeteaseLinkTarget()
+
+    /** 163cn.tv 短链,需先请求展开再识别 */
+    data class ShortLink(val url: String) : NeteaseLinkTarget()
+}
+
+/** 逐字歌词行(YRC 解析结果,纯数据;渲染层自行映射) */
+data class NeteaseLyricLine(
+    val text: String,
+    val startMs: Long,
+    val endMs: Long,
+    /** 逐字/逐词时间轴,空表示整句 */
+    val words: List<Word> = emptyList(),
+) {
+    data class Word(
+        val startMs: Long,
+        val endMs: Long,
+        val charCount: Int,
+    )
+}

@@ -18,6 +18,7 @@ import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
+import io.ktor.client.statement.request
 import io.ktor.http.HttpHeaders
 import io.ktor.http.Parameters
 import kotlinx.coroutines.sync.Mutex
@@ -150,6 +151,19 @@ class NeteaseClient(
         json.parseToJsonElement(
             getText(path, query.mapValues { (_, v) -> v?.toString() ?: "" }),
         ).jsonObject
+
+    /**
+     * 展开 163cn.tv 分享短链:Ktor 默认跟随重定向,拿最终落地 URL。
+     * 落地后用 [NeteaseLinkParser.recognizeExpanded] 再识别。
+     */
+    suspend fun expandShortLink(shortUrl: String): Result<String> =
+        runCatching {
+            val response =
+                http.get(shortUrl) {
+                    header(HttpHeaders.UserAgent, desktopUa)
+                }
+            response.request.url.toString()
+        }
 
     /** 明文 GET,返回原始响应体(相似歌单要从 playlist 页 HTML 里抓) */
     suspend fun getText(

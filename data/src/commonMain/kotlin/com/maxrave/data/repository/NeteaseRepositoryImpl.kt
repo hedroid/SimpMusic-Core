@@ -170,7 +170,10 @@ class NeteaseRepositoryImpl(
         query: String,
         limit: Int,
         offset: Int,
-    ): Result<List<SongEntity>> = client.searchSongs(query, limit, offset).map { it.map(NeteaseSong::toSongEntity) }
+    ): Result<List<SongEntity>> =
+        client.searchSongs(query, limit, offset).map { result ->
+            result.items.map(NeteaseSong::toSongEntity)
+        }
 
     override suspend fun getStreamUrl(
         songId: String,

@@ -7,12 +7,14 @@
 package com.maxrave.netease
 
 import com.maxrave.netease.model.NeteaseAlbum
+import com.maxrave.netease.model.NeteaseArtist
 import com.maxrave.netease.model.NeteaseDjRadio
 import com.maxrave.netease.model.NeteaseHighQualityTag
 import com.maxrave.netease.model.NeteaseLyrics
 import com.maxrave.netease.model.NeteasePlaylist
 import com.maxrave.netease.model.NeteaseQuality
 import com.maxrave.netease.model.NeteaseRadioSession
+import com.maxrave.netease.model.NeteaseSearchResult
 import com.maxrave.netease.model.NeteaseSong
 import com.maxrave.netease.model.NeteaseStreamUrl
 import kotlinx.serialization.json.JsonArray
@@ -28,17 +30,27 @@ import kotlinx.serialization.json.longOrNull
 // 固定歌单 ID(NeriPlayer 验证):雷达系列每日更新、官方榜单
 object NeteaseConstants {
     const val RADAR_PRIVATE_PLAYLIST_ID = 3_136_952_023L // 私人雷达
-    const val RADAR_FANS_PLAYLIST_ID = 5_327_906_368L // 粉丝雷达
+    const val RADAR_FANS_PLAYLIST_ID = 5_327_906_368L // 乐迷雷达(粉丝雷达)
     const val TOPLIST_SOARING_ID = 19_723_756L // 飙升榜
     const val TOPLIST_NEW_ID = 3_779_629L // 新歌榜
     const val TOPLIST_HOT_ID = 37_786_678L // 热歌榜
+
+    /** 雷达歌单全组(NeriPlayer NeteaseRadarPlaylistDefinitions,内容每日更新) */
+    val RADAR_PLAYLISTS: List<Pair<Long, String>> =
+        listOf(
+            5_320_167_908L to "时光雷达",
+            5_362_359_247L to "宝藏雷达",
+            5_300_458_264L to "新歌雷达",
+            RADAR_FANS_PLAYLIST_ID to "乐迷雷达",
+            5_341_776_086L to "神秘雷达",
+        )
 }
 
 suspend fun NeteaseClient.searchSongs(
     keywords: String,
     limit: Int = 30,
     offset: Int = 0,
-): Result<List<NeteaseSong>> =
+): Result<NeteaseSearchResult<NeteaseSong>> =
     runCatching {
         val body =
             callWeApi(
@@ -50,7 +62,70 @@ suspend fun NeteaseClient.searchSongs(
                     "offset" to offset,
                 ),
             )
-        body.obj("result")?.array("songs")?.map { it.toSong() } ?: emptyList()
+        val result = body.obj("result")
+        NeteaseSearchResult(
+            items = result?.array("songs")?.map { it.toSong() } ?: emptyList(),
+            totalCount = result?.get("songCount").nInt(),
+        )
+    }
+
+/** 搜歌单(cloudsearch type=1000),封面走 coverImgUrl */
+suspend fun NeteaseClient.searchPlaylists(
+    keywords: String,
+    limit: Int = 30,
+    offset: Int = 0,
+): Result<NeteaseSearchResult<NeteasePlaylist>> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/cloudsearch/pc",
+                mapOf(
+                    "s" to keywords,
+                    "type" to 1000, // 歌单
+                    "limit" to limit,
+                    "offset" to offset,
+                ),
+            )
+        val result = body.obj("result")
+        NeteaseSearchResult(
+            items = result?.array("playlists")?.map { it.toPlaylist() } ?: emptyList(),
+            totalCount = result?.get("playlistCount").nInt(),
+        )
+    }
+
+/** 搜歌手(cloudsearch type=100;注意 1004 是 MV),封面兜底 img1v1Url(NeriPlayer 同款) */
+suspend fun NeteaseClient.searchArtists(
+    keywords: String,
+    limit: Int = 30,
+    offset: Int = 0,
+): Result<NeteaseSearchResult<NeteaseArtist>> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/cloudsearch/pc",
+                mapOf(
+                    "s" to keywords,
+                    "type" to 100, // 歌手
+                    "limit" to limit,
+                    "offset" to offset,
+                ),
+            )
+        val result = body.obj("result")
+        NeteaseSearchResult(
+            items =
+                result?.array("artists")?.mapNotNull { element ->
+                    val obj = element.jsonObject
+                    val id = obj["id"].nLong() ?: return@mapNotNull null
+                    NeteaseArtist(
+                        id = id,
+                        name = obj.str("name").orEmpty(),
+                        picUrl = (obj.str("picUrl") ?: obj.str("img1v1Url"))?.toHttpsUrl(),
+                        musicSize = obj["musicSize"].nInt(),
+                        albumSize = obj["albumSize"].nInt(),
+                    )
+                } ?: emptyList(),
+            totalCount = result?.get("artistCount").nInt(),
+        )
     }
 
 suspend fun NeteaseClient.songDetail(ids: List<Long>): Result<List<NeteaseSong>> =
@@ -253,23 +328,62 @@ suspend fun NeteaseClient.likeSong(
         (body["code"] as? JsonPrimitive)?.content == "200"
     }
 
-/** 雷达歌单(私人/粉丝),本质是固定 ID 的普通歌单,内容每日更新 */
+/**
+ * 雷达歌单组(私人+时光/宝藏/新歌/乐迷/神秘),本质是固定 ID 的普通歌单,内容每日更新。
+ * 单个元数据拉取失败时退回 ID+名称的占位(NeriPlayer loadNeteaseRadarPlaylistSummaries 同款容错),
+ * 不让一张歌单的失败拖垮整行。
+ */
 suspend fun NeteaseClient.radarPlaylists(): Result<List<NeteasePlaylist>> =
     runCatching {
-        listOf(
-            NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID,
-            NeteaseConstants.RADAR_FANS_PLAYLIST_ID,
-        ).mapNotNull { id ->
-            playlistDetail(id).getOrNull()?.first?.copy(
-                specialType =
-                    if (id == NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID) {
-                        NeteasePlaylist.SpecialType.RADAR_PRIVATE
-                    } else {
-                        NeteasePlaylist.SpecialType.RADAR_FANS
-                    },
-            )
+        suspend fun radar(
+            id: Long,
+            fallbackName: String,
+            type: NeteasePlaylist.SpecialType,
+        ): NeteasePlaylist =
+            playlistDetail(id).getOrNull()?.first?.copy(specialType = type)
+                ?: NeteasePlaylist(
+                    id = id,
+                    name = fallbackName,
+                    coverUrl = null,
+                    trackCount = 0,
+                    playCount = null,
+                    description = null,
+                    specialType = type,
+                )
+
+        val list = mutableListOf(radar(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID, "私人雷达", NeteasePlaylist.SpecialType.RADAR_PRIVATE))
+        NeteaseConstants.RADAR_PLAYLISTS.forEach { (id, name) ->
+            val type =
+                if (id == NeteaseConstants.RADAR_FANS_PLAYLIST_ID) {
+                    NeteasePlaylist.SpecialType.RADAR_FANS
+                } else {
+                    NeteasePlaylist.SpecialType.RADAR
+                }
+            list += radar(id, name, type)
+        }
+        list
+    }
+
+/**
+ * 主页多来源合流去重(NeriPlayer appendUniqueNeteaseHomeSongs 的 core 版):
+ * 以歌曲 ID 为键,合并后截断到 [limit]。UI/仓库组装 feed 时用。
+ */
+fun appendUniqueSongs(
+    current: List<NeteaseSong>,
+    next: List<NeteaseSong>,
+    limit: Int,
+): List<NeteaseSong> {
+    if (limit <= 0) return emptyList()
+    val merged = ArrayList<NeteaseSong>(limit)
+    val seen = HashSet<Long>()
+    (current.asSequence() + next.asSequence()).forEach { song ->
+        if (merged.size >= limit) return@forEach
+        if (song.id > 0L && seen.add(song.id)) {
+            merged.add(song)
         }
     }
+    return merged
+}
 
 // ----------------------------------------------------------------------------
 // D 档设置项支撑:关注与网易云同步
@@ -517,7 +631,8 @@ internal fun JsonElement.toSong(): NeteaseSong {
         albumId = al?.get("id").nLong(),
         albumName = al?.str("name"),
         durationMs = obj["dt"].nLong() ?: obj["duration"].nLong() ?: 0L,
-        coverUrl = al?.str("picUrl") ?: obj.str("picUrl"),
+        coverUrl =
+            (al?.str("picUrl") ?: al?.str("picUrl_str") ?: obj.str("picUrl"))?.toHttpsUrl(),
         fee = obj["fee"].nInt(),
         hasCopyright = obj["privilege"]?.let { (it as? JsonObject)?.get("st").nInt() == 0 },
     )
@@ -529,8 +644,8 @@ internal fun JsonElement.toPlaylist(): NeteasePlaylist {
     return NeteasePlaylist(
         id = obj["id"].nLong() ?: 0L,
         name = obj.str("name").orEmpty(),
-        coverUrl = obj.str("coverImgUrl") ?: obj.str("picUrl"),
-        trackCount = obj["trackCount"].nInt() ?: 0,
+        coverUrl = (obj.str("coverImgUrl") ?: obj.str("picUrl") ?: obj.str("coverUrl"))?.toHttpsUrl(),
+        trackCount = obj["trackCount"].nInt() ?: obj["songCount"].nInt() ?: 0,
         playCount = obj["playCount"].nLong() ?: obj["playcount"].nLong(),
         description = obj.str("description"),
         specialType = NeteasePlaylist.SpecialType.NORMAL,
@@ -547,7 +662,7 @@ internal fun JsonElement.toAlbum(): NeteaseAlbum {
         artistName =
             obj.array("artists")?.firstOrNull()?.jsonObject?.str("name")
                 ?: obj.obj("artist")?.str("name"),
-        coverUrl = obj.str("picUrl") ?: obj.str("coverImgUrl"),
+        coverUrl = (obj.str("picUrl") ?: obj.str("coverImgUrl"))?.toHttpsUrl(),
         trackCount = obj["size"].nInt() ?: obj["trackCount"].nInt() ?: 0,
         publishTimeMs = obj["publishTime"].nLong(),
         description = obj.str("description"),
@@ -561,11 +676,14 @@ internal fun JsonElement.toDjRadioOrNull(): NeteaseDjRadio? {
     return NeteaseDjRadio(
         id = id,
         name = obj.str("name").orEmpty(),
-        coverUrl = obj.str("coverUrl") ?: obj.str("coverImgUrl") ?: obj.str("picUrl"),
+        coverUrl = (obj.str("coverUrl") ?: obj.str("coverImgUrl") ?: obj.str("picUrl"))?.toHttpsUrl(),
         programCount = obj["programCount"].nInt() ?: obj["trackCount"].nInt() ?: 0,
         djNickname = obj.obj("dj")?.str("nickname"),
     )
 }
+
+/** 图片 URL 统一 https(NeriPlayer toHttps:pic CDN 的 http 链接在部分网络下被拦) */
+internal fun String.toHttpsUrl(): String = replaceFirst("http://", "https://")
 
 internal fun JsonObject.obj(key: String): JsonObject? = this[key] as? JsonObject
 

@@ -87,6 +87,43 @@ class NewEndpointsProbe {
                     { "ERR ${it.message}" },
                 )
             }
+            section("searchPlaylists(周杰伦)") {
+                client.searchPlaylists("周杰伦", limit = 3).fold(
+                    { r -> "total=${r.totalCount}\n" + r.items.joinToString("\n") { p -> "${p.id} | ${p.name} | ${p.trackCount}首 | ${p.coverUrl?.take(60)}" } },
+                    { "ERR ${it.message}" },
+                )
+            }
+            section("searchArtists(周杰伦)") {
+                client.searchArtists("周杰伦", limit = 3).fold(
+                    { r -> "total=${r.totalCount}\n" + r.items.joinToString("\n") { a -> "${a.id} | ${a.name} | 歌曲${a.musicSize} 专辑${a.albumSize} | ${a.picUrl?.take(50)}" } },
+                    { "ERR ${it.message}" },
+                )
+            }
+            section("radarPlaylists(全组)") {
+                client.radarPlaylists().fold(
+                    { it.joinToString("\n") { p -> "${p.id} | ${p.name} | ${p.trackCount}首 | ${p.specialType}" } },
+                    { "ERR ${it.message}" },
+                )
+            }
+            section("linkParser(纯函数)") {
+                val cases =
+                    listOf(
+                        "https://music.163.com/song?id=186016",
+                        "https://music.163.com/#/playlist?id=1234567",
+                        "听听这个 https://music.163.com/album?id=3410984 好听",
+                        "http://163cn.tv/AbCdEf",
+                        "https://y.music.163.com/m/artist?id=6452",
+                        "https://youtube.com/watch?v=x",
+                    )
+                cases.joinToString("\n") { c -> "$c -> ${NeteaseLinkParser.recognize(c)}" }
+            }
+            section("yrcConverter(纯函数)") {
+                val sample = "[12580,3470](12580,250,0)难(12830,300,0)以\n[16050,2000](16050,500,0)开"
+                val lines = NeteaseLyricsConverter.parseAuto(sample)
+                "isYrc=${NeteaseLyricsConverter.isYrc(sample)} lines=${lines.size} " +
+                    "first=${lines.firstOrNull()?.let { "${it.text} ${it.startMs}-${it.endMs} words=${it.words.size}" }}\n" +
+                    "lrc=\n${NeteaseLyricsConverter.yrcToLrc(sample)}"
+            }
 
             out.writeText(sb.toString())
             println(sb)
