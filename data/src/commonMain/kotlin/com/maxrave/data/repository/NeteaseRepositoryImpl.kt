@@ -11,6 +11,7 @@ import com.maxrave.domain.data.model.home.chart.Chart
 import com.maxrave.domain.data.model.home.chart.ChartItemPlaylist
 import com.maxrave.domain.data.model.browse.artist.ResultPlaylist
 import com.maxrave.domain.data.model.mood.Mood
+import com.maxrave.domain.data.model.mood.genre.GenreObject
 import com.maxrave.domain.data.model.mood.MoodItem
 import com.maxrave.domain.data.model.mood.MoodSection
 import com.maxrave.domain.data.model.mood.moodmoments.Content as MoodContent
@@ -18,6 +19,11 @@ import com.maxrave.domain.data.model.mood.moodmoments.Item as MoodItemShelf
 import com.maxrave.domain.data.model.mood.moodmoments.MoodsMomentObject
 import com.maxrave.domain.data.model.searchResult.songs.Thumbnail
 import com.maxrave.domain.manager.DataStoreManager
+import com.maxrave.domain.repository.HomeRepository
+import com.maxrave.domain.utils.Resource
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import com.maxrave.domain.source.MusicSource
 import com.maxrave.logger.Logger
 import com.maxrave.domain.source.MusicSourceProvider
@@ -45,7 +51,6 @@ import com.maxrave.netease.songUrl
 import com.maxrave.netease.toplistPlaylists
 import com.maxrave.netease.userPlaylists
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
@@ -63,7 +68,8 @@ import kotlinx.serialization.json.Json
 class NeteaseRepositoryImpl(
     private val dataStoreManager: DataStoreManager,
     private val dao: DatabaseDao,
-) : MusicSourceProvider {
+) : MusicSourceProvider,
+    HomeRepository {
     override val source: MusicSource = MusicSource.NETEASE
 
     private companion object {
@@ -333,6 +339,69 @@ class NeteaseRepositoryImpl(
                         ),
                 )
             }
+        }
+
+    // ----------------------------------------------------------------------------
+    // HomeRepository 契约实现:与 YT 同名同形状,SourceRoutingHomeRepository 按 selectedSource
+    // 选实例 —— ViewModel/Screen 只认 HomeRepository 接口,对音源无感知。
+    // ----------------------------------------------------------------------------
+
+    override fun getHomeData(
+        params: String?,
+        viewString: String,
+        songString: String,
+    ): Flow<Resource<Pair<String?, List<HomeItem>>>> =
+        flow {
+            val rows =
+                if (params.isNullOrEmpty()) {
+                    getHome().getOrNull() ?: emptyList()
+                } else {
+                    // chip 选中态:params=标签 → 该分类高质量歌单(YT mood 同契约)
+                    listOfNotNull(getHqPlaylistsRow(params).getOrNull())
+                }
+            emit(Resource.Success(null to rows)) // 一次性拉取,无 continuation
+        }
+
+    override fun getHomeDataContinue(
+        continueParam: String,
+        viewString: String,
+        songString: String,
+    ): Flow<Resource<Pair<String?, List<HomeItem>>>> = flowOf(Resource.Success(null to emptyList()))
+
+    override fun getNewRelease(
+        newReleaseString: String,
+        musicVideoString: String,
+    ): Flow<Resource<List<HomeItem>>> = flowOf(Resource.Success(emptyList())) // feed 已含"推荐新歌"行
+
+    override fun getChartData(countryCode: String): Flow<Resource<Chart>> =
+        flow {
+            // 契约:必须发射至少一次 —— 空数据发 Success(null),调用方置空区块;
+            // 空流会让路由侧的 .first() 抛 NoSuchElementException 炸主线程
+            getHomeChart().fold(
+                onSuccess = { data -> emit(if (data != null) Resource.Success(data) else Resource.Error("netease: empty")) },
+                onFailure = { emit(Resource.Error(it.message ?: "netease error")) },
+            )
+        }
+
+    override fun getMoodAndMomentsData(): Flow<Resource<Mood>> =
+        flow {
+            getMoodSections().fold(
+                onSuccess = { data -> emit(if (data != null) Resource.Success(data) else Resource.Error("netease: empty")) },
+                onFailure = { emit(Resource.Error(it.message ?: "netease error")) },
+            )
+        }
+
+    override fun getMoodCategoryArtwork(params: String): Flow<String?> = flowOf(null)
+
+    override fun getGenreData(params: String): Flow<Resource<GenreObject>> =
+        flowOf(Resource.Error("netease: genre browse not applicable"))
+
+    override fun getMoodData(params: String): Flow<Resource<MoodsMomentObject>> =
+        flow {
+            getMoodContent(params).fold(
+                onSuccess = { data -> emit(if (data != null) Resource.Success(data) else Resource.Error("netease: empty")) },
+                onFailure = { emit(Resource.Error(it.message ?: "netease error")) },
+            )
         }
 
     /** 图表区块:网易排行榜映射进 YT Chart 形状(榜单卡点击进歌单;地区下拉对网易隐藏 → countries=null) */

@@ -45,4 +45,13 @@ interface HomeRepository {
     fun getGenreData(params: String): Flow<Resource<GenreObject>>
 
     fun getMoodData(params: String): Flow<Resource<MoodsMomentObject>>
+
+    /**
+     * 主页欢迎区账户摘要(name, avatarUrl),未登录为 null。
+     * 默认实现让上游 HomeRepositoryImpl 零改动;路由仓库按源覆写。
+     */
+    fun getAccountInfo(): Flow<Pair<String?, String?>?> = kotlinx.coroutines.flow.flowOf(null)
+
+    /** 图表地区选择器是否显示(网易榜单不分地区 → false) */
+    suspend fun showRegionChartSelector(): Boolean = true
 }

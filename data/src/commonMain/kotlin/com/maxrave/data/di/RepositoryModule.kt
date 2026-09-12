@@ -11,6 +11,7 @@ import com.maxrave.data.repository.AutoEqRepositoryImpl
 import com.maxrave.data.lyrics.LyricsRomanizerRepositoryImpl
 import com.maxrave.data.repository.CommonRepositoryImpl
 import com.maxrave.data.repository.HomeRepositoryImpl
+import com.maxrave.data.repository.SourceRoutingHomeRepository
 import com.maxrave.data.repository.ImportRepositoryImpl
 import com.maxrave.data.repository.LocalPlaylistRepositoryImpl
 import com.maxrave.data.repository.LyricsCanvasRepositoryImpl
@@ -79,8 +80,11 @@ val repositoryModule =
             LyricsRomanizerRepositoryImpl("${fileDir()}/kuromoji-ipadic")
         }
 
-        single<HomeRepository>(createdAtStart = true) {
+        single<HomeRepositoryImpl>(createdAtStart = true) {
             HomeRepositoryImpl(get(), get())
+        }
+        single<HomeRepository>(createdAtStart = true) {
+            SourceRoutingHomeRepository(get(), get(), get())
         }
 
         single<ImportRepository>(createdAtStart = true) {
