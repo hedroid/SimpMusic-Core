@@ -55,7 +55,7 @@ interface MusicSourceProvider {
     suspend fun getLyrics(songId: String): Result<ProviderLyrics?>
 
     /** 主页分区(YTM=首页 shelves;网易=每日推荐/雷达/榜单/分类歌单) */
-    suspend fun getHome(): Result<List<HomeItem>>
+    suspend fun getHome(force: Boolean = false): Result<List<HomeItem>>
 
     /** 云端歌单列表(YTM=账号歌单;网易=用户创建+收藏歌单) */
     suspend fun getLibraryPlaylists(): Result<List<PlaylistEntity>>

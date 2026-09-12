@@ -57,6 +57,7 @@ import com.maxrave.netease.personalRadio
 import com.maxrave.netease.personalizedNewSongs
 import com.maxrave.netease.playlistDetail
 import com.maxrave.netease.playlistTracks
+import com.maxrave.netease.playlistTracksViaDetail
 import com.maxrave.netease.songDetail
 import com.maxrave.netease.radarPlaylists
 import com.maxrave.netease.searchSongs
@@ -269,11 +270,14 @@ class NeteaseRepositoryImpl(
     /** 首页 feed 会话级缓存(NeriPlayer 同思路:短时间内重进主页不全刷,10 分钟过期) */
     private var homeCache: Pair<List<HomeItem>, kotlin.time.TimeMark>? = null
 
-    override suspend fun getHome(): Result<List<HomeItem>> =
+    /** force=true 绕过缓存(下拉刷新用):瞬时失败缺行的结果不能被缓存钉住 */
+    override suspend fun getHome(force: Boolean): Result<List<HomeItem>> =
         runCatching {
-            @OptIn(kotlin.time.ExperimentalTime::class)
-            homeCache?.let { (rows, mark) ->
-                if (mark.elapsedNow() < 10.minutes) return Result.success(rows)
+            if (!force) {
+                @OptIn(kotlin.time.ExperimentalTime::class)
+                homeCache?.let { (rows, mark) ->
+                    if (mark.elapsedNow() < 10.minutes) return Result.success(rows)
+                }
             }
             fetchHome().also { rows ->
                 @OptIn(kotlin.time.ExperimentalTime::class)
@@ -291,15 +295,21 @@ class NeteaseRepositoryImpl(
                 // 兜底走 detail.trackIds → songDetail 两步
                 val radarSongs =
                     async {
-                        client.playlistTracks(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID, limit = 30)
-                            .getOrNull()
-                            ?.takeIf { it.isNotEmpty() }
-                            ?: client
-                                .playlistDetail(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID)
+                        val direct =
+                            client.playlistTracks(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID, limit = 30)
                                 .getOrNull()
-                                ?.second
-                                ?.take(30)
-                                ?.let { ids -> client.songDetail(ids).getOrNull().orEmpty() }
+                                ?.takeIf { it.isNotEmpty() }
+                        if (direct != null) {
+                            direct
+                        } else {
+                            // 雷达 trackIds 是 -10000 占位,songDetail 无效;走带 n 的 detail 直取 tracks
+                            val viaDetail =
+                                client.playlistTracksViaDetail(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID, limit = 30).getOrNull()
+                            if (viaDetail.isNullOrEmpty()) {
+                                com.maxrave.logger.Logger.w("NeteaseHome", "radar songs: track/all and viaDetail both empty")
+                            }
+                            viaDetail.orEmpty()
+                        }
                     }
                 val radarLists =
                     async {

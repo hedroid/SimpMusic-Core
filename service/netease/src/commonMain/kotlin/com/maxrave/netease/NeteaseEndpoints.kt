@@ -144,7 +144,8 @@ suspend fun NeteaseClient.songDetail(ids: List<Long>): Result<List<NeteaseSong>>
             callWeApi(
                 "/v3/song/detail",
                 mapOf(
-                    "c" to ids.joinToString(",") { "{\"id\":$it}" },
+                    // c 必须是 JSON 数组文本(带方括号),缺 [] 服务端解析失败返回空 songs
+                    "c" to ids.joinToString(",", prefix = "[", postfix = "]") { "{\"id\":$it}" },
                 ),
             )
         body.array("songs")?.map { it.toSong() } ?: emptyList()
@@ -379,6 +380,28 @@ suspend fun NeteaseClient.highQualityPlaylistsPaged(
             cursor = page.nextBefore ?: return@repeat
         }
         all
+    }
+
+/**
+ * 带 n 的歌单详情直取 playlist.tracks(NeriPlayer getPlaylistDetail 同款)。
+ * 雷达这类特殊歌单的 trackIds 是 -10000 占位符,songDetail 查不动;
+ * 带 n 请求时响应的 tracks 数组直接是完整歌曲形状。
+ */
+suspend fun NeteaseClient.playlistTracksViaDetail(
+    playlistId: Long,
+    limit: Int,
+): Result<List<NeteaseSong>> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/v6/playlist/detail",
+                mapOf(
+                    "id" to playlistId,
+                    "n" to limit,
+                    "s" to 8,
+                ),
+            )
+        body.obj("playlist")?.array("tracks")?.map { it.toSong() } ?: emptyList()
     }
 
 suspend fun NeteaseClient.toplistPlaylists(): Result<List<NeteasePlaylist>> =
