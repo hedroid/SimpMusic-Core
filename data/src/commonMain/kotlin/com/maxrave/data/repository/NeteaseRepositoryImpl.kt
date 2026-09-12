@@ -270,13 +270,12 @@ class NeteaseRepositoryImpl(
             coroutineScope {
                 val daily = async { client.dailyRecommendPlaylists().getOrNull() }
                 val radar = async { client.radarPlaylists().getOrNull() }
-                val top = async { toplistCached() }
                 val newSongs = async { client.personalizedNewSongs(20).getOrNull() }
                 val hq = async { client.highQualityPlaylists().getOrNull()?.playlists }
+                // 排行榜不进 feed:数据由底部图表区块(ChartData)呈现,避免同一榜单出现两次
                 buildList {
                     daily.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("每日推荐歌单")) }
                     radar.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("私人雷达")) }
-                    top.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("排行榜")) }
                     newSongs.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toSongHomeItem("推荐新歌")) }
                     hq.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("精品歌单")) }
                 }
