@@ -40,6 +40,7 @@ import com.maxrave.netease.NeteaseClient
 import com.maxrave.netease.dailyRecommendPlaylists
 import com.maxrave.netease.dailyRecommendSongs
 import com.maxrave.netease.highQualityPlaylists
+import com.maxrave.netease.categoryPlaylists
 import com.maxrave.netease.categoryPlaylistsPaged
 import com.maxrave.netease.playlistCatalog
 import com.maxrave.netease.highQualityPlaylistsPaged
@@ -296,6 +297,12 @@ class NeteaseRepositoryImpl(
     // 主页复用适配:把网易数据映射进上游 HomeScreen 的 Mood/Chart 形状
     // ----------------------------------------------------------------------------
 
+    /** 目录缓存(分类体系进程内基本不变,省去 chips/分区块重复拉取) */
+    private var catalogCache: List<Pair<String, List<com.maxrave.netease.NeteaseCatalogTag>>>? = null
+
+    private suspend fun catalogCached(): List<Pair<String, List<com.maxrave.netease.NeteaseCatalogTag>>> =
+        catalogCache ?: client.playlistCatalog().getOrNull()?.also { catalogCache = it } ?: emptyList()
+
     /** 网易专属:chips 的兜底精选(目录接口失败时用) */
     val curatedHomeTags =
         listOf("华语", "欧美", "日语", "韩语", "流行", "摇滚", "民谣", "电子", "说唱", "ACG")
@@ -303,9 +310,9 @@ class NeteaseRepositoryImpl(
     /** 网易专属:主页 chips = 目录接口的热门标签(与分类区块同源,网页版热门分类同款);
      *  失败退回精选兜底 */
     suspend fun getHotChips(): List<String> =
-        client.playlistCatalog().getOrNull()?.let { groups ->
+        catalogCached().let { groups ->
             groups.flatMap { (_, tags) -> tags.filter { it.hot }.map { it.name } }
-        }?.take(15)?.takeIf { it.isNotEmpty() } ?: curatedHomeTags
+        }.take(15).takeIf { it.isNotEmpty() } ?: curatedHomeTags
 
     /**
      * 分类区块:网页版 discover/playlist 的分类目录(weapi /playlist/catalogue)默认视图 ——
@@ -313,17 +320,19 @@ class NeteaseRepositoryImpl(
      * 全量目录的完整入口后续以独立"全部分类"页承接。
      */
     suspend fun getMoodSections(): Result<Mood?> =
-        client.playlistCatalog().mapCatching { groups ->
-            // 组序配色;条纹只是标签卡左侧色条
+        runCatching {
+            val groups = catalogCached()
+            val chips = getHotChips().toSet() // 顶栏已有的标签,分区块不再重复
             val colors = listOf(0xFFD43C33, 0xFF4C6EAF, 0xFF3AA675, 0xFFC2753B, 0xFF8A6BB8)
             Mood(
                 sections =
                     groups.mapIndexed { index, (title, tags) ->
-                        val hotTags = tags.filter { it.hot }
+                        // hot 优先,补足到 15 个(YT 的 mood/流派区块也是数十张的量)
+                        val ordered = tags.sortedByDescending { it.hot }
                         MoodSection(
                             title = title,
                             items =
-                                hotTags.map {
+                                ordered.filter { it.name !in chips }.take(15).map {
                                     MoodItem(title = it.name, params = it.name, stripeColor = colors[index % colors.size])
                                 },
                         )
@@ -350,7 +359,7 @@ class NeteaseRepositoryImpl(
                                     list.map { pl ->
                                         MoodContent(
                                             playlistBrowseId = pl.id.toString(),
-                                            subtitle = pl.description.orEmpty(),
+                                            subtitle = pl.description.sanitizeCardSubtitle().orEmpty(),
                                             thumbnails =
                                                 pl.coverUrl?.let {
                                                     listOf(Thumbnail(height = 540, url = it, width = 540))
@@ -379,10 +388,32 @@ class NeteaseRepositoryImpl(
                 if (params.isNullOrEmpty()) {
                     getHome().getOrNull() ?: emptyList()
                 } else {
-                    // chip 选中态:params=标签 → 该分类高质量歌单(YT mood 同契约)
-                    listOfNotNull(getHqPlaylistsRow(params).getOrNull())
+                    // chip 选中态:多行 feed 对标 YT mood 态 —— 热门/最新/精品三行并行
+                    categoryFeedRows(params)
                 }
             emit(Resource.Success(null to rows)) // 一次性拉取,无 continuation
+        }
+
+    /** 标签选中态的三行 feed:热门(播放量序)/最新(上架序)/精品,各 50 张并行拉取 */
+    private suspend fun categoryFeedRows(tag: String): List<HomeItem> =
+        coroutineScope {
+            val hot =
+                async {
+                    client.categoryPlaylistsPaged(cat = tag, pages = 1, order = "hot").getOrNull() ?: emptyList()
+                }
+            val new =
+                async {
+                    client.categoryPlaylists(cat = tag, limit = 50, offset = 0, order = "new").getOrNull()?.playlists ?: emptyList()
+                }
+            val hq =
+                async {
+                    client.highQualityPlaylistsPaged(cat = tag, pages = 1).getOrNull() ?: emptyList()
+                }
+            buildList {
+                hot.await().takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("$tag · 热门")) }
+                new.await().takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("$tag · 最新")) }
+                hq.await().takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("$tag · 精品")) }
+            }
         }
 
     override fun getHomeDataContinue(
@@ -545,7 +576,8 @@ private fun List<NeteasePlaylist>.toPlaylistHomeItem(title: String): HomeItem =
                 Content(
                     album = null,
                     artists = null,
-                    description = pl.description,
+                    // 推荐接口的 description 常是 "0"/"1"/"2" 这类数字,清掉回退到"播放列表"占位
+                    description = pl.description.sanitizeCardSubtitle(),
                     isExplicit = false,
                     playlistId = pl.id.toString(),
                     browseId = null,
@@ -577,6 +609,10 @@ private fun List<NeteaseSong>.toSongHomeItem(title: String): HomeItem =
                 )
             },
     )
+
+/** 歌单卡副标题净化:纯数字/空白视为无描述(网易推荐接口的 description 是 0/1/2 序号) */
+private fun String?.sanitizeCardSubtitle(): String? =
+    this?.trim()?.takeIf { it.isNotEmpty() && !it.all(Char::isDigit) }
 
 private fun String?.toThumbnails(): List<Thumbnail> =
     takeUnless { it.isNullOrEmpty() }?.let {
