@@ -136,4 +136,10 @@ internal class SourceRoutingHomeRepository(
 
     /** 地区榜选择器是否显示(网易榜单不分地区) */
     override suspend fun showRegionChartSelector(): Boolean = !isNetease()
+
+    /** 标签分类页网格布局(网易对标网页歌单广场) */
+    override suspend fun useMoodGridLayout(): Boolean = isNetease()
+
+    /** 网易 chip 点击跳分类网格页;YT 保持页内 mood 过滤 */
+    override suspend fun chipsNavigateToTagPage(): Boolean = isNetease()
 }

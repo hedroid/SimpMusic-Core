@@ -250,10 +250,13 @@ data class NeteaseCatalogTag(
 suspend fun NeteaseClient.playlistCatalog(): Result<List<Pair<String, List<NeteaseCatalogTag>>>> =
     runCatching {
         val body = callWeApi("/playlist/catalogue", emptyMap())
+        // categories 形如 {"0":"语种","1":"风格",...} —— key 是组号,value 是组名
         val groupNames =
             buildMap<Int, String> {
                 (body["categories"] as? JsonObject)?.forEach { (k, v) ->
-                    v.nInt()?.let { put(it, (v as? JsonPrimitive)?.contentOrNull ?: return@forEach) }
+                    k.toIntOrNull()?.let { id ->
+                        (v as? JsonPrimitive)?.contentOrNull?.let { name -> put(id, name) }
+                    }
                 }
             }
         val subs =

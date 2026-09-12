@@ -54,4 +54,10 @@ interface HomeRepository {
 
     /** 图表地区选择器是否显示(网易榜单不分地区 → false) */
     suspend fun showRegionChartSelector(): Boolean = true
+
+    /** 标签分类页是否用网格布局(网易对标网页版歌单广场的网格;YT 保持货架行) */
+    suspend fun useMoodGridLayout(): Boolean = false
+
+    /** 顶栏 chip 点击是否跳转分类页(网易:跳网格页;YT:保持页内 mood 过滤) */
+    suspend fun chipsNavigateToTagPage(): Boolean = false
 }

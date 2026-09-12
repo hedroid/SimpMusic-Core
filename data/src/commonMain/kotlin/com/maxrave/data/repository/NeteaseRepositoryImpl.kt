@@ -264,7 +264,22 @@ class NeteaseRepositoryImpl(
         }
     }
 
+    /** 首页 feed 会话级缓存(NeriPlayer 同思路:短时间内重进主页不全刷,10 分钟过期) */
+    private var homeCache: Pair<List<HomeItem>, kotlin.time.TimeMark>? = null
+
     override suspend fun getHome(): Result<List<HomeItem>> =
+        runCatching {
+            @OptIn(kotlin.time.ExperimentalTime::class)
+            homeCache?.let { (rows, mark) ->
+                if (mark.elapsedNow() < 10.minutes) return Result.success(rows)
+            }
+            fetchHome().also { rows ->
+                @OptIn(kotlin.time.ExperimentalTime::class)
+                homeCache = rows to TimeSource.Monotonic.markNow()
+            }
+        }
+
+    private suspend fun fetchHome(): List<HomeItem> =
         runCatching {
             // 五组请求并行(总耗时=最慢一组,而不是相加);每组失败独立跳过,不拖垮整页
             coroutineScope {
@@ -280,7 +295,7 @@ class NeteaseRepositoryImpl(
                     hq.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("精品歌单")) }
                 }
             }
-        }
+        }.getOrElse { emptyList() }
 
     /** 网易专属:高质量分类标签(主页 chips 用) */
     suspend fun getHighQualityTags(): Result<List<NeteaseHighQualityTag>> = client.highQualityTags()
@@ -302,16 +317,14 @@ class NeteaseRepositoryImpl(
     private suspend fun catalogCached(): List<Pair<String, List<com.maxrave.netease.NeteaseCatalogTag>>> =
         catalogCache ?: client.playlistCatalog().getOrNull()?.also { catalogCache = it } ?: emptyList()
 
-    /** 网易专属:chips 的兜底精选(目录接口失败时用) */
+    /**
+     * 网易专属:主页 chips = 固定 8 个高频分类快捷(方案1:快捷方式,与下方目录是
+     * "精选 vs 全量"关系,目录不因 chips 占用而缺项 —— 与网页版/YT 的双入口惯例一致)
+     */
     val curatedHomeTags =
-        listOf("华语", "欧美", "日语", "韩语", "流行", "摇滚", "民谣", "电子", "说唱", "ACG")
+        listOf("华语", "欧美", "日语", "韩语", "流行", "摇滚", "说唱", "ACG")
 
-    /** 网易专属:主页 chips = 目录接口的热门标签(与分类区块同源,网页版热门分类同款);
-     *  失败退回精选兜底 */
-    suspend fun getHotChips(): List<String> =
-        catalogCached().let { groups ->
-            groups.flatMap { (_, tags) -> tags.filter { it.hot }.map { it.name } }
-        }.take(15).takeIf { it.isNotEmpty() } ?: curatedHomeTags
+    suspend fun getHotChips(): List<String> = curatedHomeTags
 
     /**
      * 分类区块:网页版 discover/playlist 的分类目录(weapi /playlist/catalogue)默认视图 ——
@@ -321,17 +334,16 @@ class NeteaseRepositoryImpl(
     suspend fun getMoodSections(): Result<Mood?> =
         runCatching {
             val groups = catalogCached()
-            val chips = getHotChips().toSet() // 顶栏已有的标签,分区块不再重复
             val colors = listOf(0xFFD43C33, 0xFF4C6EAF, 0xFF3AA675, 0xFFC2753B, 0xFF8A6BB8)
             Mood(
                 sections =
                     groups.mapIndexed { index, (title, tags) ->
-                        // hot 优先,补足到 15 个(YT 的 mood/流派区块也是数十张的量)
+                        // hot 优先,补足到 15 个;chips 是"快捷方式"不算重复(网页版惯例)
                         val ordered = tags.sortedByDescending { it.hot }
                         MoodSection(
                             title = title,
                             items =
-                                ordered.filter { it.name !in chips }.take(15).map {
+                                ordered.take(15).map {
                                     MoodItem(title = it.name, params = it.name, stripeColor = colors[index % colors.size])
                                 },
                         )
