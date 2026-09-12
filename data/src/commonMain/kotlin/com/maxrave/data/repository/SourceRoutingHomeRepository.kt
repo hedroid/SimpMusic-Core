@@ -110,36 +110,4 @@ internal class SourceRoutingHomeRepository(
             }
         }
 
-    /** 账户摘要(主页欢迎区):YT 读 cookie+AccountName 键,网易读网易键 —— view 无感 */
-    override fun getAccountInfo(): Flow<Pair<String?, String?>?> =
-        flow {
-            val info =
-                if (isNetease()) {
-                    if (dataStoreManager.neteaseCookie.first().isNotEmpty()) {
-                        Pair(
-                            dataStoreManager.neteaseAccountName.first(),
-                            dataStoreManager.neteaseAccountThumbUrl.first(),
-                        )
-                    } else {
-                        null
-                    }
-                } else if (dataStoreManager.cookie.first().isNotEmpty()) {
-                    Pair(
-                        dataStoreManager.getString("AccountName").first(),
-                        dataStoreManager.getString("AccountThumbUrl").first(),
-                    )
-                } else {
-                    null
-                }
-            emit(info) // 未登录也要发射 null,空流会让 .first() 崩
-        }
-
-    /** 地区榜选择器是否显示(网易榜单不分地区) */
-    override suspend fun showRegionChartSelector(): Boolean = !isNetease()
-
-    /** 标签分类页网格布局(网易对标网页歌单广场) */
-    override suspend fun useMoodGridLayout(): Boolean = isNetease()
-
-    /** 网易 chip 点击跳分类网格页;YT 保持页内 mood 过滤 */
-    override suspend fun chipsNavigateToTagPage(): Boolean = isNetease()
 }
