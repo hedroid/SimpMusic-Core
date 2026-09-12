@@ -40,6 +40,7 @@ import com.maxrave.netease.NeteaseClient
 import com.maxrave.netease.dailyRecommendPlaylists
 import com.maxrave.netease.dailyRecommendSongs
 import com.maxrave.netease.highQualityPlaylists
+import com.maxrave.netease.highQualityPlaylistsPaged
 import com.maxrave.netease.highQualityTags
 import com.maxrave.netease.likeSong
 import com.maxrave.netease.lyric
@@ -268,7 +269,7 @@ class NeteaseRepositoryImpl(
                 val radar = async { client.radarPlaylists().getOrNull() }
                 val top = async { toplistCached() }
                 val newSongs = async { client.personalizedNewSongs(20).getOrNull() }
-                val hq = async { client.highQualityPlaylists().getOrNull() }
+                val hq = async { client.highQualityPlaylists().getOrNull()?.playlists }
                 buildList {
                     daily.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("每日推荐歌单")) }
                     radar.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("私人雷达")) }
@@ -282,10 +283,11 @@ class NeteaseRepositoryImpl(
     /** 网易专属:高质量分类标签(主页 chips 用) */
     suspend fun getHighQualityTags(): Result<List<NeteaseHighQualityTag>> = client.highQualityTags()
 
-    /** 网易专属:按分类取精品歌单行(cat=null 即默认"全部"),chip 点击局部换行,不整页重拉 */
+    /** 网易专属:按分类取精品歌单行(cat=null 即默认"全部"),chip 点击局部换行,不整页重拉;
+     *  游标翻两页(≈100 张),内容量对标网易 App 的分类页 */
     suspend fun getHqPlaylistsRow(cat: String?): Result<HomeItem?> =
         client
-            .highQualityPlaylists(cat = cat)
+            .highQualityPlaylistsPaged(cat = cat, pages = 2)
             .map { list -> if (list.isEmpty()) null else list.toPlaylistHomeItem("精品歌单") }
 
     // ----------------------------------------------------------------------------
@@ -297,45 +299,43 @@ class NeteaseRepositoryImpl(
         listOf("华语", "欧美", "日语", "韩语", "流行", "摇滚", "民谣", "电子", "说唱", "ACG")
 
     /**
-     * "心情&场景"+"流派"区块:高质量标签按 category 分组映射进 YT Mood 形状
-     * (category 2=场景 3=情感 → 心情&场景;1=风格 → 流派)。params 即标签名。
+     * 分类区块:高质量标签按 category 全组映射进 YT Mood 形状,分组对标网易 App
+     * (0=语种 1=风格 2=场景 3=情感 4=主题,五组全展示)。params 即标签名。
      */
     suspend fun getMoodSections(): Result<Mood?> =
         client.highQualityTags().mapCatching { tags ->
-            val moodTags = tags.filter { it.category == 3 || it.category == 2 }
-            val genreTags = tags.filter { it.category == 1 }
+            // 分组顺序与配色对标网易 App 的分类页;stripeColor 仅是标签卡左侧色条
+            val groups =
+                listOf(
+                    0 to ("语种" to 0xFFD43C33),
+                    1 to ("风格" to 0xFF4C6EAF),
+                    2 to ("场景" to 0xFF3AA675),
+                    3 to ("情感" to 0xFFC2753B),
+                    4 to ("主题" to 0xFF8A6BB8),
+                )
             Mood(
                 sections =
                     buildList {
-                        if (moodTags.isNotEmpty()) {
-                            add(
-                                MoodSection(
-                                    title = "心情 & 场景",
-                                    items =
-                                        moodTags.map {
-                                            MoodItem(title = it.name, params = it.name, stripeColor = 0xFFD43C33)
-                                        },
-                                ),
-                            )
-                        }
-                        if (genreTags.isNotEmpty()) {
-                            add(
-                                MoodSection(
-                                    title = "流派",
-                                    items =
-                                        genreTags.map {
-                                            MoodItem(title = it.name, params = it.name, stripeColor = 0xFF4C6EAF)
-                                        },
-                                ),
-                            )
+                        groups.forEach { (cat, titleAndColor) ->
+                            val (title, color) = titleAndColor
+                            val items = tags.filter { it.category == cat }
+                            if (items.isNotEmpty()) {
+                                add(
+                                    MoodSection(
+                                        title = title,
+                                        items = items.map { MoodItem(title = it.name, params = it.name, stripeColor = color) },
+                                    ),
+                                )
+                            }
                         }
                     },
             )
         }
 
-    /** 标签分类内容(标签→高质量歌单列表),映射进 YT MoodsMomentObject 形状,MoodScreen 直接渲染 */
+    /** 标签分类内容(标签→高质量歌单列表),映射进 YT MoodsMomentObject 形状,MoodScreen 直接渲染;
+     *  游标翻两页(≈100 张),对标网易 App 分类页的内容量 */
     suspend fun getMoodContent(tag: String): Result<MoodsMomentObject?> =
-        client.highQualityPlaylists(cat = tag).mapCatching { list ->
+        client.highQualityPlaylistsPaged(cat = tag, pages = 2).mapCatching { list ->
             if (list.isEmpty()) {
                 null
             } else {

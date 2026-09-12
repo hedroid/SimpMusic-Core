@@ -236,20 +236,57 @@ suspend fun NeteaseClient.personalizedNewSongs(limit: Int = 30): Result<List<Net
         } ?: emptyList()
     }
 
+/**
+ * 高质量歌单分页结果:nextBefore 为下一页游标(响应 lasttime),null 表示没有更多。
+ */
+data class NeteaseHqPage(
+    val playlists: List<NeteasePlaylist>,
+    val nextBefore: Long?,
+)
+
+/**
+ * 高质量歌单,游标分页(每页上限 50;nextBefore 传上页的游标翻页)。
+ * cat=null 表示不传分类参数(服务端默认"全部")。
+ */
 suspend fun NeteaseClient.highQualityPlaylists(
     cat: String? = "全部",
-    limit: Int = 30,
-): Result<List<NeteasePlaylist>> =
+    limit: Int = 50,
+    before: Long = 0L,
+): Result<NeteaseHqPage> =
     runCatching {
         val body =
             callWeApi(
                 "/playlist/highquality/list",
                 buildMap<String, Any?> {
                     put("limit", limit)
+                    put("lasttime", before)
+                    put("total", true)
                     if (cat != null) put("cat", cat)
                 },
             )
-        body.array("playlists")?.map { it.toPlaylist() } ?: emptyList()
+        val playlists = body.array("playlists")?.map { it.toPlaylist() } ?: emptyList()
+        val more = (body["more"] as? JsonPrimitive)?.content == "true"
+        val next = body["lasttime"].nLong()
+        NeteaseHqPage(
+            playlists = playlists,
+            nextBefore = if (more && next != null && next > 0) next else null,
+        )
+    }
+
+/** 便捷封装:一次性拉 [pages] 页(标签/分类页用,内容量对标网易 App) */
+suspend fun NeteaseClient.highQualityPlaylistsPaged(
+    cat: String? = "全部",
+    pages: Int = 2,
+): Result<List<NeteasePlaylist>> =
+    runCatching {
+        val all = mutableListOf<NeteasePlaylist>()
+        var cursor = 0L
+        repeat(pages) {
+            val page = highQualityPlaylists(cat = cat, before = cursor).getOrNull() ?: return@repeat
+            all += page.playlists
+            cursor = page.nextBefore ?: return@repeat
+        }
+        all
     }
 
 suspend fun NeteaseClient.toplistPlaylists(): Result<List<NeteasePlaylist>> =
