@@ -40,6 +40,8 @@ import com.maxrave.netease.NeteaseClient
 import com.maxrave.netease.dailyRecommendPlaylists
 import com.maxrave.netease.dailyRecommendSongs
 import com.maxrave.netease.highQualityPlaylists
+import com.maxrave.netease.categoryPlaylistsPaged
+import com.maxrave.netease.playlistCatalog
 import com.maxrave.netease.highQualityPlaylistsPaged
 import com.maxrave.netease.highQualityTags
 import com.maxrave.netease.likeSong
@@ -283,12 +285,12 @@ class NeteaseRepositoryImpl(
     /** 网易专属:高质量分类标签(主页 chips 用) */
     suspend fun getHighQualityTags(): Result<List<NeteaseHighQualityTag>> = client.highQualityTags()
 
-    /** 网易专属:按分类取精品歌单行(cat=null 即默认"全部"),chip 点击局部换行,不整页重拉;
-     *  游标翻两页(≈100 张),内容量对标网易 App 的分类页 */
+    /** 网易专属:按分类取歌单行(chip 选中态整页换行;网页版分类页同源,热度排序),
+     *  翻两页 ≈100 张;行标题用标签名 */
     suspend fun getHqPlaylistsRow(cat: String?): Result<HomeItem?> =
         client
-            .highQualityPlaylistsPaged(cat = cat, pages = 2)
-            .map { list -> if (list.isEmpty()) null else list.toPlaylistHomeItem("精品歌单") }
+            .categoryPlaylistsPaged(cat = cat ?: "全部", pages = 2)
+            .map { list -> if (list.isEmpty()) null else list.toPlaylistHomeItem(cat ?: "全部歌单") }
 
     // ----------------------------------------------------------------------------
     // 主页复用适配:把网易数据映射进上游 HomeScreen 的 Mood/Chart 形状
@@ -299,43 +301,28 @@ class NeteaseRepositoryImpl(
         listOf("华语", "欧美", "日语", "韩语", "流行", "摇滚", "民谣", "电子", "说唱", "ACG")
 
     /**
-     * 分类区块:高质量标签按 category 全组映射进 YT Mood 形状,分组对标网易 App
-     * (0=语种 1=风格 2=场景 3=情感 4=主题,五组全展示)。params 即标签名。
+     * 分类区块:网页版 discover/playlist 的完整分类目录(weapi /playlist/catalogue)
+     * 映射进 YT Mood 形状 —— 语种/风格/场景/情感/主题五组全量子类(100+)。
      */
     suspend fun getMoodSections(): Result<Mood?> =
-        client.highQualityTags().mapCatching { tags ->
-            // 分组顺序与配色对标网易 App 的分类页;stripeColor 仅是标签卡左侧色条
-            val groups =
-                listOf(
-                    0 to ("语种" to 0xFFD43C33),
-                    1 to ("风格" to 0xFF4C6EAF),
-                    2 to ("场景" to 0xFF3AA675),
-                    3 to ("情感" to 0xFFC2753B),
-                    4 to ("主题" to 0xFF8A6BB8),
-                )
+        client.playlistCatalog().mapCatching { groups ->
+            // 组序配色;条纹只是标签卡左侧色条
+            val colors = listOf(0xFFD43C33, 0xFF4C6EAF, 0xFF3AA675, 0xFFC2753B, 0xFF8A6BB8)
             Mood(
                 sections =
-                    buildList {
-                        groups.forEach { (cat, titleAndColor) ->
-                            val (title, color) = titleAndColor
-                            val items = tags.filter { it.category == cat }
-                            if (items.isNotEmpty()) {
-                                add(
-                                    MoodSection(
-                                        title = title,
-                                        items = items.map { MoodItem(title = it.name, params = it.name, stripeColor = color) },
-                                    ),
-                                )
-                            }
-                        }
+                    groups.mapIndexed { index, (title, tags) ->
+                        MoodSection(
+                            title = title,
+                            items = tags.map { MoodItem(title = it.name, params = it.name, stripeColor = colors[index % colors.size]) },
+                        )
                     },
             )
         }
 
-    /** 标签分类内容(标签→高质量歌单列表),映射进 YT MoodsMomentObject 形状,MoodScreen 直接渲染;
-     *  游标翻两页(≈100 张),对标网易 App 分类页的内容量 */
+    /** 标签分类内容(标签→分类歌单列表,网页版 discover/playlist?cat=xxx 同源,热度排序),
+     *  映射进 YT MoodsMomentObject 形状,MoodScreen 直接渲染;翻两页 ≈100 张 */
     suspend fun getMoodContent(tag: String): Result<MoodsMomentObject?> =
-        client.highQualityPlaylistsPaged(cat = tag, pages = 2).mapCatching { list ->
+        client.categoryPlaylistsPaged(cat = tag, pages = 2).mapCatching { list ->
             if (list.isEmpty()) {
                 null
             } else {

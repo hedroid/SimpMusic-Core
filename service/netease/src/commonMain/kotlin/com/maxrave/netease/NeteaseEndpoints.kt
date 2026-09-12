@@ -236,6 +236,95 @@ suspend fun NeteaseClient.personalizedNewSongs(limit: Int = 30): Result<List<Net
         } ?: emptyList()
     }
 
+/** 分类目录子项(weapi /playlist/catalogue):name+所属组号+是否热门(网页左侧栏同源) */
+data class NeteaseCatalogTag(
+    val name: String,
+    val category: Int,
+    val hot: Boolean,
+)
+
+/**
+ * 全部分类目录(网页版 discover/playlist 的分类栏同源):
+ * 返回 (组名, 该组子类列表) 列表,组序 0=语种 1=风格 2=场景 3=情感 4=主题。
+ */
+suspend fun NeteaseClient.playlistCatalog(): Result<List<Pair<String, List<NeteaseCatalogTag>>>> =
+    runCatching {
+        val body = callWeApi("/playlist/catalogue", emptyMap())
+        val groupNames =
+            buildMap<Int, String> {
+                (body["categories"] as? JsonObject)?.forEach { (k, v) ->
+                    v.nInt()?.let { put(it, (v as? JsonPrimitive)?.contentOrNull ?: return@forEach) }
+                }
+            }
+        val subs =
+            body.array("sub")?.mapNotNull { element ->
+                val obj = element.jsonObject
+                val name = obj.str("name") ?: return@mapNotNull null
+                NeteaseCatalogTag(
+                    name = name,
+                    category = obj["category"].nInt() ?: 0,
+                    hot = (obj["hot"] as? JsonPrimitive)?.content == "true",
+                )
+            } ?: emptyList()
+        // 组序固定 0..4,组名缺失时兜底数字
+        (0..4).map { catId ->
+            val title = groupNames[catId] ?: catId.toString()
+            title to subs.filter { it.category == catId }
+        }.filter { it.second.isNotEmpty() }
+    }
+
+/** 分类歌单分页结果(weapi /playlist/list,网页版分类页同源) */
+data class NeteaseCategoryPage(
+    val playlists: List<NeteasePlaylist>,
+    val total: Int,
+    val hasMore: Boolean,
+)
+
+/**
+ * 某分类下的歌单列表(普通歌单,order=hot 热度/new 最新),offset 分页 —— 与网页
+ * discover/playlist?cat=xxx 同一数据源;精品歌单请用 [highQualityPlaylists]。
+ */
+suspend fun NeteaseClient.categoryPlaylists(
+    cat: String,
+    limit: Int = 50,
+    offset: Int = 0,
+    order: String = "hot",
+): Result<NeteaseCategoryPage> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/playlist/list",
+                mapOf(
+                    "cat" to cat,
+                    "order" to order,
+                    "limit" to limit,
+                    "offset" to offset,
+                    "total" to true,
+                ),
+            )
+        NeteaseCategoryPage(
+            playlists = body.array("playlists")?.map { it.toPlaylist() } ?: emptyList(),
+            total = body["total"].nInt() ?: 0,
+            hasMore = (body["more"] as? JsonPrimitive)?.content == "true",
+        )
+    }
+
+/** 便捷封装:分类歌单一次拉 [pages] 页(标签/分类页用) */
+suspend fun NeteaseClient.categoryPlaylistsPaged(
+    cat: String,
+    pages: Int = 2,
+    order: String = "hot",
+): Result<List<NeteasePlaylist>> =
+    runCatching {
+        val all = mutableListOf<NeteasePlaylist>()
+        repeat(pages) { page ->
+            val result = categoryPlaylists(cat = cat, offset = page * 50, order = order).getOrNull() ?: return@repeat
+            all += result.playlists
+            if (!result.hasMore) return@repeat
+        }
+        all
+    }
+
 /**
  * 高质量歌单分页结果:nextBefore 为下一页游标(响应 lasttime),null 表示没有更多。
  */
