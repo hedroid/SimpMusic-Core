@@ -35,6 +35,7 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.extractor.ExtractorsFactory
+import androidx.media3.extractor.mp3.Mp3Extractor
 import androidx.media3.extractor.flac.FlacExtractor
 import androidx.media3.extractor.mkv.MatroskaExtractor
 import androidx.media3.extractor.mp4.FragmentedMp4Extractor
@@ -370,6 +371,8 @@ private fun provideExtractorFactory(): ExtractorsFactory =
             FlacExtractor(
                 FlacExtractor.FLAG_DISABLE_ID3_METADATA,
             ),
+            // 网易云取流是 mp3(320k)/flac(无损档),YT 从不下发 mp3,上游因此没注册
+            Mp3Extractor(),
             MatroskaExtractor(
                 DefaultSubtitleParserFactory(),
             ),

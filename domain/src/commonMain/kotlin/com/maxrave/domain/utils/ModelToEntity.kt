@@ -1,5 +1,7 @@
 package com.maxrave.domain.utils
 
+import com.maxrave.domain.source.MusicSource
+
 import com.maxrave.domain.data.entities.AlbumEntity
 import com.maxrave.domain.data.entities.DownloadState
 import com.maxrave.domain.data.entities.LyricsEntity
@@ -97,6 +99,9 @@ fun SongsResult.toTrack(): Track =
 fun Track.toSongEntity(): SongEntity {
     return SongEntity(
         videoId = this.videoId,
+        // Track(scraper 模型)不携带音源;网易歌曲的 videoId 是纯数字,YT id 固定 11 位
+        // 含字母 —— 以 ID 形状回填 source,保证任何播放入口落库的行都标对源。
+        source = if (this.videoId.toLongOrNull() != null) MusicSource.NETEASE.name else MusicSource.YOUTUBE_MUSIC.name,
         albumId = this.album?.id,
         albumName = this.album?.name,
         artistId = this.artists?.toListId(),

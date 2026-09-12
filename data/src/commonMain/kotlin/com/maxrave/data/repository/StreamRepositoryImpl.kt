@@ -31,6 +31,7 @@ import kotlinx.coroutines.withContext
 internal class StreamRepositoryImpl(
     private val localDataSource: LocalDataSource,
     private val youTube: YouTube,
+    private val neteaseRepository: NeteaseRepositoryImpl,
 ) : StreamRepository {
     override suspend fun insertNewFormat(newFormat: NewFormatEntity) =
         withContext(Dispatchers.IO) {
@@ -90,12 +91,18 @@ internal class StreamRepositoryImpl(
         muxed: Boolean,
     ): Flow<String?> =
         flow {
+            // 网易歌曲:videoId 为纯数字(YT id 固定 11 位含字母,不会撞)。数字即网易,
+            // 走网易取流 —— 音质降级链/试听判定在 NeteaseRepositoryImpl.getStreamUrl 内。
+            // TODO(NETEASE_M9): 返回 null(灰歌/仅试听)且自动切源开启时,按 title+artist
+            // 搜 YT 同名曲自动换源播放。
+            if (videoId.toLongOrNull() != null) {
+                neteaseRepository
+                    .getStreamUrl(videoId, isDownloading)
+                    .onSuccess { url -> emit(url) }
+                    .onFailure { emit(null) }
+                return@flow
+            }
 
-            // TODO(NETEASE_NEXT): 音源分支 —— songEntity.source == NETEASE 时改走
-            // NeteaseRepositoryImpl.getStreamUrl(videoId, isDownloading)(8 档音质自动降级);
-            // 返回 null(灰歌/仅试听)且 neteaseAutoSwitch 开启时,按 title+artist 搜 YT
-            // 同名曲自动换源播放(参考 NeriPlayer 的 scoreNeteaseAutoBiliCandidate 打分)。
-            // NewFormatEntity 落库时同样按 source 区分(FLAC/MP3 vs Opus/AAC)。
             val itag =
                 if (isDownloading) {
                     QUALITY.itagOf(dataStoreManager.downloadQuality.first())

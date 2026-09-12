@@ -194,8 +194,11 @@ class NeteaseRepositoryImpl(
         val order = NeteaseQuality.FALLBACK_ORDER.dropWhile { it != wanted }
         for (level in order) {
             val result = client.songUrl(id, level).getOrNull() ?: return Result.success(null)
-            if (!result.url.isNullOrEmpty() && result.freeTrialInfo == null) {
-                return Result.success(result.url)
+            val url = result.url
+            if (!url.isNullOrEmpty() && result.freeTrialInfo == null) {
+                // CDN 签发的链接是 http://,Android 默认禁明文流量(ExoPlayer 报 Source error),
+                // music.126.net 的 CDN 支持 https,统一升级
+                return Result.success(url.replaceFirst("http://", "https://"))
             }
         }
         return Result.success(null)
