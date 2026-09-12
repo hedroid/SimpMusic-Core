@@ -1,0 +1,91 @@
+# 网易云适配踩坑记录（core）
+
+> 面向后续对话/协作者：本文件记录网易云音源接入过程中**真机验证过**的协议坑、KMP 坑与数据层契约，
+> 按层组织。改动相关代码前先查这里，能省掉一轮真机调试。
+> 主仓侧（UI/架构）的规划见主仓 `docs/netease/NETEASE_UI_PLAN.md`。
+
+## 一、协议层（core/service/netease）
+
+### 端点生死簿（2026-09 实测）
+
+| 端点 | 状态 | 备注 |
+|---|---|---|
+| `/comment/music` | ❌ 已死 | 评论走 `/v1/resource/comments/R_SO_4_{songId}`；歌单 `R_PL_`、专辑 `R_AL_` |
+| `/simi/artist`、`/v1/artist/similar` | ❌ 404 | 相似歌手是 weapi `/discovery/simiArtist`（**无 /v1 前缀**），参数 `artistid` |
+| `/api/v6/playlist/detail`（电台详情） | ❌ 已死 | 电台走 eapi `/djradio/get`，参数 `id` |
+| `/playlist/catalog` | ❌ | 分类目录是 weapi `/playlist/catalogue`（-ue 结尾） |
+| `/djradio/v2/detail` | ❌ | — |
+| `/top/playlist` | ❌ | 分类歌单是 weapi `/playlist/list`（cat/order/limit/offset/total） |
+
+### 参数/响应形状坑
+
+- **eapi 摘要路径**：必须是完整 `/eapi/...` 再替换为 `/api/...`（NeriPlayer 传 encodedPath）。
+  只传裸 path 会让摘要缺 `/api` 前缀 → 服务端校验失败。
+- **cloudsearch type 语义**：1=单曲、1000=歌单、**100=歌手**——`1004 是 MV`（返回 mvs 数组）。
+- **`/song/like/get`**：红心歌曲 ID 数组在**顶层 `ids`**，不在 `data`。
+- **云盘 `/v1/cloud/get`**：专辑体在 `dataInfo.data`、封面兜底 `dataInfo.picUrl`、大小字段
+  `fileSize`（不是 size）、`bitrate` 单位服务端混用（320000 与 3495 并存），仅展示用。
+- **高质量标签 `/playlist/highquality/tags`**：响应 `tags[].category` 分组固定为
+  0=语种 1=风格 2=场景 3=情感 4=主题；**组名在 `categories` map 的 value，组号在 key**
+  （拿 value 当数字解析会得到空表 → 分区标题变 0/1/2/3/4）。
+- **分类目录 `/playlist/catalogue`**：同上 categories 结构。
+- **推荐接口 `/v1/discovery/recommend/resource`**：playlist 的 `description` 字段是
+  "0"/"1"/"2" 这类**序号**，直接当卡片副标题会渲染成数字 → 需净化（纯数字/空白视为无）。
+- **私人雷达（3136952023 等）**：
+  - `/v6/playlist/detail`（n=0）的 **trackIds 是 -10000 占位符**，拿去 songDetail 查不到歌；
+  - **带 n 的 detail 响应直接内嵌完整 tracks**（NeriPlayer getPlaylistDetail 同款）；
+  - `/playlist/track/all` 对这类特殊歌单**间歇性返回空** → 必须 `track/all → 带 n detail` 双路兜底。
+- **精品歌单 `/playlist/highquality/list`**：游标分页（`lasttime`/`more`），不是 offset；
+  每页上限 50。普通分类歌单 `/playlist/list` 才是 offset + order(hot/new)。
+- **相似歌单**：无 JSON 接口，抓 `music.163.com/playlist?id=` 页面 HTML 正则解析
+  （cver u-cover 块）；KMP 里用 `(?s)` 内联 DOTALL，**不要用 `RegexOption.DOT_MATCHES_ALL`**（JVM 专属）。
+- **流地址**：CDN 签发的是 `http://`，Android 禁明文 → ExoPlayer 报 Source error，
+  必须升级 `https://`（music.126.net 的 CDN 支持）。
+
+### KMP 语法坑（commonMain）
+
+- `String.format` 不存在 → 手写补零（`appendPad`）。
+- `HttpHeaders.Referer` 不存在 → 字符串字面量。
+- `RegexOption.DOT_MATCHES_ALL` 不存在 → `(?s)` 内联。
+- 接口 override **不能带默认参数值**（默认值留在契约侧）。
+
+## 二、数据/仓库层（core/data）
+
+- **持久化 source 回填**：在映射边界按 ID 特征盖戳——**纯数字 = NETEASE**（YT 的 id 恒含字母），
+  `PlaylistBrowse.toPlaylistEntity` / `Track.toSongEntity` 都这么做；**不要**让调用方传"当前源"。
+  历史脏数据用 Room 迁移回填（判据 `id NOT GLOB '*[^0-9]*'`，当前为 v28）。
+- **Flow 契约：必须至少发射一次**。仓库实现的 Flow 空完成（如 `return@flow` 早退）遇上
+  路由层 `.first()` = 主线程 `NoSuchElementException` → **启动崩溃循环**。
+  空数据发 `Resource.Error` 或 null，不发空流。
+- **`Resource<T>` 不变性**：data 为 null 时不能 `Resource.Success(null)`，
+  用 `Resource.Error("empty")` 代替。
+- **路由透传**：YT 侧的"缓存先行 + 网络覆盖"是**两次发射**，路由仓库必须 `emitAll` 整体透传，
+  不能 `.first()` 截断。
+- **Koin**：`createdAtStart` 会级联实例化依赖，注意构造函数别做重活；
+  DI 参数多一个 `get()` 记得同步。
+
+## 三、播放链路（core/media + core/data）
+
+- **数字 videoId 路由取流**：`StreamRepositoryImpl.getStream` 开头判 `videoId.toLongOrNull() != null`
+  → 走网易取流（音质降级链在 NeteaseRepositoryImpl.getStreamUrl 内）。
+- **Mp3Extractor 必须注册**：上游 ExoPlayer 只带 FLAC/Matroska/fMP4/MP4（YT 从不下发 mp3），
+  网易流是 mp3/flac → `UnrecognizedInputFormatException`。
+- 队列实体经 `Track.toSongEntity()` 回填 source（同 ID 形状规则）。
+
+## 四、风控/登录
+
+- **-462 = 风控**：模拟器 + 代理 + 反复登录极易触发；扫码链路 801→802→803 三段，
+  803 后还需 `/w/nuser/account/get` 三段验证（cookie 直验 → csrf → x-refresh-token 兜底）。
+  环境性无解时改用网页登录；QR 内容带 chainId（`st/platform/scanlogin?codekey&chainId`）。
+- **易盾指纹**（Android WebView 采 createNEFingerprint token）只降风控概率，不根除。
+- **MUSIC_U 是会话核心**：`isLoggedIn` 判 `cookie 含 MUSIC_U`；logout 写空串（写 "{}" 会让
+  永真）。明文随备份导出——与 YT/Spotify 同策略，产品上接受。
+
+## 五、UI 集成边界（主仓侧，但影响 core 契约设计）
+
+- **不要在独立屏里复用上游 `HomeItem` composable**：它默认参数会实例化上游 HomeViewModel，
+  造成账户信息串屏。卡片用纯展示组件（HomeItemContentPlaylist/HomeItemSong/自绘卡）。
+- 上游 `accountShow` 的 `LaunchedEffect` 只盯 homeData——账户信息晚到不重算（时序 bug），
+  key 加上 accountInfo。
+- **DataStore 的 preferences_pb 禁止外部改写**：手工 patch 二进制（哪怕 wire 合法）会导致
+  app 内置解析器 `InvalidWireTypeException` 启动崩溃（真机二分定位过）。一切设置变更走 app 自己的 UI。
