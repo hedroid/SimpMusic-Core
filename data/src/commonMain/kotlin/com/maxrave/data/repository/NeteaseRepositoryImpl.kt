@@ -57,6 +57,7 @@ import com.maxrave.netease.personalRadio
 import com.maxrave.netease.personalizedNewSongs
 import com.maxrave.netease.playlistDetail
 import com.maxrave.netease.playlistTracks
+import com.maxrave.netease.songDetail
 import com.maxrave.netease.radarPlaylists
 import com.maxrave.netease.searchSongs
 import com.maxrave.netease.songUrl
@@ -285,10 +286,20 @@ class NeteaseRepositoryImpl(
             // 五组请求并行(总耗时=最慢一组,而不是相加);每组失败独立跳过,不拖垮整页
             coroutineScope {
                 val daily = async { client.dailyRecommendPlaylists().getOrNull() }
-                // NeriPlayer 结构:私人雷达=该歌单曲目按歌曲展示;雷达歌单=5 张雷达歌单卡
+                // NeriPlayer 结构:私人雷达=该歌单曲目按歌曲展示;雷达歌单=5 张雷达歌单卡。
+                // /playlist/track/all 对雷达这类特殊歌单不稳定(实测可能返回空),
+                // 兜底走 detail.trackIds → songDetail 两步
                 val radarSongs =
                     async {
-                        client.playlistTracks(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID, limit = 30).getOrNull()
+                        client.playlistTracks(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID, limit = 30)
+                            .getOrNull()
+                            ?.takeIf { it.isNotEmpty() }
+                            ?: client
+                                .playlistDetail(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID)
+                                .getOrNull()
+                                ?.second
+                                ?.take(30)
+                                ?.let { ids -> client.songDetail(ids).getOrNull().orEmpty() }
                     }
                 val radarLists =
                     async {
