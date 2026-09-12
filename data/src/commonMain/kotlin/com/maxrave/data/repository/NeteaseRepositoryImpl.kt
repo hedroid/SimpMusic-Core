@@ -17,9 +17,11 @@ import com.maxrave.netease.NeteaseClient
 import com.maxrave.netease.dailyRecommendPlaylists
 import com.maxrave.netease.dailyRecommendSongs
 import com.maxrave.netease.highQualityPlaylists
+import com.maxrave.netease.highQualityTags
 import com.maxrave.netease.likeSong
 import com.maxrave.netease.lyric
 import com.maxrave.netease.model.NeteaseAccount
+import com.maxrave.netease.model.NeteaseHighQualityTag
 import com.maxrave.netease.model.NeteasePlaylist
 import com.maxrave.netease.model.NeteaseQuality
 import com.maxrave.netease.model.NeteaseSong
@@ -236,6 +238,15 @@ class NeteaseRepositoryImpl(
                 }
             }
         }
+
+    /** 网易专属:高质量分类标签(主页 chips 用) */
+    suspend fun getHighQualityTags(): Result<List<NeteaseHighQualityTag>> = client.highQualityTags()
+
+    /** 网易专属:按分类取精品歌单行(cat=null 即默认"全部"),chip 点击局部换行,不整页重拉 */
+    suspend fun getHqPlaylistsRow(cat: String?): Result<HomeItem?> =
+        client
+            .highQualityPlaylists(cat = cat)
+            .map { list -> if (list.isEmpty()) null else list.toPlaylistHomeItem("精品歌单") }
 
     override suspend fun getLibraryPlaylists(): Result<List<PlaylistEntity>> {
         val account = client.getAccountStatus().getOrNull() ?: return Result.success(emptyList())
