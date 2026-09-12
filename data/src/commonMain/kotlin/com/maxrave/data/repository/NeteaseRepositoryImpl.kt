@@ -6,6 +6,16 @@ import com.maxrave.domain.data.entities.PlaylistEntity
 import com.maxrave.domain.data.entities.SongEntity
 import com.maxrave.domain.data.model.home.Content
 import com.maxrave.domain.data.model.home.HomeItem
+import com.maxrave.domain.data.model.home.chart.Artists
+import com.maxrave.domain.data.model.home.chart.Chart
+import com.maxrave.domain.data.model.home.chart.ChartItemPlaylist
+import com.maxrave.domain.data.model.browse.artist.ResultPlaylist
+import com.maxrave.domain.data.model.mood.Mood
+import com.maxrave.domain.data.model.mood.MoodItem
+import com.maxrave.domain.data.model.mood.MoodSection
+import com.maxrave.domain.data.model.mood.moodmoments.Content as MoodContent
+import com.maxrave.domain.data.model.mood.moodmoments.Item as MoodItemShelf
+import com.maxrave.domain.data.model.mood.moodmoments.MoodsMomentObject
 import com.maxrave.domain.data.model.searchResult.songs.Thumbnail
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.source.MusicSource
@@ -247,6 +257,111 @@ class NeteaseRepositoryImpl(
         client
             .highQualityPlaylists(cat = cat)
             .map { list -> if (list.isEmpty()) null else list.toPlaylistHomeItem("精品歌单") }
+
+    // ----------------------------------------------------------------------------
+    // 主页复用适配:把网易数据映射进上游 HomeScreen 的 Mood/Chart 形状
+    // ----------------------------------------------------------------------------
+
+    /** 网易专属:主页 chips 精选标签(全量 34 个太多,精选与 YT mood 语义接近的常用项) */
+    val curatedHomeTags =
+        listOf("华语", "欧美", "日语", "韩语", "流行", "摇滚", "民谣", "电子", "说唱", "ACG")
+
+    /**
+     * "心情&场景"+"流派"区块:高质量标签按 category 分组映射进 YT Mood 形状
+     * (category 2=场景 3=情感 → 心情&场景;1=风格 → 流派)。params 即标签名。
+     */
+    suspend fun getMoodSections(): Result<Mood?> =
+        client.highQualityTags().mapCatching { tags ->
+            val moodTags = tags.filter { it.category == 3 || it.category == 2 }
+            val genreTags = tags.filter { it.category == 1 }
+            Mood(
+                sections =
+                    buildList {
+                        if (moodTags.isNotEmpty()) {
+                            add(
+                                MoodSection(
+                                    title = "心情 & 场景",
+                                    items =
+                                        moodTags.map {
+                                            MoodItem(title = it.name, params = it.name, stripeColor = 0xFFD43C33)
+                                        },
+                                ),
+                            )
+                        }
+                        if (genreTags.isNotEmpty()) {
+                            add(
+                                MoodSection(
+                                    title = "流派",
+                                    items =
+                                        genreTags.map {
+                                            MoodItem(title = it.name, params = it.name, stripeColor = 0xFF4C6EAF)
+                                        },
+                                ),
+                            )
+                        }
+                    },
+            )
+        }
+
+    /** 标签分类内容(标签→高质量歌单列表),映射进 YT MoodsMomentObject 形状,MoodScreen 直接渲染 */
+    suspend fun getMoodContent(tag: String): Result<MoodsMomentObject?> =
+        client.highQualityPlaylists(cat = tag).mapCatching { list ->
+            if (list.isEmpty()) {
+                null
+            } else {
+                MoodsMomentObject(
+                    endpoint = "",
+                    header = tag,
+                    params = tag,
+                    items =
+                        listOf(
+                            MoodItemShelf(
+                                header = tag,
+                                contents =
+                                    list.map { pl ->
+                                        MoodContent(
+                                            playlistBrowseId = pl.id.toString(),
+                                            subtitle = pl.description.orEmpty(),
+                                            thumbnails =
+                                                pl.coverUrl?.let {
+                                                    listOf(Thumbnail(height = 540, url = it, width = 540))
+                                                },
+                                            title = pl.name,
+                                        )
+                                    },
+                            ),
+                        ),
+                )
+            }
+        }
+
+    /** 图表区块:网易排行榜映射进 YT Chart 形状(榜单卡点击进歌单;地区下拉对网易隐藏 → countries=null) */
+    suspend fun getHomeChart(): Result<Chart?> =
+        client.toplistPlaylists().mapCatching { list ->
+            if (list.isEmpty()) {
+                null
+            } else {
+                Chart(
+                    artists = Artists(arrayListOf(), Any()),
+                    countries = null,
+                    listChartItem =
+                        listOf(
+                            ChartItemPlaylist(
+                                title = "排行榜",
+                                playlists =
+                                    list.map { pl ->
+                                        ResultPlaylist(
+                                            id = pl.id.toString(),
+                                            author = "",
+                                            thumbnails = pl.coverUrl.toThumbnails(),
+                                            title = pl.name,
+                                        )
+                                    },
+                            ),
+                        ),
+                )
+            }
+        }
 
     override suspend fun getLibraryPlaylists(): Result<List<PlaylistEntity>> {
         val account = client.getAccountStatus().getOrNull() ?: return Result.success(emptyList())
