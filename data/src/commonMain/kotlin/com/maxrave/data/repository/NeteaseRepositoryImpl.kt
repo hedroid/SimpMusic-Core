@@ -37,6 +37,7 @@ import com.maxrave.domain.source.MusicSourceProvider
 import com.maxrave.domain.source.ProviderLyrics
 import com.maxrave.domain.source.ProviderRadioSession
 import com.maxrave.netease.NeteaseClient
+import com.maxrave.netease.NeteaseConstants
 import com.maxrave.netease.dailyRecommendPlaylists
 import com.maxrave.netease.dailyRecommendSongs
 import com.maxrave.netease.highQualityPlaylists
@@ -285,14 +286,17 @@ class NeteaseRepositoryImpl(
             coroutineScope {
                 val daily = async { client.dailyRecommendPlaylists().getOrNull() }
                 val radar = async { client.radarPlaylists().getOrNull() }
-                val newSongs = async { client.personalizedNewSongs(20).getOrNull() }
+                val newSongs = async { client.personalizedNewSongs(30).getOrNull() }
                 val hq = async { client.highQualityPlaylists().getOrNull()?.playlists }
-                // 排行榜不进 feed:数据由底部图表区块(ChartData)呈现,避免同一榜单出现两次
+                // 雷达歌单 ID 集:每日推荐接口会把私人雷达混进来,从 daily 行剔除避免与雷达行重复
+                val radarIds =
+                    setOf(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID) + NeteaseConstants.RADAR_PLAYLISTS.map { it.first }
                 buildList {
-                    daily.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("每日推荐歌单")) }
+                    daily.await()?.filter { it.id !in radarIds }?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("每日推荐歌单")) }
                     radar.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("私人雷达")) }
-                    newSongs.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toSongHomeItem("推荐新歌")) }
+                    // 行序:推荐新歌(3 行网格)排在精品歌单下面
                     hq.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("精品歌单")) }
+                    newSongs.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toSongHomeItem("推荐新歌")) }
                 }
             }
         }.getOrElse { emptyList() }
