@@ -285,15 +285,25 @@ class NeteaseRepositoryImpl(
             // 五组请求并行(总耗时=最慢一组,而不是相加);每组失败独立跳过,不拖垮整页
             coroutineScope {
                 val daily = async { client.dailyRecommendPlaylists().getOrNull() }
-                val radar = async { client.radarPlaylists().getOrNull() }
+                // NeriPlayer 结构:私人雷达=该歌单曲目按歌曲展示;雷达歌单=5 张雷达歌单卡
+                val radarSongs =
+                    async {
+                        client.playlistTracks(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID, limit = 30).getOrNull()
+                    }
+                val radarLists =
+                    async {
+                        // 只留时光/宝藏/新歌/乐迷/神秘五张卡,私人雷达已作为歌曲行呈现
+                        client.radarPlaylists().getOrNull()?.filter { it.id != NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID }
+                    }
                 val newSongs = async { client.personalizedNewSongs(30).getOrNull() }
                 val hq = async { client.highQualityPlaylists().getOrNull()?.playlists }
-                // 雷达歌单 ID 集:每日推荐接口会把私人雷达混进来,从 daily 行剔除避免与雷达行重复
+                // 雷达歌单 ID 集:每日推荐接口会把私人雷达混进来,从 daily 行剔除避免重复
                 val radarIds =
                     setOf(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID) + NeteaseConstants.RADAR_PLAYLISTS.map { it.first }
                 buildList {
                     daily.await()?.filter { it.id !in radarIds }?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("每日推荐歌单")) }
-                    radar.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("私人雷达")) }
+                    radarSongs.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toSongHomeItem("私人雷达")) }
+                    radarLists.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("雷达歌单")) }
                     // 行序:推荐新歌(3 行网格)排在精品歌单下面
                     hq.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("精品歌单")) }
                     newSongs.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toSongHomeItem("推荐新歌")) }
