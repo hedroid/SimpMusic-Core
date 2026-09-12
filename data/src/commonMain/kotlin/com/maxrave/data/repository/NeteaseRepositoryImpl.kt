@@ -22,8 +22,15 @@ import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.repository.HomeRepository
 import com.maxrave.domain.utils.Resource
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlin.time.ExperimentalTime
+import kotlin.time.TimeSource
+import kotlin.time.Duration.Companion.minutes
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.Mutex
 import com.maxrave.domain.source.MusicSource
 import com.maxrave.logger.Logger
 import com.maxrave.domain.source.MusicSourceProvider
@@ -71,6 +78,25 @@ class NeteaseRepositoryImpl(
 ) : MusicSourceProvider,
     HomeRepository {
     override val source: MusicSource = MusicSource.NETEASE
+    /**
+     * 排行榜去重缓存:feed 的"排行榜"行与图表区块共用同一份榜单数据
+     * (原本两个槽各打一次接口)。Mutex 保证并发下的第一对请求只发一次网络;
+     * 10 分钟 TTL,榜单按天更新,会话内刷新也能拿到新数据。
+     */
+    private val toplistMutex = Mutex()
+    private var toplistCache: Pair<List<NeteasePlaylist>, kotlin.time.TimeMark>? = null
+
+    @OptIn(ExperimentalTime::class)
+    private suspend fun toplistCached(): List<NeteasePlaylist>? =
+        toplistMutex.withLock {
+            toplistCache?.let { (list, mark) ->
+                if (mark.elapsedNow() < 10.minutes) return list
+            }
+            client.toplistPlaylists().getOrNull()?.also { list ->
+                toplistCache = list to TimeSource.Monotonic.markNow()
+            }
+        }
+
 
     private companion object {
         const val TAG = "NeteaseRepo"
@@ -236,21 +262,19 @@ class NeteaseRepositoryImpl(
 
     override suspend fun getHome(): Result<List<HomeItem>> =
         runCatching {
-            buildList {
-                client.dailyRecommendPlaylists().getOrNull()?.let { list ->
-                    if (list.isNotEmpty()) add(list.toPlaylistHomeItem("每日推荐歌单"))
-                }
-                client.radarPlaylists().getOrNull()?.let { list ->
-                    if (list.isNotEmpty()) add(list.toPlaylistHomeItem("私人雷达"))
-                }
-                client.toplistPlaylists().getOrNull()?.let { list ->
-                    if (list.isNotEmpty()) add(list.toPlaylistHomeItem("排行榜"))
-                }
-                client.personalizedNewSongs(20).getOrNull()?.let { list ->
-                    if (list.isNotEmpty()) add(list.toSongHomeItem("推荐新歌"))
-                }
-                client.highQualityPlaylists().getOrNull()?.let { list ->
-                    if (list.isNotEmpty()) add(list.toPlaylistHomeItem("精品歌单"))
+            // 五组请求并行(总耗时=最慢一组,而不是相加);每组失败独立跳过,不拖垮整页
+            coroutineScope {
+                val daily = async { client.dailyRecommendPlaylists().getOrNull() }
+                val radar = async { client.radarPlaylists().getOrNull() }
+                val top = async { toplistCached() }
+                val newSongs = async { client.personalizedNewSongs(20).getOrNull() }
+                val hq = async { client.highQualityPlaylists().getOrNull() }
+                buildList {
+                    daily.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("每日推荐歌单")) }
+                    radar.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("私人雷达")) }
+                    top.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("排行榜")) }
+                    newSongs.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toSongHomeItem("推荐新歌")) }
+                    hq.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("精品歌单")) }
                 }
             }
         }
@@ -404,9 +428,11 @@ class NeteaseRepositoryImpl(
             )
         }
 
-    /** 图表区块:网易排行榜映射进 YT Chart 形状(榜单卡点击进歌单;地区下拉对网易隐藏 → countries=null) */
+    /** 图表区块:网易排行榜映射进 YT Chart 形状(榜单卡点击进歌单;地区下拉对网易隐藏 → countries=null);
+     *  数据走 [toplistCached],与 feed 的"排行榜"行共用一份请求 */
     suspend fun getHomeChart(): Result<Chart?> =
-        client.toplistPlaylists().mapCatching { list ->
+        runCatching {
+            val list = toplistCached() ?: return@runCatching null
             if (list.isEmpty()) {
                 null
             } else {

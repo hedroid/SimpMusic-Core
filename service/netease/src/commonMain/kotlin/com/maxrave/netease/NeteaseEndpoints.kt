@@ -24,6 +24,9 @@ import com.maxrave.netease.model.NeteaseRadioSession
 import com.maxrave.netease.model.NeteaseSearchResult
 import com.maxrave.netease.model.NeteaseSong
 import com.maxrave.netease.model.NeteaseStreamUrl
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -358,17 +361,26 @@ suspend fun NeteaseClient.radarPlaylists(): Result<List<NeteasePlaylist>> =
                     specialType = type,
                 )
 
-        val list = mutableListOf(radar(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID, "私人雷达", NeteasePlaylist.SpecialType.RADAR_PRIVATE))
-        NeteaseConstants.RADAR_PLAYLISTS.forEach { (id, name) ->
-            val type =
-                if (id == NeteaseConstants.RADAR_FANS_PLAYLIST_ID) {
-                    NeteasePlaylist.SpecialType.RADAR_FANS
-                } else {
-                    NeteasePlaylist.SpecialType.RADAR
+        // 6 张雷达的详情并行拉取(总耗时=最慢一张,而不是六张相加);
+        // 单张失败独立兜底为 ID+名称占位,不拖垮整行 —— 原语义保留
+        coroutineScope {
+            val defs =
+                buildList {
+                    add(Triple(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID, "私人雷达", NeteasePlaylist.SpecialType.RADAR_PRIVATE))
+                    NeteaseConstants.RADAR_PLAYLISTS.forEach { (id, name) ->
+                        val type =
+                            if (id == NeteaseConstants.RADAR_FANS_PLAYLIST_ID) {
+                                NeteasePlaylist.SpecialType.RADAR_FANS
+                            } else {
+                                NeteasePlaylist.SpecialType.RADAR
+                            }
+                        add(Triple(id, name, type))
+                    }
                 }
-            list += radar(id, name, type)
+            defs.map { (id, name, type) ->
+                async { radar(id, name, type) }
+            }.awaitAll()
         }
-        list
     }
 
 /**
