@@ -16,6 +16,10 @@
 | `/playlist/catalog` | ❌ | 分类目录是 weapi `/playlist/catalogue`（-ue 结尾） |
 | `/djradio/v2/detail` | ❌ | — |
 | `/top/playlist` | ❌ | 分类歌单是 weapi `/playlist/list`（cat/order/limit/offset/total） |
+| eapi `/v1/search/suggest` | ❌ 404 | 搜索建议走明文 `/api/search/suggest/web`（`{s,limit}`→result.songs/artists）；weapi `/search/suggest` 返回空 `result:{}` 也别用 |
+| `/search/suggest/web` 歌曲无封面 | ⚠️ | result.songs 是老形状但 `album.picUrl` 缺失 → 批量 `/v3/song/detail` 一次请求补齐封面 |
+| `/playlist/list` 高频 405 | ⚠️ | 连续/并发打多了返回 `code=405`（操作太频繁，HTTP 仍 200、无 playlists 字段→解析成空表），约 1-2 分钟自动解封。**别做逐卡请求**（如空态页 75 张分类卡逐卡取封面=必炸，连带 tag 页 Error）；错误页要留重试入口 |
+| `/playlist/list` 的 `order` 参数 | ⚠️ | **只支持 `hot`**；`order=new` 返回 `{"playlists":[],"total":0,"code":200}`（weapi/明文皆然，HTTP 200 不报错）——"最新"维度这个接口没有，别再试 |
 
 ### 参数/响应形状坑
 

@@ -17,12 +17,14 @@ import com.maxrave.netease.model.NeteaseComment
 import com.maxrave.netease.model.NeteaseCommentPage
 import com.maxrave.netease.model.NeteaseDjRadio
 import com.maxrave.netease.model.NeteaseHighQualityTag
+import com.maxrave.netease.model.NeteaseHotWord
 import com.maxrave.netease.model.NeteaseLyrics
 import com.maxrave.netease.model.NeteasePlaylist
 import com.maxrave.netease.model.NeteaseQuality
 import com.maxrave.netease.model.NeteaseRadioSession
 import com.maxrave.netease.model.NeteaseSearchResult
 import com.maxrave.netease.model.NeteaseSong
+import com.maxrave.netease.model.NeteaseSuggest
 import com.maxrave.netease.model.NeteaseStreamUrl
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -136,6 +138,63 @@ suspend fun NeteaseClient.searchArtists(
                 } ?: emptyList(),
             totalCount = result?.get("artistCount").nInt(),
         )
+    }
+
+/** 搜索建议(明文 /api/search/suggest/web):实体建议 songs+artists,无词联想。
+ *  注意 weapi /search/suggest 与 eapi /v1/search/suggest 实测均返回空/404,别换过去 */
+suspend fun NeteaseClient.searchSuggest(
+    keywords: String,
+    limit: Int = 10,
+): Result<NeteaseSuggest> =
+    runCatching {
+        val body =
+            callApi(
+                "/search/suggest/web",
+                mapOf(
+                    "s" to keywords,
+                    "limit" to limit,
+                ),
+            )
+        val result = body.obj("result")
+        // suggest/web 的 song 不带专辑封面(al.picUrl 缺失),批量 songDetail 一次请求补齐;
+        // 失败/条数不符则保留无封面原样(卡片有占位图兜底)
+        val songs = result?.array("songs")?.map { it.toSong() } ?: emptyList()
+        val songsWithArt =
+            if (songs.isEmpty()) {
+                songs
+            } else {
+                songDetail(songs.map { it.id }).getOrNull()?.takeIf { it.size == songs.size } ?: songs
+            }
+        NeteaseSuggest(
+            songs = songsWithArt,
+            artists =
+                result?.array("artists")?.mapNotNull { element ->
+                    val obj = element.jsonObject
+                    val id = obj["id"].nLong() ?: return@mapNotNull null
+                    NeteaseArtist(
+                        id = id,
+                        name = obj.str("name").orEmpty(),
+                        picUrl = (obj.str("picUrl") ?: obj.str("img1v1Url"))?.toHttpsUrl(),
+                        musicSize = obj["musicSize"].nInt(),
+                        albumSize = obj["albumSize"].nInt(),
+                    )
+                } ?: emptyList(),
+        )
+    }
+
+/** 热搜词榜(weapi /search/hot):result.hots[].first=词 second=热度分(实测恒 1,仅占位) */
+suspend fun NeteaseClient.searchHot(): Result<List<NeteaseHotWord>> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/search/hot",
+                mapOf("type" to 1111),
+            )
+        body.obj("result")?.array("hots")?.mapNotNull { element ->
+            val obj = element.jsonObject
+            val word = obj.str("first") ?: return@mapNotNull null
+            NeteaseHotWord(word = word, score = obj["second"].nLong())
+        } ?: emptyList()
     }
 
 suspend fun NeteaseClient.songDetail(ids: List<Long>): Result<List<NeteaseSong>> =

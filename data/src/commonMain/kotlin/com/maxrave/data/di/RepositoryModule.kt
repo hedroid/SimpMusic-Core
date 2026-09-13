@@ -12,6 +12,7 @@ import com.maxrave.data.lyrics.LyricsRomanizerRepositoryImpl
 import com.maxrave.data.repository.CommonRepositoryImpl
 import com.maxrave.data.repository.HomeRepositoryImpl
 import com.maxrave.data.repository.SourceRoutingHomeRepository
+import com.maxrave.data.repository.SourceRoutingSearchRepository
 import com.maxrave.data.repository.ImportRepositoryImpl
 import com.maxrave.data.repository.LocalPlaylistRepositoryImpl
 import com.maxrave.data.repository.LyricsCanvasRepositoryImpl
@@ -107,8 +108,11 @@ val repositoryModule =
             PodcastRepositoryImpl(get(), get())
         }
 
-        single<SearchRepository>(createdAtStart = true) {
+        single<SearchRepositoryImpl>(createdAtStart = true) {
             SearchRepositoryImpl(get(), get())
+        }
+        single<SearchRepository>(createdAtStart = true) {
+            SourceRoutingSearchRepository(get(), get(), get())
         }
 
         single<SongRepository>(createdAtStart = true) {

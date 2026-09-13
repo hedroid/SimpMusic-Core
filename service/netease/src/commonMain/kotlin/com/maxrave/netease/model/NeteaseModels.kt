@@ -173,6 +173,18 @@ data class NeteaseSearchResult<T>(
     val totalCount: Int?,
 )
 
+/** 热搜词(/search/hot) */
+data class NeteaseHotWord(
+    val word: String,
+    val score: Long?,
+)
+
+/** 搜索建议(/api/search/suggest/web):实体建议(歌曲+歌手),该端点无词联想 */
+data class NeteaseSuggest(
+    val songs: List<NeteaseSong>,
+    val artists: List<NeteaseArtist>,
+)
+
 /** 主页歌曲 feed 来源目录(NeriPlayer NeteaseHomeSongSource 的 core 版,标题文案归 UI) */
 enum class NeteaseSongFeed(val requiresLogin: Boolean) {
     TOP_SOARING(false), // 飙升榜

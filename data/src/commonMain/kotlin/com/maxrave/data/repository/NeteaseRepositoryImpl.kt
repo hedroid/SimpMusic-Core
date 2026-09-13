@@ -17,6 +17,12 @@ import com.maxrave.domain.data.model.mood.MoodSection
 import com.maxrave.domain.data.model.mood.moodmoments.Content as MoodContent
 import com.maxrave.domain.data.model.mood.moodmoments.Item as MoodItemShelf
 import com.maxrave.domain.data.model.mood.moodmoments.MoodsMomentObject
+import com.maxrave.domain.data.model.searchResult.SearchSuggestions
+import com.maxrave.domain.data.model.searchResult.artists.ArtistsResult
+import com.maxrave.domain.data.model.searchResult.playlists.PlaylistsResult
+import com.maxrave.domain.data.model.searchResult.songs.Album
+import com.maxrave.domain.data.model.searchResult.songs.Artist
+import com.maxrave.domain.data.model.searchResult.songs.SongsResult
 import com.maxrave.domain.data.model.searchResult.songs.Thumbnail
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.repository.HomeRepository
@@ -49,7 +55,9 @@ import com.maxrave.netease.highQualityTags
 import com.maxrave.netease.likeSong
 import com.maxrave.netease.lyric
 import com.maxrave.netease.model.NeteaseAccount
+import com.maxrave.netease.model.NeteaseArtist
 import com.maxrave.netease.model.NeteaseHighQualityTag
+import com.maxrave.netease.model.NeteaseHotWord
 import com.maxrave.netease.model.NeteasePlaylist
 import com.maxrave.netease.model.NeteaseQuality
 import com.maxrave.netease.model.NeteaseSong
@@ -60,17 +68,24 @@ import com.maxrave.netease.playlistTracks
 import com.maxrave.netease.playlistTracksViaDetail
 import com.maxrave.netease.songDetail
 import com.maxrave.netease.radarPlaylists
+import com.maxrave.netease.searchArtists
+import com.maxrave.netease.searchHot
+import com.maxrave.netease.searchPlaylists
 import com.maxrave.netease.searchSongs
+import com.maxrave.netease.searchSuggest
 import com.maxrave.netease.songUrl
 import com.maxrave.netease.toplistPlaylists
 import com.maxrave.netease.userPlaylists
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlin.time.Clock
 
 /**
  * 网易云音源适配层:把 NeteaseClient 的 DTO "整形成 YTM 形状"的 domain 实体,实现统一
@@ -103,6 +118,69 @@ class NeteaseRepositoryImpl(
                 toplistCache = list to TimeSource.Monotonic.markNow()
             }
         }
+
+    /**
+     * 空态分类卡封面:该分类最热一张歌单的封面。三级获取:
+     * 1. 进程内存缓存(含失败标记);
+     * 2. DataStore 持久缓存(与 YT 共用 [DataStoreManager.moodArtworkCache],键空间不相交:
+     *    YT=browse params 串,网易=分类名;7 天 TTL);
+     * 3. 受频控保护的网络回填——网易 /playlist/list 有 405 频控,裸逐卡请求会把 tag 页的
+     *    同接口请求打挂(实测),所以必须:串行+锁内 delay 限速、会话预算、失败熔断
+     *    (任一请求异常/无数据即停,保证 tag 页永远优先活下来)。
+     * 持久缓存让请求"一分类一周最多一次",跨会话累积,几天正常使用即全页有图。
+     */
+    private val artworkMutex = Mutex()
+    private val artworkCache = mutableMapOf<String, String?>()
+    private var artworkBudget = 25
+    private var artworkTripped = false
+    private var persistedArtwork: Map<String, NeteaseMoodArtwork>? = null
+
+    private suspend fun categoryArtworkCached(params: String): String? =
+        artworkMutex.withLock {
+            artworkCache[params]?.let { return it } // 双检:排队期间可能已被填上
+            persistedArtwork ?: readPersistedArtwork().also { persistedArtwork = it }
+            persistedArtwork?.get(params)?.takeIf { !it.isStale() }?.let {
+                artworkCache[params] = it.url
+                return it.url // 持久缓存命中:零请求
+            }
+            if (artworkTripped || artworkBudget <= 0) return null
+            artworkBudget--
+            delay(400) // 锁内限速:请求天然串行,间隔拉开频控窗口
+            val result = client.categoryPlaylists(cat = params, limit = 1).getOrNull()
+            val cover = result?.playlists?.firstOrNull()?.coverUrl
+            if (result == null || cover == null) artworkTripped = true
+            artworkCache[params] = cover
+            if (cover != null) {
+                val map =
+                    (persistedArtwork ?: emptyMap()) +
+                        (params to NeteaseMoodArtwork(cover, Clock.System.now().toEpochMilliseconds()))
+                persistedArtwork = map
+                runCatching { dataStoreManager.setMoodArtworkCache(artworkJson.encodeToString(map)) }
+            }
+            cover
+        }
+
+    private suspend fun readPersistedArtwork(): Map<String, NeteaseMoodArtwork> =
+        dataStoreManager.moodArtworkCache
+            .first()
+            ?.let { runCatching { artworkJson.decodeFromString<Map<String, NeteaseMoodArtwork>>(it) }.getOrNull() }
+            .orEmpty()
+
+    /** tag 页数据到手后回填该分类封面(首张歌单封面,零额外请求);写穿内存与持久两层 */
+    private suspend fun rememberTagArtwork(
+        tag: String,
+        coverUrl: String?,
+    ) {
+        if (coverUrl == null) return
+        artworkMutex.withLock {
+            artworkCache[tag] = coverUrl
+            val map =
+                (persistedArtwork ?: emptyMap()) +
+                    (tag to NeteaseMoodArtwork(coverUrl, Clock.System.now().toEpochMilliseconds()))
+            persistedArtwork = map
+            runCatching { dataStoreManager.setMoodArtworkCache(artworkJson.encodeToString(map)) }
+        }
+    }
 
 
     private companion object {
@@ -386,38 +464,44 @@ class NeteaseRepositoryImpl(
             )
         }
 
-    /** 标签分类内容(标签→分类歌单列表,网页版 discover/playlist?cat=xxx 同源,热度排序),
-     *  映射进 YT MoodsMomentObject 形状,MoodScreen 直接渲染;翻两页 ≈100 张 */
-    suspend fun getMoodContent(tag: String): Result<MoodsMomentObject?> =
-        client.categoryPlaylistsPaged(cat = tag, pages = 2).mapCatching { list ->
-            if (list.isEmpty()) {
-                null
-            } else {
-                MoodsMomentObject(
-                    endpoint = "",
-                    header = tag,
-                    params = tag,
-                    items =
-                        listOf(
-                            MoodItemShelf(
-                                header = tag,
-                                contents =
-                                    list.map { pl ->
-                                        MoodContent(
-                                            playlistBrowseId = pl.id.toString(),
-                                            subtitle = pl.description.sanitizeCardSubtitle().orEmpty(),
-                                            thumbnails =
-                                                pl.coverUrl?.let {
-                                                    listOf(Thumbnail(height = 540, url = it, width = 540))
-                                                },
-                                            title = pl.name,
-                                        )
-                                    },
-                            ),
-                        ),
-                )
+    /** 标签分类内容(tag 页/MoodScreen 通用):热门/精品两档 + 会话缓存。
+     *  缓存 key=order:tag,10 分钟 TTL(歌单广场按天级变化),Mutex 单飞防同页并发重复拉取;
+     *  force=true(下拉刷新)绕过。热门=/playlist/list order=hot,精品=highquality 游标分页
+     *  (order=new 服务端不支持,实测返回空表,别加)。取到的首张歌单封面顺手回填分类卡持久缓存。 */
+    private val tagMutex = Mutex()
+    private val tagCache = mutableMapOf<String, Pair<List<NeteasePlaylist>, kotlin.time.TimeMark>>()
+
+    @OptIn(ExperimentalTime::class)
+    suspend fun getTagContent(
+        tag: String,
+        order: NeteaseTagOrder = NeteaseTagOrder.HOT,
+        force: Boolean = false,
+    ): Result<MoodsMomentObject?> =
+        tagMutex.withLock {
+            val key = "$order:$tag"
+            if (!force) {
+                tagCache[key]?.let { (list, mark) ->
+                    if (mark.elapsedNow() < 10.minutes && list.isNotEmpty()) {
+                        return@withLock Result.success(list.toMoodsMomentObject(tag))
+                    }
+                }
+            }
+            val fetched =
+                when (order) {
+                    NeteaseTagOrder.HOT -> client.categoryPlaylistsPaged(cat = tag, pages = 2, order = "hot")
+                    NeteaseTagOrder.HQ -> client.highQualityPlaylistsPaged(cat = tag, pages = 2)
+                }
+            fetched.mapCatching { list ->
+                if (list.isNotEmpty()) {
+                    tagCache[key] = list to TimeSource.Monotonic.markNow()
+                    rememberTagArtwork(tag, list.first().coverUrl)
+                }
+                list.toMoodsMomentObject(tag)
             }
         }
+
+    /** 标签分类内容(旧入口,热度序):委托 [getTagContent],走同一份缓存 */
+    suspend fun getMoodContent(tag: String): Result<MoodsMomentObject?> = getTagContent(tag, NeteaseTagOrder.HOT)
 
     // ----------------------------------------------------------------------------
     // HomeRepository 契约实现:与 YT 同名同形状,SourceRoutingHomeRepository 按 selectedSource
@@ -440,16 +524,13 @@ class NeteaseRepositoryImpl(
             emit(Resource.Success(null to rows)) // 一次性拉取,无 continuation
         }
 
-    /** 标签选中态的三行 feed:热门(播放量序)/最新(上架序)/精品,各 50 张并行拉取 */
+    /** 标签选中态的两行 feed:热门/精品,各 50 张并行拉取(order=new 服务端不支持返回空,
+     *  实测后移除——别加回来) */
     private suspend fun categoryFeedRows(tag: String): List<HomeItem> =
         coroutineScope {
             val hot =
                 async {
                     client.categoryPlaylistsPaged(cat = tag, pages = 1, order = "hot").getOrNull() ?: emptyList()
-                }
-            val new =
-                async {
-                    client.categoryPlaylists(cat = tag, limit = 50, offset = 0, order = "new").getOrNull()?.playlists ?: emptyList()
                 }
             val hq =
                 async {
@@ -457,7 +538,6 @@ class NeteaseRepositoryImpl(
                 }
             buildList {
                 hot.await().takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("$tag · 热门")) }
-                new.await().takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("$tag · 最新")) }
                 hq.await().takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("$tag · 精品")) }
             }
         }
@@ -491,7 +571,10 @@ class NeteaseRepositoryImpl(
             )
         }
 
-    override fun getMoodCategoryArtwork(params: String): Flow<String?> = flowOf(null)
+    override fun getMoodCategoryArtwork(params: String): Flow<String?> =
+        flow {
+            emit(categoryArtworkCached(params))
+        }
 
     override fun getGenreData(params: String): Flow<Resource<GenreObject>> =
         flowOf(Resource.Error("netease: genre browse not applicable"))
@@ -606,11 +689,87 @@ class NeteaseRepositoryImpl(
         val id = songId.toLongOrNull() ?: return Result.failure(IllegalArgumentException("netease songId 非数字: $songId"))
         return client.likeSong(id, like)
     }
+
+    // ---------------------------------------------------------------- search (M3 搜索页)
+
+    /** 搜歌曲 → YT SongsResult 形状(搜索页行组件直接渲染;videoId=数字 ID 原文,播放走数字路由取流) */
+    suspend fun searchSongsResult(query: String): Result<ArrayList<SongsResult>> =
+        client.searchSongs(query).map { r -> ArrayList(r.items.map { it.toSongsResult() }) }
+
+    /** 搜歌单 → PlaylistsResult;resultType 置非 "Podcast",点击稳定走 PlaylistDestination(与主页同页) */
+    suspend fun searchPlaylistsResult(query: String): Result<ArrayList<PlaylistsResult>> =
+        client.searchPlaylists(query).map { r -> ArrayList(r.items.map { it.toPlaylistsResult() }) }
+
+    /** 搜歌手 → ArtistsResult(M6 艺人页未通前,UI 点击提示即将支持) */
+    suspend fun searchArtistsResult(query: String): Result<ArrayList<ArtistsResult>> =
+        client.searchArtists(query).map { r -> ArrayList(r.items.map { it.toArtistsResult() }) }
+
+    /** 搜索建议:歌曲+艺人实体卡(该端点无词联想,queries 恒空) */
+    suspend fun searchSuggestData(query: String): Result<SearchSuggestions> =
+        client.searchSuggest(query).map { s ->
+            SearchSuggestions(
+                queries = emptyList(),
+                recommendedItems = s.songs.map { it.toSongsResult() } + s.artists.map { it.toArtistsResult() },
+            )
+        }
+
+    /** 热搜词榜(搜索空态页) */
+    suspend fun searchHotWords(): Result<List<NeteaseHotWord>> = client.searchHot()
 }
 
 // ----------------------------------------------------------------------------
 // DTO → YTM 形状实体映射
 // ----------------------------------------------------------------------------
+
+/** 分类封面持久缓存条目(与 YT HomeRepositoryImpl.MoodArtwork 同构,共用 moodArtworkCache 存储) */
+@Serializable
+private data class NeteaseMoodArtwork(
+    val url: String,
+    val cachedAt: Long,
+) {
+    fun isStale(): Boolean = Clock.System.now().toEpochMilliseconds() - cachedAt > NETEASE_ARTWORK_TTL_MILLIS
+}
+
+private const val NETEASE_ARTWORK_TTL_MILLIS = 7L * 24 * 60 * 60 * 1000
+
+private val artworkJson = Json { ignoreUnknownKeys = true }
+
+/** tag 页排序档位(UI chip ↔ 仓库取数参数)。注意:/playlist/list 的 order 实测只支持 hot,
+ *  new 返回空表(weapi/明文皆然)——所以只有热门/精品两档,别再加 NEW。 */
+enum class NeteaseTagOrder {
+    HOT, // /playlist/list order=hot(网页版歌单广场热度序)
+    HQ, // 精品歌单(高质量接口,游标分页)
+}
+
+/** 分类歌单列表 → YT MoodsMomentObject 形状(MoodScreen/NeteaseTagScreen 通用渲染) */
+private fun List<NeteasePlaylist>.toMoodsMomentObject(tag: String): MoodsMomentObject? =
+    if (isEmpty()) {
+        null
+    } else {
+        MoodsMomentObject(
+            endpoint = "",
+            header = tag,
+            params = tag,
+            items =
+                listOf(
+                    MoodItemShelf(
+                        header = tag,
+                        contents =
+                            map { pl ->
+                                MoodContent(
+                                    playlistBrowseId = pl.id.toString(),
+                                    subtitle = pl.description.sanitizeCardSubtitle().orEmpty(),
+                                    thumbnails =
+                                        pl.coverUrl?.let {
+                                            listOf(Thumbnail(height = 540, url = it, width = 540))
+                                        },
+                                    title = pl.name,
+                                )
+                            },
+                    ),
+                ),
+        )
+    }
 
 private const val VIDEO_TYPE_SONG = "MUSIC_VIDEO_TYPE_ATV"
 
@@ -729,6 +888,52 @@ private fun String?.toThumbnails(): List<Thumbnail> =
     takeUnless { it.isNullOrEmpty() }?.let {
         listOf(Thumbnail(height = 540, url = it, width = 540))
     } ?: emptyList()
+
+// ----------------------------------------------------------------------------
+// DTO → 搜索页 YT 结果模型映射(M3):videoId/browseId = 网易数字 ID 原文
+// ----------------------------------------------------------------------------
+
+internal fun NeteaseSong.toSongsResult(): SongsResult =
+    SongsResult(
+        album = Album(id = albumId?.toString() ?: "", name = albumName ?: ""),
+        artists =
+            artists.mapIndexed { index, name ->
+                Artist(id = artistIds.getOrNull(index)?.toString(), name = name)
+            },
+        category = null,
+        duration = durationMs.toMinutesSeconds(),
+        durationSeconds = (durationMs / 1000).toInt(),
+        feedbackTokens = null,
+        isExplicit = false,
+        resultType = "song",
+        thumbnails = coverUrl.toThumbnails(),
+        title = name,
+        videoId = id.toString(),
+        videoType = VIDEO_TYPE_SONG,
+        year = Any(),
+    )
+
+internal fun NeteasePlaylist.toPlaylistsResult(): PlaylistsResult =
+    PlaylistsResult(
+        author = creatorNickname ?: "网易云音乐",
+        browseId = id.toString(),
+        category = "",
+        itemCount = trackCount.toString(),
+        resultType = "Playlist",
+        thumbnails = coverUrl.toThumbnails(),
+        title = name,
+    )
+
+internal fun NeteaseArtist.toArtistsResult(): ArtistsResult =
+    ArtistsResult(
+        artist = name,
+        browseId = id.toString(),
+        category = "",
+        radioId = "",
+        resultType = "artist",
+        shuffleId = "",
+        thumbnails = picUrl.toThumbnails(),
+    )
 
 internal fun Long.toMinutesSeconds(): String {
     val totalSeconds = this / 1000

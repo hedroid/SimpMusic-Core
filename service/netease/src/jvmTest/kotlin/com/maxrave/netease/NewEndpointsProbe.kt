@@ -175,6 +175,23 @@ class NewEndpointsProbe {
                 )
             }
 
+            section("searchSuggest(周杰)") {
+                client.searchSuggest("周杰").fold(
+                    { s ->
+                        "songs=${s.songs.size} artists=${s.artists.size}\n" +
+                            s.songs.take(3).joinToString("\n") { sg -> "${sg.id} | ${sg.name} | ${sg.artists} | ${sg.albumName} | ${sg.durationMs}ms | ${sg.coverUrl?.take(50)}" } + "\n" +
+                            s.artists.take(3).joinToString("\n") { a -> "${a.id} | ${a.name} | ${a.picUrl?.take(50)}" }
+                    },
+                    { "ERR ${it.message}" },
+                )
+            }
+            section("searchHot") {
+                client.searchHot().fold(
+                    { "count=${it.size}\n" + it.take(10).joinToString("\n") { h -> "${h.score} | ${h.word}" } },
+                    { "ERR ${it.message}" },
+                )
+            }
+
             out.writeText(sb.toString())
             println(sb)
         }
