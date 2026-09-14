@@ -652,6 +652,9 @@ const val DESC = "DESC"
 const val CUSTOM_ORDER = "CUSTOM_ORDER"
 const val TITLE = "TITLE"
 
+/** 网易私人FM 队列哨兵 ID：loadMore 见此 ID 即拉下一批 personalRadio 追加（批批连播） */
+const val NETEASE_FM_PLAYLIST_ID = "NETEASE_FM"
+
 object MERGING_DATA_TYPE {
     const val SONG = "Song"
     const val VIDEO = "Video"

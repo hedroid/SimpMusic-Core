@@ -94,7 +94,10 @@ internal class SourceRoutingSearchRepository(
     override fun getSearchDataAlbum(query: String): Flow<Resource<ArrayList<AlbumsResult>>> =
         flow {
             if (isNetease()) {
-                emit(Resource.Success(arrayListOf())) // 专辑详情 M6 未做,tab 已隐藏
+                netease.searchAlbumsResult(query).fold(
+                    onSuccess = { emit(Resource.Success(it)) },
+                    onFailure = { emit(Resource.Error(it.message ?: "netease search error")) },
+                )
             } else {
                 emitAll(youtube.getSearchDataAlbum(query))
             }

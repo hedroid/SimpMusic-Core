@@ -536,6 +536,114 @@ suspend fun NeteaseClient.personalRadio(): Result<NeteaseRadioSession> =
         )
     }
 
+/** 搜专辑(cloudsearch type=10,M6 专辑页已通后放开的 tab)。 */
+suspend fun NeteaseClient.searchAlbums(
+    keywords: String,
+    limit: Int = 30,
+    offset: Int = 0,
+): Result<NeteaseSearchResult<NeteaseAlbum>> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/cloudsearch/pc",
+                mapOf(
+                    "s" to keywords,
+                    "type" to 10, // 专辑
+                    "limit" to limit,
+                    "offset" to offset,
+                ),
+            )
+        val result = body.obj("result")
+        NeteaseSearchResult(
+            items = result?.array("albums")?.map { it.toAlbum() } ?: emptyList(),
+            totalCount = result?.get("albumCount").nInt(),
+        )
+    }
+
+/** 热门歌手榜:注意真路径是 weapi `/artist/top`(**无 /api/v1 前缀**,探针实测
+ *  /top/artists、/api/v1/artist/top 均 404,/toplist/artist 三通道 400)。 */
+suspend fun NeteaseClient.topArtists(
+    limit: Int = 30,
+    offset: Int = 0,
+): Result<List<NeteaseArtist>> =
+    runCatching {
+        val body = callWeApi("/artist/top", mapOf("limit" to limit, "offset" to offset, "total" to true))
+        body.array("artists")?.mapNotNull { element ->
+            val obj = element.jsonObject
+            val id = obj["id"].nLong() ?: return@mapNotNull null
+            NeteaseArtist(
+                id = id,
+                name = obj.str("name").orEmpty(),
+                picUrl = (obj.str("picUrl") ?: obj.str("img1v1Url"))?.toHttpsUrl(),
+                musicSize = obj["musicSize"].nInt(),
+                albumSize = obj["albumSize"].nInt(),
+            )
+        } ?: emptyList()
+    }
+
+/** 新碟上架(weapi /album/new):area ALL/ZH 华语/EA 欧美/KR 韩国/JP 日本。 */
+suspend fun NeteaseClient.newAlbums(
+    area: String = "ALL",
+    limit: Int = 30,
+    offset: Int = 0,
+): Result<List<NeteaseAlbum>> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/album/new",
+                mapOf("area" to area, "limit" to limit, "offset" to offset),
+            )
+        body.array("albums")?.map { it.toAlbum() } ?: emptyList()
+    }
+
+/** 新歌速递:/top/song 三通道全 404(探针实测),实际走 /v1/discovery/new/songs(weapi)。
+ *  参数名必须是 **areaId**(探针实测:type/area 都被服务端忽略返回混合列表):
+ *  0 全部 7 华语 96 欧美 8 日语 16 韩语。条目是老形状(artists/album/duration),
+ *  toSong() 直接可解;limit 参数服务端无视(恒返回 ~100),要少只能客户端截断。 */
+suspend fun NeteaseClient.newSongsExpress(
+    areaId: Int,
+    limit: Int = 30,
+): Result<List<NeteaseSong>> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/v1/discovery/new/songs",
+                mapOf("areaId" to areaId, "limit" to limit, "offset" to 0),
+            )
+        body.array("data")?.map { it.toSong() } ?: emptyList()
+    }
+
+/** 听歌排行(最近在听):/v1/play/record。week=true 周榜(weekData)否则总榜(allData);
+ *  每项 {playCount, song:{ar/al 形状}},周榜已按播放次数降序。 */
+suspend fun NeteaseClient.playRecord(
+    userId: Long,
+    week: Boolean = true,
+): Result<List<Pair<NeteaseSong, Int>>> =
+    runCatching {
+        val body = callWeApi("/v1/play/record", mapOf("uid" to userId, "type" to if (week) 1 else 0))
+        val arr = body.array(if (week) "weekData" else "allData") ?: emptyList()
+        arr.mapNotNull { el ->
+            val obj = el.jsonObject
+            obj.obj("song")?.let { song -> song.toSong() to (obj["playCount"].nInt() ?: 0) }
+        }
+    }
+
+/** FM 垃圾桶:标记不感兴趣(影响后续 FM 分配)。响应 data[0] 通常是补位歌曲,
+ *  拿不到时调用方自行拉一批补位。time 为毫秒时间戳(社区实现同款)。 */
+suspend fun NeteaseClient.radioTrash(songId: Long): Result<NeteaseSong?> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/radio/trash",
+                mapOf(
+                    "songId" to songId,
+                    "time" to kotlin.time.Clock.System.now().toEpochMilliseconds(),
+                ),
+            )
+        check((body["code"] as? JsonPrimitive)?.content == "200") { "radio/trash code=${body["code"]}" }
+        body.array("data")?.firstOrNull()?.let { it.toSong() }
+    }
+
 suspend fun NeteaseClient.likeSong(
     songId: Long,
     like: Boolean,
@@ -620,10 +728,11 @@ fun appendUniqueSongs(
 // ----------------------------------------------------------------------------
 
 /** 已关注的歌手(/artist/sublist),用于"关注与网易云同步" */
+/** 已关注的歌手(/artist/sublist):返回 NeteaseArtist(带头像,M6 主页行/关注同步共用) */
 suspend fun NeteaseClient.subscribedArtists(
     limit: Int = 100,
     offset: Int = 0,
-): Result<List<Pair<Long, String>>> =
+): Result<List<NeteaseArtist>> =
     runCatching {
         val body =
             callWeApi(
@@ -633,7 +742,13 @@ suspend fun NeteaseClient.subscribedArtists(
         body.array("data")?.mapNotNull { element ->
             val obj = element.jsonObject
             val id = obj["id"].nLong() ?: return@mapNotNull null
-            id to obj.str("name").orEmpty()
+            NeteaseArtist(
+                id = id,
+                name = obj.str("name").orEmpty(),
+                picUrl = (obj.str("picUrl") ?: obj.str("img1v1Url"))?.toHttpsUrl(),
+                musicSize = obj["musicSize"].nInt(),
+                albumSize = obj["albumSize"].nInt(),
+            )
         } ?: emptyList()
     }
 

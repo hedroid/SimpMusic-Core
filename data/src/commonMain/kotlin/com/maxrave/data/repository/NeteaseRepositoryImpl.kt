@@ -9,6 +9,14 @@ import com.maxrave.domain.data.model.home.HomeItem
 import com.maxrave.domain.data.model.home.chart.Artists
 import com.maxrave.domain.data.model.home.chart.Chart
 import com.maxrave.domain.data.model.home.chart.ChartItemPlaylist
+import com.maxrave.domain.data.model.browse.album.AlbumBrowse
+import com.maxrave.domain.data.model.browse.artist.Albums
+import com.maxrave.domain.data.model.browse.artist.ArtistBrowse
+import com.maxrave.domain.data.model.browse.artist.Related
+import com.maxrave.domain.data.model.browse.artist.ResultAlbum
+import com.maxrave.domain.data.model.browse.artist.ResultRelated
+import com.maxrave.domain.data.model.browse.artist.ResultSong
+import com.maxrave.domain.data.model.browse.artist.Songs
 import com.maxrave.domain.data.model.browse.artist.ResultPlaylist
 import com.maxrave.domain.data.model.mood.Mood
 import com.maxrave.domain.data.model.mood.genre.GenreObject
@@ -18,6 +26,7 @@ import com.maxrave.domain.data.model.mood.moodmoments.Content as MoodContent
 import com.maxrave.domain.data.model.mood.moodmoments.Item as MoodItemShelf
 import com.maxrave.domain.data.model.mood.moodmoments.MoodsMomentObject
 import com.maxrave.domain.data.model.searchResult.SearchSuggestions
+import com.maxrave.domain.data.model.searchResult.albums.AlbumsResult
 import com.maxrave.domain.data.model.searchResult.artists.ArtistsResult
 import com.maxrave.domain.data.model.searchResult.playlists.PlaylistsResult
 import com.maxrave.domain.data.model.searchResult.songs.Album
@@ -55,6 +64,7 @@ import com.maxrave.netease.highQualityTags
 import com.maxrave.netease.likeSong
 import com.maxrave.netease.lyric
 import com.maxrave.netease.model.NeteaseAccount
+import com.maxrave.netease.model.NeteaseAlbum
 import com.maxrave.netease.model.NeteaseArtist
 import com.maxrave.netease.model.NeteaseHighQualityTag
 import com.maxrave.netease.model.NeteaseHotWord
@@ -62,11 +72,28 @@ import com.maxrave.netease.model.NeteasePlaylist
 import com.maxrave.netease.model.NeteaseQuality
 import com.maxrave.netease.model.NeteaseSong
 import com.maxrave.netease.personalRadio
+import com.maxrave.netease.NeteaseLyricsConverter
+import com.maxrave.netease.searchAlbums
+import com.maxrave.netease.albumDetail
+import com.maxrave.netease.artistDetail
+import com.maxrave.netease.artistSongs
+import com.maxrave.netease.artistAlbums
+import com.maxrave.netease.artistDynamic
+import com.maxrave.netease.similarArtists
+import com.maxrave.netease.topArtists
+import com.maxrave.netease.newAlbums
+import com.maxrave.netease.newSongsExpress
+import com.maxrave.netease.playRecord
+import com.maxrave.netease.radioTrash
+import com.maxrave.netease.subscribeArtist
+import com.maxrave.netease.subscribedArtists
+import com.maxrave.netease.userStaredAlbums
 import com.maxrave.netease.personalizedNewSongs
 import com.maxrave.netease.playlistDetail
 import com.maxrave.netease.playlistTracks
 import com.maxrave.netease.playlistTracksViaDetail
 import com.maxrave.netease.songDetail
+import com.maxrave.netease.userLikedSongIds
 import com.maxrave.netease.radarPlaylists
 import com.maxrave.netease.searchArtists
 import com.maxrave.netease.searchHot
@@ -84,8 +111,11 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlin.time.Clock
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 
 /**
  * 网易云音源适配层:把 NeteaseClient 的 DTO "整形成 YTM 形状"的 domain 实体,实现统一
@@ -345,70 +375,167 @@ class NeteaseRepositoryImpl(
         }
     }
 
-    /** 首页 feed 会话级缓存(NeriPlayer 同思路:短时间内重进主页不全刷,10 分钟过期) */
-    private var homeCache: Pair<List<HomeItem>, kotlin.time.TimeMark>? = null
-
-    /** force=true 绕过缓存(下拉刷新用):瞬时失败缺行的结果不能被缓存钉住 */
-    override suspend fun getHome(force: Boolean): Result<List<HomeItem>> =
+    /** 网易官方歌词包:原文(yrc 逐字→words 内嵌 <MM:SS.mm> 标记/lrc 行级)+官方中文翻译。
+     *  官方罗马音(romalrc)本期不接——渲染端本地罗马音引擎已覆盖日/韩。
+     *  原文/翻译任一存在即成功;全空(冷门歌无歌词)返回 failure 走 LRCLIB 兜底。 */
+    suspend fun getNeteaseLyricsData(songId: String): Result<Pair<com.maxrave.domain.data.model.metadata.Lyrics, com.maxrave.domain.data.model.metadata.Lyrics?>> =
         runCatching {
-            if (!force) {
-                @OptIn(kotlin.time.ExperimentalTime::class)
-                homeCache?.let { (rows, mark) ->
-                    if (mark.elapsedNow() < 10.minutes) return Result.success(rows)
-                }
-            }
-            fetchHome().also { rows ->
-                @OptIn(kotlin.time.ExperimentalTime::class)
-                homeCache = rows to TimeSource.Monotonic.markNow()
-            }
+            val id = songId.toLongOrNull() ?: error("netease songId 非数字: $songId")
+            val raw = client.lyric(id).getOrNull() ?: error("歌词请求失败: $songId")
+            // 优先 yrc(逐字);Word 只带 charCount,逐字文字由整行 text 按 charCount 切片
+            val content = raw.yrc ?: raw.lrc ?: error("网易无歌词: $songId")
+            val original = NeteaseLyricsConverter.parseAuto(content)
+            check(original.isNotEmpty()) { "网易无歌词: $songId" }
+            val hasYrc = NeteaseLyricsConverter.isYrc(content)
+            val lyrics =
+                com.maxrave.domain.data.model.metadata.Lyrics(
+                    lines =
+                        original.map { line ->
+                            com.maxrave.domain.data.model.metadata.Line(
+                                endTimeMs = line.endMs.toString(),
+                                startTimeMs = line.startMs.toString(),
+                                // 渲染端的逐字卡拉OK吃的是 words 内嵌 <MM:SS.mm> 时间戳标记
+                                // (RichSyncParser,RICH_SYNCED)——syllables 无人消费,别再喂错
+                                words = if (hasYrc) toRichSyncWords(line) else line.text,
+                            )
+                        },
+                    // UI 判断用大写字符串(RICH_SYNCED/LINE_SYNCED),小写会退回行级渲染
+                    syncType = if (hasYrc) "RICH_SYNCED" else "LINE_SYNCED",
+                )
+            val translated =
+                raw.translated?.let { NeteaseLyricsConverter.parseAuto(it) }?.takeIf { it.isNotEmpty() }
+                    ?.let { lines ->
+                        com.maxrave.domain.data.model.metadata.Lyrics(
+                            lines =
+                                lines.map { line ->
+                                    com.maxrave.domain.data.model.metadata.Line(
+                                        endTimeMs = line.endMs.toString(),
+                                        startTimeMs = line.startMs.toString(),
+                                        words = line.text,
+                                    )
+                                },
+                            syncType = "LINE_SYNCED",
+                        )
+                    }
+            lyrics to translated
         }
 
-    private suspend fun fetchHome(): List<HomeItem> =
-        runCatching {
-            // 五组请求并行(总耗时=最慢一组,而不是相加);每组失败独立跳过,不拖垮整页
-            coroutineScope {
-                val daily = async { client.dailyRecommendPlaylists().getOrNull() }
-                // NeriPlayer 结构:私人雷达=该歌单曲目按歌曲展示;雷达歌单=5 张雷达歌单卡。
-                // /playlist/track/all 对雷达这类特殊歌单不稳定(实测可能返回空),
-                // 兜底走 detail.trackIds → songDetail 两步
-                val radarSongs =
-                    async {
-                        val direct =
-                            client.playlistTracks(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID, limit = 30)
-                                .getOrNull()
-                                ?.takeIf { it.isNotEmpty() }
-                        if (direct != null) {
-                            direct
-                        } else {
-                            // 雷达 trackIds 是 -10000 占位,songDetail 无效;走带 n 的 detail 直取 tracks
-                            val viaDetail =
-                                client.playlistTracksViaDetail(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID, limit = 30).getOrNull()
-                            if (viaDetail.isNullOrEmpty()) {
-                                com.maxrave.logger.Logger.w("NeteaseHome", "radar songs: track/all and viaDetail both empty")
-                            }
-                            viaDetail.orEmpty()
-                        }
-                    }
-                val radarLists =
-                    async {
-                        // 只留时光/宝藏/新歌/乐迷/神秘五张卡,私人雷达已作为歌曲行呈现
-                        client.radarPlaylists().getOrNull()?.filter { it.id != NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID }
-                    }
-                val newSongs = async { client.personalizedNewSongs(30).getOrNull() }
-                val hq = async { client.highQualityPlaylists().getOrNull()?.playlists }
-                // 雷达歌单 ID 集:每日推荐接口会把私人雷达混进来,从 daily 行剔除避免重复
-                val radarIds =
-                    setOf(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID) + NeteaseConstants.RADAR_PLAYLISTS.map { it.first }
-                buildList {
-                    daily.await()?.filter { it.id !in radarIds }?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("每日推荐歌单")) }
-                    radarSongs.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toSongHomeItem("私人雷达")) }
-                    radarLists.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("雷达歌单")) }
-                    // 行序:推荐新歌(3 行网格)排在精品歌单下面
-                    hq.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toPlaylistHomeItem("精品歌单")) }
-                    newSongs.await()?.takeIf { it.isNotEmpty() }?.let { add(it.toSongHomeItem("推荐新歌")) }
-                }
+    /** yrc 行 → 渲染端 rich-sync 格式:每个词前内嵌 <MM:SS.mm> 起始标记。
+     *  词文字由整行 text 按 Word.charCount 顺序切片;String.format KMP 不存在,手动补零。 */
+    private fun toRichSyncWords(line: com.maxrave.netease.model.NeteaseLyricLine): String {
+        if (line.words.isEmpty()) return line.text
+        val sb = StringBuilder()
+        var index = 0
+        line.words.forEach { word ->
+            val end = (index + word.charCount).coerceAtMost(line.text.length)
+            if (end > index) {
+                val minutes = word.startMs / 60000
+                val seconds = (word.startMs % 60000) / 1000
+                val centis = (word.startMs % 1000) / 10
+                sb.append('<')
+                    .append(minutes.toString().padStart(2, '0')).append(':')
+                    .append(seconds.toString().padStart(2, '0')).append('.')
+                    .append(centis.toString().padStart(2, '0'))
+                    .append('>')
+                sb.append(line.text.substring(index, end))
+                index = end
             }
-        }.getOrElse { emptyList() }
+        }
+        return sb.toString()
+    }
+
+    /** 行级懒加载用的行内容缓存条目 */
+    private class RowCache<T> {
+        var value: T? = null
+        var mark: kotlin.time.TimeMark? = null
+
+        @OptIn(kotlin.time.ExperimentalTime::class)
+        fun get(force: Boolean): T? {
+            val m = mark ?: return null
+            return value?.takeIf { !force && m.elapsedNow() < 10.minutes }
+        }
+
+        fun set(v: T) {
+            value = v
+            mark = TimeSource.Monotonic.markNow()
+        }
+    }
+
+    private val dailyRowCache = RowCache<HomeItem>()
+    private val radarSongsRowCache = RowCache<HomeItem>()
+    private val radarListsRowCache = RowCache<HomeItem>()
+    private val hqRowCache = RowCache<HomeItem>()
+    private val newSongsRowCache = RowCache<HomeItem>()
+    private val topArtistsCache = RowCache<ArrayList<ArtistsResult>>()
+    private val subArtistsCache = RowCache<ArrayList<ArtistsResult>>()
+    private val starredAlbumsCache = RowCache<ArrayList<AlbumsResult>>()
+
+    /** 每日推荐歌单行(滤雷达歌单防重复);null=无内容或失败,行隐藏/可重试 */
+    suspend fun getDailyPlaylistsRow(force: Boolean = false): HomeItem? {
+        dailyRowCache.get(force)?.let { return it }
+        val radarIds =
+            setOf(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID) + NeteaseConstants.RADAR_PLAYLISTS.map { it.first }
+        val list =
+            client.dailyRecommendPlaylists().getOrNull()
+                ?.filter { it.id !in radarIds }
+                .orEmpty()
+        return list.toPlaylistHomeItem("每日推荐歌单").also { dailyRowCache.set(it) }
+    }
+
+    /** 私人雷达行(歌曲行):track/all 对雷达不稳定,双路兜底走带 n 的 detail 直取 */
+    suspend fun getRadarSongsRow(force: Boolean = false): HomeItem? {
+        radarSongsRowCache.get(force)?.let { return it }
+        val direct =
+            client.playlistTracks(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID, limit = 30)
+                .getOrNull()
+                ?.takeIf { it.isNotEmpty() }
+        val songs =
+            direct
+                ?: client.playlistTracksViaDetail(NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID, limit = 30).getOrNull().orEmpty()
+        if (direct == null && songs.isEmpty()) {
+            com.maxrave.logger.Logger.w("NeteaseHome", "radar songs: track/all and viaDetail both empty")
+            return null
+        }
+        return songs.toSongHomeItem("私人雷达").also { radarSongsRowCache.set(it) }
+    }
+
+    /** 雷达歌单行(5 张卡,私人雷达已作歌曲行呈现) */
+    suspend fun getRadarPlaylistsRow(force: Boolean = false): HomeItem? {
+        radarListsRowCache.get(force)?.let { return it }
+        val list =
+            client.radarPlaylists().getOrNull()
+                ?.filter { it.id != NeteaseConstants.RADAR_PRIVATE_PLAYLIST_ID }
+                .orEmpty()
+        return list.toPlaylistHomeItem("雷达歌单").also { radarListsRowCache.set(it) }
+    }
+
+    /** 精品歌单行(与 getHqPlaylistsRow(cat) 重载,行级懒加载版) */
+    suspend fun getHqPlaylistsRow(force: Boolean = false): HomeItem? {
+        hqRowCache.get(force)?.let { return it }
+        val list = client.highQualityPlaylists().getOrNull()?.playlists.orEmpty()
+        return list.toPlaylistHomeItem("精品歌单").also { hqRowCache.set(it) }
+    }
+
+    /** 推荐新歌行 */
+    suspend fun getNewSongsRow(force: Boolean = false): HomeItem? {
+        newSongsRowCache.get(force)?.let { return it }
+        val list = client.personalizedNewSongs(30).getOrNull().orEmpty()
+        return list.toSongHomeItem("推荐新歌").also { newSongsRowCache.set(it) }
+    }
+
+    override suspend fun getHome(force: Boolean): Result<List<HomeItem>> =
+        runCatching {
+            // 五行并行;各自独立 10min 会话缓存(行级懒加载后此契约方法仅供路由仓库兜底)
+            coroutineScope {
+                listOf(
+                    async { getDailyPlaylistsRow(force) },
+                    async { getRadarSongsRow(force) },
+                    async { getRadarPlaylistsRow(force) },
+                    async { getHqPlaylistsRow(force) },
+                    async { getNewSongsRow(force) },
+                ).mapNotNull { it.await() }
+            }
+        }
 
     /** 网易专属:高质量分类标签(主页 chips 用) */
     suspend fun getHighQualityTags(): Result<List<NeteaseHighQualityTag>> = client.highQualityTags()
@@ -715,6 +842,337 @@ class NeteaseRepositoryImpl(
 
     /** 热搜词榜(搜索空态页) */
     suspend fun searchHotWords(): Result<List<NeteaseHotWord>> = client.searchHot()
+
+    // ---------------------------------------------------------------- M5 混合页:私人FM
+
+    /** 私人FM 首批(单批 3 首,页内横滑增量由 [fetchMoreFmContents] 承接,别回到一次多批)。
+     *  不复用 toSongHomeItem:那个 artists=null,FM 卡要显示艺人行;videoId=数字 ID 原文。 */
+    suspend fun getPersonalFmContents(): Result<List<Content>> =
+        client.personalRadio().map { session ->
+            session.songs.distinctBy { it.id }.map { it.toMixContent() }
+        }
+
+    /** FM 增量:拉一批(**一次请求**)按排除集去重后返回,可能少于 3 首甚至为空(整批
+     *  撞重复不自动重试,下次滑到尾/下拉再试)——保证"一次拉取=一次请求=一批"。 */
+    suspend fun fetchMoreFmContents(excludeVideoIds: Set<String>): List<Content> =
+        client.personalRadio().getOrNull()
+            ?.songs
+            .orEmpty()
+            .filter { it.id.toString() !in excludeVideoIds }
+            .map { it.toMixContent() }
+
+    /** FM 垃圾桶:服务端标记不感兴趣,返回补位歌(响应 data[0];拿不到由 [fetchMoreFmContents] 兜底) */
+    suspend fun trashFmSong(songId: String): Result<Content?> =
+        songId.toLongOrNull()
+            ?.let { client.radioTrash(it) }
+            ?.mapCatching { replacement -> replacement?.toMixContent() }
+            ?: Result.failure(IllegalArgumentException("netease songId 非数字: $songId"))
+
+    /** 红心电台:红心歌单随机 30 首(本地洗牌)。/playmode/intelligence/list 心动模式端点
+     *  对第三方已全面 500(weapi/eapi/明文,见 PITFALLS),此为本地替代:红心随机起播,
+     *  队列挂 FM 哨兵播完自动接私人FM 续批。 */
+    suspend fun getHeartRadioContents(): Result<List<Content>> =
+        runCatching {
+            val account = client.getAccountStatus().getOrNull()?.takeIf { it.userId != 0L }
+                ?: error("未登录网易云")
+            val liked = client.userLikedSongIds(account.userId).getOrNull().orEmpty()
+            val picked = liked.shuffled().take(30)
+            check(picked.isNotEmpty()) { "红心歌单为空" }
+            client.songDetail(picked).getOrNull().orEmpty().map { it.toMixContent() }
+        }
+
+    /** 每日推荐 30 首(需登录)→ Content 列表。主页只放了每日推荐歌单,这 30 首歌是
+     *  混合页的增量数据。日更新缓存:服务端每天 0 点换一批——当日命中会话缓存或
+     *  DataStore 持久缓存(进程重启也免拉),跨日/force 才走网络。Mutex 单飞防并发双拉。
+     *  注意端点 afresh=true 会每次重掷一版,force 调用须节制(下拉刷新不重拉本区)。 */
+    suspend fun getDailyRecommendContents(force: Boolean = false): Result<List<Content>> =
+        dailyMutex.withLock {
+            val today = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date.toEpochDays()
+            if (!force) {
+                val cached = dailySessionCache ?: readPersistedDailyCache()?.also { dailySessionCache = it }
+                if (cached != null && cached.epochDay == today && cached.songs.isNotEmpty()) {
+                    return@withLock Result.success(cached.songs.map { it.toMixContent() })
+                }
+            }
+            client.dailyRecommendSongs().map { songs ->
+                val cache =
+                    NeteaseDailyCache(
+                        epochDay = today,
+                        songs =
+                            songs.map {
+                                NeteaseDailyCacheSong(
+                                    id = it.id,
+                                    name = it.name,
+                                    artists = it.artists,
+                                    durationMs = it.durationMs,
+                                    coverUrl = it.coverUrl,
+                                )
+                            },
+                    )
+                dailySessionCache = cache
+                runCatching { dataStoreManager.putString(NETEASE_DAILY_CACHE_KEY, json.encodeToString(cache)) }
+                cache.songs.map { it.toMixContent() }
+            }
+        }
+
+    private suspend fun readPersistedDailyCache(): NeteaseDailyCache? =
+        runCatching { dataStoreManager.getString(NETEASE_DAILY_CACHE_KEY).first() }.getOrNull()
+            ?.let { runCatching { json.decodeFromString<NeteaseDailyCache>(it) }.getOrNull() }
+
+    private val dailyMutex = Mutex()
+
+    private var dailySessionCache: NeteaseDailyCache? = null
+
+    /** 混合页卡用 Content:填 artists(带 id,贯通播放页艺人跳转);videoId=数字 ID 原文 */
+    private fun NeteaseSong.toMixContent(): Content =
+        Content(
+            album = null,
+            artists =
+                artists.mapIndexed { index, name ->
+                    Artist(id = artistIds.getOrNull(index)?.toString(), name = name)
+                },
+            description = null,
+            isExplicit = false,
+            playlistId = null,
+            browseId = null,
+            thumbnails = coverUrl.toThumbnails(),
+            title = name,
+            videoId = id.toString(),
+            views = null,
+            durationSeconds = (durationMs / 1000).toInt(),
+        )
+
+    /** 持久缓存条目 → Content(字段同 toMixContent,日缓存命中路径专用) */
+    private fun NeteaseDailyCacheSong.toMixContent(): Content =
+        Content(
+            album = null,
+            artists = artists.map { Artist(id = null, name = it) },
+            description = null,
+            isExplicit = false,
+            playlistId = null,
+            browseId = null,
+            thumbnails = coverUrl.toThumbnails(),
+            title = name,
+            videoId = id.toString(),
+            views = null,
+            durationSeconds = (durationMs / 1000).toInt(),
+        )
+
+    // ------------------------------------------------ 混合页:新歌速递 + 最近在听
+
+    /** 新歌速递(地区维度,与主页"推荐新歌"个性化不同源):分区会话缓存 10min(key=areaId),
+     *  chips 切换不打网络;Mutex 单飞。areaId 取值见 [com.maxrave.netease.newSongsExpress]。 */
+    private val expressMutex = Mutex()
+
+    private val expressCache = mutableMapOf<Int, Pair<List<Content>, kotlin.time.TimeMark>>()
+
+    @OptIn(kotlin.time.ExperimentalTime::class)
+    suspend fun getNewSongExpress(
+        areaId: Int = 7,
+        force: Boolean = false,
+    ): Result<List<Content>> =
+        expressMutex.withLock {
+            if (!force) {
+                expressCache[areaId]?.let { (list, mark) ->
+                    if (mark.elapsedNow() < 10.minutes && list.isNotEmpty()) {
+                        return@withLock Result.success(list)
+                    }
+                }
+            }
+            client.newSongsExpress(areaId).map { songs ->
+                val contents = songs.map { it.toMixContent() }
+                if (contents.isNotEmpty()) expressCache[areaId] = contents to TimeSource.Monotonic.markNow()
+                contents
+            }
+        }
+
+    private var recentCache: Pair<List<Content>, kotlin.time.TimeMark>? = null
+
+    /** 最近在听(网易侧听歌周榜,已按播放次数降序;不含本应用播放——无网易侧回传):
+     *  会话缓存 10min;未登录/空榜返回空表。上限 [NETEASE_RECENT_MAX] 条。 */
+    @OptIn(kotlin.time.ExperimentalTime::class)
+    suspend fun getRecentPlayedContents(): Result<List<Content>> =
+        runCatching {
+            recentCache?.let { (list, mark) ->
+                if (mark.elapsedNow() < 10.minutes && list.isNotEmpty()) return@runCatching list
+            }
+            val account = client.getAccountStatus().getOrNull()?.takeIf { it.userId != 0L }
+                ?: error("未登录网易云")
+            val list =
+                client.playRecord(account.userId).getOrNull().orEmpty()
+                    .map { (song, _) -> song.toMixContent() }
+                    .take(NETEASE_RECENT_MAX)
+            if (list.isNotEmpty()) recentCache = list to TimeSource.Monotonic.markNow()
+            list
+        }
+
+    // ---------------------------------------------------------------- M6: 专辑/歌手页同页路由
+
+    /** 专辑详情 → AlbumBrowse(AlbumScreen 按数字 browseId 分流到这)。 */
+    suspend fun getAlbumBrowseData(albumId: String): Result<AlbumBrowse> =
+        runCatching {
+            val id = albumId.toLongOrNull() ?: error("netease albumId 非数字: $albumId")
+            val (album, songs) = client.albumDetail(id).getOrNull() ?: error("专辑不存在: $albumId")
+            AlbumBrowse(
+                artists = listOf(Artist(id = "", name = album.artistName ?: "网易云音乐")),
+                audioPlaylistId = "",
+                description = album.description,
+                duration = "",
+                durationSeconds = songs.sumOf { (it.durationMs / 1000).toInt() },
+                thumbnails = album.coverUrl.toThumbnails(),
+                title = album.name,
+                trackCount = songs.size,
+                tracks = songs.map { it.toTrackPlaylist() },
+                type = "album",
+                year = album.publishTimeMs?.let { (it / 31_536_000_000L + 1970).toString() } ?: "",
+            )
+        }
+
+    /** 歌手详情 → ArtistBrowse(ArtistScreen 按数字 channelId 分流到这):
+     *  详情+热门歌曲50+专辑30+相似歌手并行;电台/随机播/单曲/MV 是 YT 专属,置 null 隐藏。 */
+    suspend fun getArtistBrowseData(artistId: String): Result<ArtistBrowse> =
+        runCatching {
+            val id = artistId.toLongOrNull() ?: error("netease artistId 非数字: $artistId")
+            coroutineScope {
+                val detailDeferred = async { client.artistDetail(id).getOrNull() }
+                val songsDeferred = async { client.artistSongs(id).getOrNull() }
+                val albumsDeferred = async { client.artistAlbums(id).getOrNull() }
+                val similarDeferred = async { client.similarArtists(id).getOrNull() }
+                val dynamicDeferred = async { client.artistDynamic(id).getOrNull() }
+                val detail = detailDeferred.await() ?: error("歌手不存在: $artistId")
+                val songs = songsDeferred.await()?.items.orEmpty()
+                val albums = albumsDeferred.await()?.first.orEmpty()
+                val similar = similarDeferred.await().orEmpty()
+                ArtistBrowse(
+                    albums =
+                        if (albums.isEmpty()) {
+                            null
+                        } else {
+                            Albums(
+                                browseId = id,
+                                params = "", // 网易一次性给全,无"更多"页
+                                results =
+                                    albums.map {
+                                        ResultAlbum(
+                                            browseId = it.id.toString(),
+                                            isExplicit = false,
+                                            thumbnails = it.coverUrl.toThumbnails(),
+                                            title = it.name,
+                                            year = it.publishTimeMs?.let { p -> (p / 31_536_000_000L + 1970).toString() } ?: "",
+                                        )
+                                    },
+                            )
+                        },
+                    channelId = id.toString(),
+                    description = detail.briefDesc,
+                    name = detail.name,
+                    radioId = null,
+                    related =
+                        if (similar.isEmpty()) {
+                            null
+                        } else {
+                            Related(
+                                browseId = id,
+                                results =
+                                    similar.map {
+                                        ResultRelated(
+                                            browseId = it.id.toString(),
+                                            subscribers = "",
+                                            thumbnails = it.picUrl.toThumbnails(),
+                                            title = it.name,
+                                        )
+                                    },
+                            )
+                        },
+                    shuffleId = null,
+                    singles = null,
+                    songs =
+                        if (songs.isEmpty()) {
+                            null
+                        } else {
+                            Songs(browseId = null, results = songs.map { it.toResultSong() })
+                        },
+                    video = null,
+                    featuredOn = null,
+                    videoList = null,
+                    subscribed = dynamicDeferred.await()?.followed,
+                    subscribers = null,
+                    thumbnails = detail.picUrl.toThumbnails(),
+                    views = null,
+                )
+            }
+        }
+
+    /** 关注/取关网易歌手(艺人页按钮;M9 的"YT↔网易关注同步"是另一回事) */
+    suspend fun subscribeArtistNetease(
+        artistId: String,
+        subscribe: Boolean,
+    ): Result<Boolean> =
+        artistId.toLongOrNull()
+            ?.let { client.subscribeArtist(it, subscribe) }
+            ?: Result.failure(IllegalArgumentException("netease artistId 非数字: $artistId"))
+
+    // ---------------------------------------------------------------- 主页 M6 行:热门歌手 + 新碟上架
+
+    /** 热门歌手榜 → ArtistsResult(主页行;点击进艺人页)。行缓存 10min。 */
+    suspend fun getTopArtists(
+        limit: Int = 30,
+        force: Boolean = false,
+    ): Result<ArrayList<ArtistsResult>> {
+        topArtistsCache.get(force)?.let { return Result.success(it) }
+        return client
+            .topArtists(limit)
+            .map { list -> ArrayList(list.map { it.toArtistsResult() }) }
+            .onSuccess { topArtistsCache.set(it) }
+    }
+
+    /** 新碟上架 → AlbumsResult(主页行;点击进专辑页,与搜索专辑 tab 同形状)。
+     *  分地区缓存 10min(area: ALL/ZH/EA/KR/JP),chips 切换不打网络。 */
+    private val newAlbumsAreaCache = mutableMapOf<String, RowCache<ArrayList<AlbumsResult>>>()
+
+    suspend fun getNewAlbums(
+        area: String = "ALL",
+        limit: Int = 30,
+        force: Boolean = false,
+    ): Result<ArrayList<AlbumsResult>> {
+        val cache = newAlbumsAreaCache.getOrPut(area) { RowCache() }
+        cache.get(force)?.let { return Result.success(it) }
+        return client
+            .newAlbums(area = area, limit = limit)
+            .map { list -> ArrayList(list.map { it.toAlbumsResult() }) }
+            .onSuccess { cache.set(it) }
+    }
+
+    /** 关注的歌手行(/artist/sublist,需登录);行缓存 10min */
+    suspend fun getSubscribedArtists(force: Boolean = false): Result<ArrayList<ArtistsResult>> {
+        subArtistsCache.get(force)?.let { return Result.success(it) }
+        return client
+            .subscribedArtists()
+            .map { list -> ArrayList(list.map { it.toArtistsResult() }) }
+            .onSuccess { subArtistsCache.set(it) }
+    }
+
+    /** 收藏的专辑行(/mine/rn/resource/list,需登录);行缓存 10min */
+    suspend fun getStarredAlbums(force: Boolean = false): Result<ArrayList<AlbumsResult>> {
+        starredAlbumsCache.get(force)?.let { return Result.success(it) }
+        val account =
+            client.getAccountStatus().getOrNull()?.takeIf { it.userId != 0L }
+                ?: return Result.failure(IllegalStateException("未登录网易云"))
+        return client
+            .userStaredAlbums(account.userId)
+            .map { list -> ArrayList(list.map { it.toAlbumsResult() }) }
+            .onSuccess { starredAlbumsCache.set(it) }
+    }
+
+    /** 艺人页"更多专辑"(AlbumRepository.getAlbumMore 的 MPAD{数字} 路由):一次 50 张无分页 */
+    suspend fun getArtistMoreAlbums(artistId: Long): ArrayList<AlbumsResult> =
+        ArrayList(
+            client.artistAlbums(artistId, limit = 50).getOrNull()?.first.orEmpty().map { it.toAlbumsResult() },
+        )
+
+    /** 搜专辑 → AlbumsResult(搜索 tab;netease 数字 browseId → AlbumScreen 同页路由)。 */
+    suspend fun searchAlbumsResult(query: String): Result<ArrayList<AlbumsResult>> =
+        client.searchAlbums(query).map { r -> ArrayList(r.items.map { it.toAlbumsResult() }) }
 }
 
 // ----------------------------------------------------------------------------
@@ -731,6 +1189,27 @@ private data class NeteaseMoodArtwork(
 }
 
 private const val NETEASE_ARTWORK_TTL_MILLIS = 7L * 24 * 60 * 60 * 1000
+
+/** 每日推荐 30 首的持久缓存形状(混合页;epochDay 用本地日,跨日即失效重拉) */
+@Serializable
+private data class NeteaseDailyCacheSong(
+    val id: Long,
+    val name: String,
+    val artists: List<String>,
+    val durationMs: Long,
+    val coverUrl: String? = null,
+)
+
+@Serializable
+private data class NeteaseDailyCache(
+    val epochDay: Long,
+    val songs: List<NeteaseDailyCacheSong>,
+)
+
+private const val NETEASE_DAILY_CACHE_KEY = "netease_daily_songs_cache"
+
+/** 最近在听分区上限(混合页) */
+private const val NETEASE_RECENT_MAX = 50
 
 private val artworkJson = Json { ignoreUnknownKeys = true }
 
@@ -837,7 +1316,10 @@ private fun List<NeteaseSong>.toSongHomeItem(title: String): HomeItem =
             map { song ->
                 Content(
                     album = null,
-                    artists = null,
+                    artists =
+                        song.artists.mapIndexed { index, name ->
+                            Artist(id = song.artistIds.getOrNull(index)?.toString(), name = name)
+                        },
                     description = null,
                     isExplicit = false,
                     playlistId = null,
@@ -933,6 +1415,39 @@ internal fun NeteaseArtist.toArtistsResult(): ArtistsResult =
         resultType = "artist",
         shuffleId = "",
         thumbnails = picUrl.toThumbnails(),
+    )
+
+/** 专辑 → 搜索形状 AlbumsResult(搜索专辑 tab + 主页新碟上架行共用) */
+internal fun NeteaseAlbum.toAlbumsResult(): AlbumsResult =
+    AlbumsResult(
+        artists = listOfNotNull(artistName?.let { Artist(id = null, name = it) }),
+        browseId = id.toString(),
+        category = "Album",
+        duration = Unit,
+        isExplicit = false,
+        resultType = "Album",
+        thumbnails = coverUrl.toThumbnails(),
+        title = name,
+        type = "album",
+        year = publishTimeMs?.let { (it / 31_536_000_000L + 1970).toString() } ?: "",
+    )
+
+/** 歌手热门歌曲 → 艺人页形状 ResultSong */
+internal fun NeteaseSong.toResultSong(): ResultSong =
+    ResultSong(
+        videoId = id.toString(),
+        title = name,
+        artists =
+            artists.mapIndexed { index, name ->
+                Artist(id = artistIds.getOrNull(index)?.toString(), name = name)
+            },
+        durationSeconds = (durationMs / 1000).toInt(),
+        album = Album(id = albumId?.toString() ?: "", name = albumName ?: ""),
+        likeStatus = "INDIFFERENT",
+        thumbnails = coverUrl.toThumbnails(),
+        isAvailable = hasCopyright ?: true,
+        isExplicit = false,
+        videoType = null,
     )
 
 internal fun Long.toMinutesSeconds(): String {

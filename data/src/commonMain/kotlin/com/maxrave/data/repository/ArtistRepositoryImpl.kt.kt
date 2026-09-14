@@ -1,6 +1,7 @@
 package com.maxrave.data.repository
 
 import com.maxrave.data.db.datasource.LocalDataSource
+import com.maxrave.data.repository.NeteaseRepositoryImpl
 import com.maxrave.data.extension.getFullDataFromDB
 import com.maxrave.data.parser.parseArtistData
 import com.maxrave.domain.data.entities.ArtistEntity
@@ -23,6 +24,7 @@ internal class ArtistRepositoryImpl(
     private val localDataSource: LocalDataSource,
     private val youTube: YouTube,
     private val dataStoreManager: DataStoreManager,
+    private val neteaseRepository: NeteaseRepositoryImpl,
 ) : ArtistRepository {
     override fun getAllArtists(limit: Int): Flow<List<ArtistEntity>> =
         flow {
@@ -75,6 +77,10 @@ internal class ArtistRepositoryImpl(
             if (followedStatus == 0) {
                 localDataSource.deleteNotificationsByChannelId(channelId)
                 localDataSource.deleteFollowedArtistSingleAndAlbum(channelId)
+            }
+            // 网易歌手:直接走网易关注/取关,不受 YT 同步开关控制(开关镜像的是 YT 账号)
+            if (channelId.toLongOrNull() != null) {
+                return@withContext neteaseRepository.subscribeArtistNetease(channelId, followedStatus == 1).isSuccess
             }
             // The local flag is already written above and stays written: Follow must not depend
             // on the network. Mirroring is opt-in, and its outcome is handed back rather than
@@ -141,6 +147,16 @@ internal class ArtistRepositoryImpl(
     override fun getArtistData(channelId: String): Flow<Resource<ArtistBrowse>> =
         flow {
             runCatching {
+                // 网易歌手:id 为纯数字(YT 恒 UC 前缀),同页面换数据源(M2 歌单同款)
+                if (channelId.toLongOrNull() != null) {
+                    neteaseRepository
+                        .getArtistBrowseData(channelId)
+                        .fold(
+                            onSuccess = { emit(Resource.Success(it)) },
+                            onFailure = { emit(Resource.Error(it.message ?: "netease artist error")) },
+                        )
+                    return@flow
+                }
                 youTube
                     .artist(channelId)
                     .onSuccess { result ->

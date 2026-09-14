@@ -655,6 +655,9 @@ interface DataStoreManager {
         const val LRCLIB = "lrclib"
         const val BETTER_LYRICS = "better_lyrics"
 
+        /** 网易官方歌词(网易源的默认主选;仅对网易歌可用,数字 songId 直连) */
+        const val NETEASE = "netease"
+
         const val FDROID = "fdroid"
         const val GITHUB_FOSS_NIGHTLY = "github_foss_nightly"
         const val GITHUB = "github_release"

@@ -1,6 +1,7 @@
 package com.maxrave.data.repository
 
 import com.maxrave.data.db.datasource.LocalDataSource
+import com.maxrave.data.repository.NeteaseRepositoryImpl
 import com.maxrave.data.extension.getFullDataFromDB
 import com.maxrave.data.mapping.toAlbumsResult
 import com.maxrave.data.parser.parseAlbumData
@@ -25,6 +26,7 @@ private const val TAG = "AlbumRepositoryImpl"
 internal class AlbumRepositoryImpl(
     private val localDataSource: LocalDataSource,
     private val youTube: YouTube,
+    private val neteaseRepository: NeteaseRepositoryImpl,
 ) : AlbumRepository {
     override fun getAllAlbums(limit: Int): Flow<List<AlbumEntity>> =
         flow {
@@ -104,6 +106,16 @@ internal class AlbumRepositoryImpl(
     override fun getAlbumData(browseId: String): Flow<Resource<AlbumBrowse>> =
         flow {
             runCatching {
+                // 网易专辑:id 为纯数字(YT 恒含字母),同页面换数据源(M2 歌单同款)
+                if (browseId.toLongOrNull() != null) {
+                    neteaseRepository
+                        .getAlbumBrowseData(browseId)
+                        .fold(
+                            onSuccess = { emit(Resource.Success(it)) },
+                            onFailure = { emit(Resource.Error(it.message ?: "netease album error")) },
+                        )
+                    return@flow
+                }
                 youTube
                     .album(browseId, withSongs = true)
                     .onSuccess { result ->
@@ -121,6 +133,14 @@ internal class AlbumRepositoryImpl(
     ): Flow<Pair<String, List<AlbumsResult>>?> =
         flow {
             runCatching {
+                // 网易艺人"更多专辑":ArtistScreen 拼的是 MPAD{数字id} → artistAlbums 一次给全
+                if (browseId.startsWith("MPAD")) {
+                    browseId.removePrefix("MPAD").toLongOrNull()?.let { artistId ->
+                        val albums = neteaseRepository.getArtistMoreAlbums(artistId)
+                        emit(if (albums.isEmpty()) null else "专辑" to albums)
+                        return@flow
+                    }
+                }
                 youTube
                     .browse(browseId = browseId, params = params)
                     .onSuccess { data ->

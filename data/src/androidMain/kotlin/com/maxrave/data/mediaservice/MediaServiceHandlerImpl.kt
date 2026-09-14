@@ -18,11 +18,13 @@ import com.maxrave.common.DESC
 import com.maxrave.common.LOCAL_PLAYLIST_ID
 import com.maxrave.common.LOCAL_PLAYLIST_ID_SAVED_QUEUE
 import com.maxrave.common.MERGING_DATA_TYPE
+import com.maxrave.common.NETEASE_FM_PLAYLIST_ID
 import com.maxrave.common.SPONSOR_BLOCK_MIN_SEGMENT_SECONDS
 import com.maxrave.common.SPONSOR_BLOCK_SKIP_MARGIN_MS
 import com.maxrave.common.TITLE
 import com.maxrave.data.db.Converters
 import com.maxrave.data.lastfm.LastfmScrobbler
+import com.maxrave.data.repository.NeteaseRepositoryImpl
 import com.maxrave.domain.data.entities.NewFormatEntity
 import com.maxrave.domain.data.entities.SongEntity
 import com.maxrave.domain.data.model.browse.album.Track
@@ -1408,6 +1410,12 @@ internal class MediaServiceHandlerImpl(
         Logger.w("Check loadMore", playlistId.toString())
         val continuation = _queueData.value.data.continuation
         Logger.w("Check loadMore", continuation.toString())
+        // 网易私人FM:批批连播,直取 personalRadio 追加。不走下面 YT 的 RDAMVM 电台路径——
+        // 数字 videoId 进 getRelated 必失败,且 RDAMVM 前缀判等会误伤语义。
+        if (playlistId == NETEASE_FM_PLAYLIST_ID) {
+            getNeteaseFmBatch()
+            return
+        }
         if (continuation != null) {
             if (playlistId.startsWith(LOCAL_PLAYLIST_ID)) {
                 coroutineScope.launch {
@@ -1693,6 +1701,62 @@ internal class MediaServiceHandlerImpl(
                         reorderShuffledQueue(player.getCurrentMediaTimeLine())
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * 网易私人FM 续批：拉一批 personalRadio、按现有队列去重后追加。与 YT 电台不同，FM 不做
+     * "已在电台模式"早退——每批耗尽都继续拉。一批常只有 3 首，整批撞上队列里已有的歌不罕见，
+     * 去重为空时最多再拉 2 次换批；仍为空则置回 INITIALIZED 等下次触发，不无限重试。
+     * 仓库经 Koin 懒取（player 同款），避免为这一个依赖改构造签名。
+     */
+    private fun getNeteaseFmBatch() {
+        if (queueData.value.queueState == QueueData.StateSource.STATE_INITIALIZING) return
+        coroutineScope.launch {
+            _queueData.update {
+                it.copy(queueState = QueueData.StateSource.STATE_INITIALIZING)
+            }
+            val repository = runCatching { getKoin().get<NeteaseRepositoryImpl>() }.getOrNull()
+            if (repository == null) {
+                Logger.w(TAG, "getNeteaseFmBatch: repository unavailable")
+                _queueData.update {
+                    it.copy(
+                        queueState = QueueData.StateSource.STATE_INITIALIZED,
+                        data = it.data.copy(continuation = null),
+                    )
+                }
+                return@launch
+            }
+            var fresh: List<Track> = emptyList()
+            // SERVICE_SCOPE 是 Dispatchers.Main:YT 各路径靠仓库内部 flowOn(IO) 兜底,
+            // personalRadio 是裸 suspend,必须自己切 IO,否则网络卡主线程。
+            withContext(Dispatchers.IO) {
+                repeat(3) {
+                    val existingIds = _queueData.value.data.listTracks.map { track -> track.videoId }.toSet()
+                    val batch =
+                        repository.getPersonalRadio()
+                            ?.songs
+                            ?.map { it.toTrack() }
+                            .orEmpty()
+                            .filter { track -> track.videoId !in existingIds }
+                    if (batch.isNotEmpty()) {
+                        fresh = batch
+                        return@repeat
+                    }
+                }
+            }
+            if (fresh.isNotEmpty()) {
+                loadMoreCatalog(fresh.toCollection(arrayListOf()))
+            } else {
+                Logger.w(TAG, "getNeteaseFmBatch: no fresh songs after retries, stop extending this round")
+                _queueData.update {
+                    it.copy(
+                        queueState = QueueData.StateSource.STATE_INITIALIZED,
+                        data = it.data.copy(continuation = null),
+                    )
+                }
+                reorderShuffledQueue(player.getCurrentMediaTimeLine())
             }
         }
     }
@@ -2680,7 +2744,11 @@ internal class MediaServiceHandlerImpl(
             nowPlayingState.value.songEntity?.let { updateDiscordRpc(it) }
         }
         queueData.value.data.listTracks.let { list ->
-            if ((list.size > 3 || runBlocking { dataStoreManager.endlessQueue.first() == TRUE }) &&
+            // 网易私人FM 一批只有 3 首,天然过不了 list.size > 3 的门;FM 语义即无限电台,
+            // 不依赖 endlessQueue 开关,凭哨兵 playlistId 放行。
+            if ((list.size > 3 ||
+                    queueData.value.data.playlistId == NETEASE_FM_PLAYLIST_ID ||
+                    runBlocking { dataStoreManager.endlessQueue.first() == TRUE }) &&
                 list.size - player.currentMediaItemIndex < 3 &&
                 list.size - player.currentMediaItemIndex >= 0 &&
                 queueData.value.queueState == QueueData.StateSource.STATE_INITIALIZED
