@@ -777,8 +777,11 @@ internal class MediaServiceHandlerImpl(
                             }
                         }
                     }
-                if (dataStoreManager.sponsorBlockEnabled.first() == TRUE) {
+                // SponsorBlock 只索引 YT videoId,网易数字 ID 查询恒空,别白发请求
+                if (dataStoreManager.sponsorBlockEnabled.first() == TRUE && videoId.toLongOrNull() == null) {
                     getSkipSegments(videoId)
+                } else {
+                    _skipSegments.value = null
                 }
                 if (dataStoreManager.sendBackToGoogle.first() == TRUE) {
                     getFormat(videoId)

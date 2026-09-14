@@ -698,6 +698,19 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    override val neteaseLikeSync =
+        settingsDataStore.data.map { preferences ->
+            preferences[NETEASE_LIKE_SYNC] ?: TRUE
+        }
+
+    override suspend fun setNeteaseLikeSync(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[NETEASE_LIKE_SYNC] = if (enabled) TRUE else FALSE
+            }
+        }
+    }
+
     override val equalizerEnabled: Flow<String> =
         settingsDataStore.data.map { preferences ->
             preferences[EQUALIZER_ENABLED] ?: FALSE
@@ -1951,6 +1964,7 @@ internal class DataStoreManagerImpl(
         val NETEASE_DOWNLOAD_QUALITY = stringPreferencesKey("netease_download_quality")
         val NETEASE_FOLLOW_SYNC = stringPreferencesKey("netease_follow_sync")
         val NETEASE_AUTO_SWITCH = stringPreferencesKey("netease_auto_switch")
+        val NETEASE_LIKE_SYNC = stringPreferencesKey("netease_like_sync")
         val SPOTIFY_LYRICS = stringPreferencesKey("spotify_lyrics")
         val SYNC_FOLLOW_TO_YOUTUBE = stringPreferencesKey("sync_follow_to_youtube")
         val EQUALIZER_AUTOEQ_PROFILE = stringPreferencesKey("equalizer_autoeq_profile")

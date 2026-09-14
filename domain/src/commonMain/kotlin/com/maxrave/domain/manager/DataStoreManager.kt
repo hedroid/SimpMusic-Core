@@ -227,6 +227,11 @@ interface DataStoreManager {
 
     suspend fun setNeteaseAutoSwitch(enabled: Boolean)
 
+    /** 本地红心变化是否同步云村(默认开,仅网易歌) */
+    val neteaseLikeSync: Flow<String>
+
+    suspend fun setNeteaseLikeSync(enabled: Boolean)
+
     /**
      * Whether following an artist in the app also subscribes to their YouTube channel.
      *

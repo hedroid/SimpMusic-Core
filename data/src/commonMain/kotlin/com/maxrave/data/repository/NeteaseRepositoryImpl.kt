@@ -2,6 +2,7 @@ package com.maxrave.data.repository
 
 import DatabaseDao
 import com.maxrave.domain.data.entities.NeteaseAccountEntity
+import com.maxrave.domain.data.entities.NeteaseSongInfoEntity
 import com.maxrave.domain.data.entities.PlaylistEntity
 import com.maxrave.domain.data.entities.SongEntity
 import com.maxrave.domain.data.model.home.Content
@@ -73,6 +74,7 @@ import com.maxrave.netease.model.NeteaseQuality
 import com.maxrave.netease.model.NeteaseSong
 import com.maxrave.netease.personalRadio
 import com.maxrave.netease.similarSongs
+import com.maxrave.netease.songComments
 import com.maxrave.netease.NeteaseLyricsConverter
 import com.maxrave.netease.searchAlbums
 import com.maxrave.netease.albumDetail
@@ -115,6 +117,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlin.time.Clock
+import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 
@@ -338,7 +341,13 @@ class NeteaseRepositoryImpl(
     override suspend fun getStreamUrl(
         songId: String,
         isDownload: Boolean,
-    ): Result<String?> {
+    ): Result<String?> = getStreamInfo(songId, isDownload).map { it?.url }
+
+    /** 取流附带格式(mimeType/level),供播放页 codec 徽章与 NewFormat 缓存使用 */
+    suspend fun getStreamInfo(
+        songId: String,
+        isDownload: Boolean,
+    ): Result<NeteaseStreamInfo?> {
         val id = songId.toLongOrNull() ?: return Result.failure(IllegalArgumentException("netease songId 非数字: $songId"))
         val levelName =
             (
@@ -358,7 +367,13 @@ class NeteaseRepositoryImpl(
             if (!url.isNullOrEmpty() && result.freeTrialInfo == null) {
                 // CDN 签发的链接是 http://,Android 默认禁明文流量(ExoPlayer 报 Source error),
                 // music.126.net 的 CDN 支持 https,统一升级
-                return Result.success(url.replaceFirst("http://", "https://"))
+                return Result.success(
+                    NeteaseStreamInfo(
+                        url = url.replaceFirst("http://", "https://"),
+                        mimeType = result.mimeType,
+                        level = level.key,
+                    ),
+                )
             }
         }
         return Result.success(null)
@@ -829,6 +844,103 @@ class NeteaseRepositoryImpl(
         return client.likeSong(id, like)
     }
 
+    // ---------------------------------------------------------------- 云村红心(播放页云端喜欢按钮)
+
+    /**
+     * "我喜欢的音乐"曲目 id 集,会话级缓存:云村红心没有单曲状态查询接口,只能
+     * 拉一次红心歌单的 trackIds(playlistDetail 不带 tracks,足够轻)。null = 未登录
+     * 或首拉失败,调用方按"未登录"处理(隐藏按钮)。
+     */
+    private val likedIdsMutex = Mutex()
+    private var likedSongIds: Set<Long>? = null
+
+    private suspend fun likedIdsOrNull(): Set<Long>? {
+        likedSongIds?.let { return it }
+        val account = client.getAccountStatus().getOrNull() ?: return null
+        if (account == null || account.userId == 0L) return null
+        val favId =
+            client.userPlaylists(account.userId).getOrNull()
+                ?.firstOrNull { it.specialType == NeteasePlaylist.SpecialType.FAVORITE }?.id
+                ?: return null
+        val ids = client.playlistDetail(favId).getOrNull()?.second ?: return null
+        val set = ids.toHashSet()
+        likedIdsMutex.withLock { likedSongIds = set }
+        return set
+    }
+
+    /** 云村红心状态;null = 无账号/拉取失败(按钮隐藏),非 null = 歌在不在红心歌单 */
+    suspend fun isSongLiked(songId: String): Boolean? {
+        val id = songId.toLongOrNull() ?: return null
+        return likedIdsOrNull()?.contains(id)
+    }
+
+    /** 切换云村红心,成功后同步缓存,让下一次切歌回来的状态立刻正确 */
+    suspend fun setSongLiked(
+        songId: String,
+        like: Boolean,
+    ): Result<Boolean> {
+        val result = likeSong(songId, like)
+        val id = songId.toLongOrNull()
+        if (result.isSuccess && id != null) {
+            likedIdsMutex.withLock {
+                likedSongIds = (likedSongIds ?: emptySet()).let { if (like) it + id else it - id }
+            }
+        }
+        return result
+    }
+
+    /**
+     * 播放页网易详情卡:艺人(头像/粉丝)、专辑(发行日/简介)、评论(总数/热评)四个端点
+     * 并行,各自独立降级——哪路失败哪路留空,整卡不因单路失败消失。
+     */
+    suspend fun getSongInfo(
+        songId: String,
+        artistId: String?,
+        albumId: String?,
+    ): NeteaseSongInfoEntity {
+        val sid = songId.toLongOrNull() ?: return NeteaseSongInfoEntity()
+        val aid = artistId?.toLongOrNull()
+        val alid = albumId?.toLongOrNull()
+        return coroutineScope {
+            val artistDef = async { aid?.let { client.artistDetail(it).getOrNull() } }
+            val dynamicDef = async { aid?.let { client.artistDynamic(it).getOrNull() } }
+            val albumDef = async { alid?.let { client.albumDetail(it).getOrNull() } }
+            val commentDef = async { client.songComments(sid, limit = 10, offset = 0).getOrNull() }
+            val artist = artistDef.await()
+            val dynamic = dynamicDef.await()
+            val album = albumDef.await()
+            val comments = commentDef.await()
+            NeteaseSongInfoEntity(
+                artistId = aid?.toString(),
+                artistName = artist?.name,
+                artistAvatar = artist?.picUrl?.replaceFirst("http://", "https://"),
+                artistFans = dynamic?.followerCount,
+                albumId = alid?.toString(),
+                albumName = album?.first?.name,
+                albumPublishDate =
+                    album?.first?.publishTimeMs?.let { ms ->
+                        Instant.fromEpochMilliseconds(ms).toLocalDateTime(TimeZone.UTC).date.toString()
+                    },
+                albumDescription = album?.first?.description?.takeIf { it.isNotBlank() },
+                commentCount = comments?.totalCount ?: 0,
+                hotComments =
+                    comments?.hotComments
+                        .orEmpty()
+                        .sortedByDescending { it.likedCount ?: 0 }
+                        .take(2)
+                        .map {
+                            NeteaseSongInfoEntity.HotComment(
+                                nickname = it.nickname,
+                                avatarUrl = it.avatarUrl,
+                                content = it.content,
+                                likedCount = it.likedCount,
+                                location = it.location,
+                            )
+                        },
+            )
+        }
+    }
+
     // ---------------------------------------------------------------- search (M3 搜索页)
 
     /** 搜歌曲 → YT SongsResult 形状(搜索页行组件直接渲染;videoId=数字 ID 原文,播放走数字路由取流) */
@@ -1263,6 +1375,13 @@ private fun List<NeteasePlaylist>.toMoodsMomentObject(tag: String): MoodsMomentO
     }
 
 private const val VIDEO_TYPE_SONG = "MUSIC_VIDEO_TYPE_ATV"
+
+/** 网易取流结果带格式:level(档位 key)/mimeType(audio/mpeg|audio/flac),喂 codec 徽章 */
+data class NeteaseStreamInfo(
+    val url: String,
+    val mimeType: String?,
+    val level: String?,
+)
 
 internal fun NeteaseSong.toSongEntity(): SongEntity =
     SongEntity(

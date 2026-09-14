@@ -269,6 +269,18 @@ internal class SongRepositoryImpl(
         likeStatus: Int,
     ) = withContext(Dispatchers.Main) {
         localDataSource.updateLiked(likeStatus, videoId)
+        // 网易歌:本地红心变化同步云村(like=1 红心/0 取消),未登录静默跳过、失败不回滚
+        // 本地状态——本地是第一事实源,云端只是跟进
+        if (videoId.toLongOrNull() != null &&
+            neteaseRepository.isLoggedIn.first() &&
+            dataStoreManager.neteaseLikeSync.first() == TRUE
+        ) {
+            try {
+                neteaseRepository.setSongLiked(videoId, likeStatus == 1)
+            } catch (e: Exception) {
+                Logger.w(TAG, "netease like sync failed for $videoId: ${e.message}")
+            }
+        }
         if (likeStatus == 1 && dataStoreManager.autoDownloadLikedSongs.first() == TRUE) {
             val song = localDataSource.getSong(videoId)
             if (song != null && song.downloadState != DownloadState.STATE_DOWNLOADED) {

@@ -96,10 +96,43 @@ internal class StreamRepositoryImpl(
             // TODO(NETEASE_M9): 返回 null(灰歌/仅试听)且自动切源开启时,按 title+artist
             // 搜 YT 同名曲自动换源播放。
             if (videoId.toLongOrNull() != null) {
-                neteaseRepository
-                    .getStreamUrl(videoId, isDownloading)
-                    .onSuccess { url -> emit(url) }
-                    .onFailure { emit(null) }
+                val stream =
+                    neteaseRepository
+                        .getStreamInfo(videoId, isDownloading)
+                        .getOrNull()
+                if (stream == null) {
+                    emit(null)
+                } else {
+                    // 落一条网易版 NewFormat:codecs 喂播放页 codec 徽章 + Info 面板,
+                    // audioUrl 让下载解析器在链接有效期内复用本次取流(省一次接口);
+                    // tracking 三字段留 null,watchtime 采集端全非空才发,网易天然不回传
+                    runCatching {
+                        localDataSource.insertNewFormat(
+                            NewFormatEntity(
+                                videoId = videoId,
+                                itag = 0,
+                                mimeType = stream.mimeType,
+                                codecs =
+                                    when {
+                                        stream.mimeType?.contains("flac", ignoreCase = true) == true -> "flac"
+                                        else -> "mp3"
+                                    },
+                                bitrate = null,
+                                sampleRate = null,
+                                contentLength = null,
+                                loudnessDb = null,
+                                lengthSeconds = null,
+                                playbackTrackingVideostatsPlaybackUrl = null,
+                                playbackTrackingAtrUrl = null,
+                                playbackTrackingVideostatsWatchtimeUrl = null,
+                                expiredTime = now().plusSeconds(600),
+                                cpn = null,
+                                audioUrl = stream.url,
+                            ),
+                        )
+                    }
+                    emit(stream.url)
+                }
                 return@flow
             }
 
