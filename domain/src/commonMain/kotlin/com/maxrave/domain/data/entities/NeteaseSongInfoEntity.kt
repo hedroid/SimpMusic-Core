@@ -17,6 +17,11 @@ data class NeteaseSongInfoEntity(
     val albumPublishDate: String? = null,
     /** 专辑简介 */
     val albumDescription: String? = null,
+    val albumTrackCount: Int? = null,
+    /** 唱片公司 */
+    val albumCompany: String? = null,
+    /** 艺人简介(详情卡第三行,优先于专辑简介展示) */
+    val artistBriefDesc: String? = null,
     val commentCount: Int = 0,
     val hotComments: List<HotComment> = emptyList(),
 ) {

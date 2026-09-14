@@ -890,6 +890,41 @@ class NeteaseRepositoryImpl(
     }
 
     /**
+     * 评论分页页(播放页评论列表弹窗):首页优先热评,后续页走最新评论;
+     * 返回 (条目, hasMore)。
+     */
+    suspend fun getSongCommentsPage(
+        songId: String,
+        limit: Int,
+        offset: Int,
+    ): Pair<List<NeteaseSongInfoEntity.HotComment>, Boolean>? {
+        val id = songId.toLongOrNull() ?: run {
+            com.maxrave.logger.Logger.w("NeteaseComments", "page: songId not numeric: '$songId'")
+            return null
+        }
+        val result = client.songComments(id, limit = limit, offset = offset)
+        val page =
+            result.getOrNull() ?: run {
+                com.maxrave.logger.Logger.w("NeteaseComments", "page fetch failed: ${result.exceptionOrNull()?.message}")
+                return null
+            }
+        val source = page.hotComments.ifEmpty { page.latestComments }
+        com.maxrave.logger.Logger.w("NeteaseComments", "page ok: ${source.size} items, hasMore=${page.hasMore}")
+        val items =
+            source.map {
+                NeteaseSongInfoEntity.HotComment(
+                    nickname = it.nickname,
+                    avatarUrl = it.avatarUrl,
+                    content = it.content,
+                    likedCount = it.likedCount,
+                    location = it.location,
+                )
+            }
+        val hasMore = page.hasMore || items.size >= limit
+        return items to hasMore
+    }
+
+    /**
      * 播放页网易详情卡:艺人(头像/粉丝)、专辑(发行日/简介)、评论(总数/热评)四个端点
      * 并行,各自独立降级——哪路失败哪路留空,整卡不因单路失败消失。
      */
@@ -922,6 +957,9 @@ class NeteaseRepositoryImpl(
                         Instant.fromEpochMilliseconds(ms).toLocalDateTime(TimeZone.UTC).date.toString()
                     },
                 albumDescription = album?.first?.description?.takeIf { it.isNotBlank() },
+                albumTrackCount = album?.first?.trackCount?.takeIf { it > 0 },
+                albumCompany = album?.first?.company,
+                artistBriefDesc = artist?.briefDesc?.takeIf { it.isNotBlank() },
                 commentCount = comments?.totalCount ?: 0,
                 hotComments =
                     comments?.hotComments

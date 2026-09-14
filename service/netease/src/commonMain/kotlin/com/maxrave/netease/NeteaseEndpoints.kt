@@ -1203,6 +1203,7 @@ internal fun JsonElement.toAlbum(): NeteaseAlbum {
         trackCount = obj["size"].nInt() ?: obj["trackCount"].nInt() ?: 0,
         publishTimeMs = obj["publishTime"].nLong(),
         description = obj.str("description"),
+        company = obj.str("company")?.takeIf { it.isNotBlank() },
     )
 }
 

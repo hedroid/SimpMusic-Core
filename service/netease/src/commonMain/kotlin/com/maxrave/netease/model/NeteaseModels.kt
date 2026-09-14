@@ -140,6 +140,8 @@ data class NeteaseAlbum(
     val trackCount: Int,
     val publishTimeMs: Long?,
     val description: String?,
+    /** 唱片公司(播放页详情卡发行信息行用) */
+    val company: String? = null,
 )
 
 /** DJ 电台(网易云专属能力,YTM 无对应入口) */
