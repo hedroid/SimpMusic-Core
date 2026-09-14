@@ -14,9 +14,12 @@ import com.maxrave.common.LOCAL_PLAYLIST_ID
 import com.maxrave.common.LOCAL_PLAYLIST_ID_SAVED_QUEUE
 import com.maxrave.common.MERGING_DATA_TYPE
 import com.maxrave.common.NETEASE_FM_PLAYLIST_ID
+import com.maxrave.common.NETEASE_RADIO_BATCH_SIZE
+import com.maxrave.common.NETEASE_RADIO_PLAYLIST_ID_PREFIX
 import com.maxrave.common.SPONSOR_BLOCK_MIN_SEGMENT_SECONDS
 import com.maxrave.common.SPONSOR_BLOCK_SKIP_MARGIN_MS
 import com.maxrave.common.TITLE
+import com.maxrave.common.songRadioPlaylistId
 import com.maxrave.data.db.Converters
 import com.maxrave.data.lastfm.LastfmScrobbler
 import com.maxrave.data.repository.NeteaseRepositoryImpl
@@ -1147,7 +1150,7 @@ class JvmMediaPlayerHandlerImpl(
                 .getRadioFromEndpoint(
                     YouTubeWatchEndpoint(
                         videoId = currentSong.videoId,
-                        playlistId = "RDAMVM${currentSong.videoId}",
+                        playlistId = songRadioPlaylistId(currentSong.videoId),
                     ),
                 ).collectLatest { res ->
                     val data = res.data
@@ -1157,7 +1160,7 @@ class JvmMediaPlayerHandlerImpl(
                                 QueueData.Data(
                                     listTracks = data.first,
                                     firstPlayedTrack = data.first.first(),
-                                    playlistId = "RDAMVM${currentSong.videoId}",
+                                    playlistId = songRadioPlaylistId(currentSong.videoId),
                                     playlistName = "\"${currentSong.title}\" Radio",
                                     playlistType = PlaylistType.RADIO,
                                     continuation = data.second,
@@ -1431,6 +1434,11 @@ class JvmMediaPlayerHandlerImpl(
         // 数字 videoId 进 getRelated 必失败,且 RDAMVM 前缀判等会误伤语义。
         if (playlistId == NETEASE_FM_PLAYLIST_ID) {
             getNeteaseFmBatch()
+            return
+        }
+        // 网易单曲电台(NETEASE_RADIO_<songId>):按 continuation 里的 item offset 续批 simiSong。
+        if (playlistId.startsWith(NETEASE_RADIO_PLAYLIST_ID_PREFIX)) {
+            getNeteaseRadioBatch()
             return
         }
         if (continuation != null) {
@@ -1767,6 +1775,81 @@ class JvmMediaPlayerHandlerImpl(
                 loadMoreCatalog(fresh.toCollection(arrayListOf()))
             } else {
                 Logger.w(TAG, "getNeteaseFmBatch: no fresh songs after retries, stop extending this round")
+                _queueData.update {
+                    it.copy(
+                        queueState = QueueData.StateSource.STATE_INITIALIZED,
+                        data = it.data.copy(continuation = null),
+                    )
+                }
+                reorderShuffledQueue(player.getCurrentMediaTimeLine())
+            }
+        }
+    }
+
+    /**
+     * 网易单曲电台续批：取 continuation 里的 item offset 拉一批 simiSong、按现有队列去重后
+     * 追加。返回不足一整批、或整批撞重复，都算服务端见底：清掉 continuation 收尾（电台播完
+     * 即止，不像 YT 电台那样再滑到 RDAMVM 关联续播——那边对数字 ID 同样无解）。
+     */
+    private fun getNeteaseRadioBatch() {
+        if (queueData.value.queueState == QueueData.StateSource.STATE_INITIALIZING) return
+        val songId =
+            queueData.value.data.playlistId
+                ?.removePrefix(NETEASE_RADIO_PLAYLIST_ID_PREFIX)
+                ?: return
+        coroutineScope.launch {
+            _queueData.update {
+                it.copy(queueState = QueueData.StateSource.STATE_INITIALIZING)
+            }
+            val repository = runCatching { getKoin().get<NeteaseRepositoryImpl>() }.getOrNull()
+            if (repository == null) {
+                Logger.w(TAG, "getNeteaseRadioBatch: repository unavailable")
+                _queueData.update {
+                    it.copy(
+                        queueState = QueueData.StateSource.STATE_INITIALIZED,
+                        data = it.data.copy(continuation = null),
+                    )
+                }
+                return@launch
+            }
+            val offset = queueData.value.data.continuation?.toIntOrNull()
+            if (offset == null) {
+                // 已收尾的电台再次触底：仅复位状态，不再发请求
+                _queueData.update {
+                    it.copy(queueState = QueueData.StateSource.STATE_INITIALIZED)
+                }
+                return@launch
+            }
+            var batch: List<Track> = emptyList()
+            // SERVICE_SCOPE 是 Dispatchers.Main,getSongRadio 是裸 suspend,必须自己切 IO
+            withContext(Dispatchers.IO) {
+                batch =
+                    repository
+                        .getSongRadio(songId, limit = NETEASE_RADIO_BATCH_SIZE, offset = offset)
+                        ?.songs
+                        ?.map { it.toTrack() }
+                        .orEmpty()
+            }
+            val existingIds = _queueData.value.data.listTracks.map { track -> track.videoId }.toSet()
+            val fresh = batch.filter { track -> track.videoId !in existingIds }
+            if (fresh.isNotEmpty()) {
+                loadMoreCatalog(fresh.toCollection(arrayListOf()))
+                // loadMoreCatalog 末尾已把状态复位为 INITIALIZED,这里只推进偏移
+                _queueData.update {
+                    it.copy(
+                        data =
+                            it.data.copy(
+                                continuation =
+                                    if (batch.size >= NETEASE_RADIO_BATCH_SIZE) {
+                                        (offset + batch.size).toString()
+                                    } else {
+                                        null
+                                    },
+                            ),
+                    )
+                }
+            } else {
+                Logger.w(TAG, "getNeteaseRadioBatch: exhausted at offset $offset, radio ends")
                 _queueData.update {
                     it.copy(
                         queueState = QueueData.StateSource.STATE_INITIALIZED,

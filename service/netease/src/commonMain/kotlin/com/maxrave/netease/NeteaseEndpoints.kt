@@ -1049,6 +1049,28 @@ suspend fun NeteaseClient.similarArtists(artistId: Long): Result<List<NeteaseArt
         } ?: emptyList()
     }
 
+/**
+ * 相似歌曲(weapi /v1/discovery/simiSong,单曲电台数据源):songs 为老形状(artists/album),
+ * toSong() 两代形状都解。返回条数 < limit 即服务端见底(电台收尾由调用方判定)。
+ */
+suspend fun NeteaseClient.similarSongs(
+    songId: Long,
+    limit: Int = 30,
+    offset: Int = 0,
+): Result<List<NeteaseSong>> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/v1/discovery/simiSong",
+                mapOf(
+                    "songid" to songId,
+                    "limit" to limit,
+                    "offset" to offset,
+                ),
+            )
+        body.array("songs")?.map { it.toSong() } ?: emptyList()
+    }
+
 /** 歌曲评论(weapi /v1/resource/comments/R_SO_4_{id}):热评 + 最新评论 + 总数 */
 suspend fun NeteaseClient.songComments(
     songId: Long,

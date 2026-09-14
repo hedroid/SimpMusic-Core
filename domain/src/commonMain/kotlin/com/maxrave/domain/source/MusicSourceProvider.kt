@@ -74,6 +74,13 @@ interface MusicSourceProvider {
     /** 私人FM(需登录);seed 传歌单则为心动模式 */
     suspend fun getPersonalRadio(seed: PlaylistEntity? = null): ProviderRadioSession? = null
 
+    /** 单曲电台:以某首歌为种子的相似歌(网易=simiSong 分页;YTM 走既有 RDAMVM 路径,不实现) */
+    suspend fun getSongRadio(
+        songId: String,
+        limit: Int = 30,
+        offset: Int = 0,
+    ): ProviderRadioSession? = null
+
     /** 红心一首歌(网易云=云村红心;YTM=addToLiked,由各自仓库承接) */
     suspend fun likeSong(
         songId: String,

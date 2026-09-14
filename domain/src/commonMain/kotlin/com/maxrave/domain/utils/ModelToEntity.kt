@@ -136,7 +136,9 @@ fun SongEntity.toTrack(): Track {
     val artistName = this.artistName
     if (artistName != null) {
         for (i in 0 until artistName.size) {
-            listArtist.add(Artist(this.artistId?.get(i) ?: "", artistName[i]))
+            // 两列表长度不保证一致:网易映射在艺人页打通前 artistId 恒为空表(artistName 非空),
+            // get(i) 会越界炸掉整个 toTrack;缺 id 给空串,与"无艺人信息"的既有歌一致
+            listArtist.add(Artist(this.artistId?.getOrNull(i) ?: "", artistName[i]))
         }
     }
     val isSong = (this.thumbnails?.contains("w544") == true && this.thumbnails?.contains("h544") == true)

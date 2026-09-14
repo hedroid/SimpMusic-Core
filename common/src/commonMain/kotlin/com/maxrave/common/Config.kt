@@ -655,6 +655,19 @@ const val TITLE = "TITLE"
 /** 网易私人FM 队列哨兵 ID：loadMore 见此 ID 即拉下一批 personalRadio 追加（批批连播） */
 const val NETEASE_FM_PLAYLIST_ID = "NETEASE_FM"
 
+/**
+ * 网易单曲电台 队列哨兵前缀：`NETEASE_RADIO_<songId>`。loadMore 见此前缀即按 continuation
+ * 里的 item offset 拉下一批 simiSong 相似歌续批。YT 电台沿用 RDAMVM 前缀，两者判等互不误伤。
+ */
+const val NETEASE_RADIO_PLAYLIST_ID_PREFIX = "NETEASE_RADIO_"
+
+/** 网易单曲电台每批拉取条数(simiSong limit)；返回不足此数即服务端见底，电台收尾 */
+const val NETEASE_RADIO_BATCH_SIZE = 30
+
+/** 单曲电台队列 ID 按源取形：网易纯数字 ID 挂网易哨兵前缀，其余一律 RDAMVM（YT 形状）。 */
+fun songRadioPlaylistId(videoId: String): String =
+    if (videoId.toLongOrNull() != null) "$NETEASE_RADIO_PLAYLIST_ID_PREFIX$videoId" else "RDAMVM$videoId"
+
 object MERGING_DATA_TYPE {
     const val SONG = "Song"
     const val VIDEO = "Video"

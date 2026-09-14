@@ -72,6 +72,7 @@ import com.maxrave.netease.model.NeteasePlaylist
 import com.maxrave.netease.model.NeteaseQuality
 import com.maxrave.netease.model.NeteaseSong
 import com.maxrave.netease.personalRadio
+import com.maxrave.netease.similarSongs
 import com.maxrave.netease.NeteaseLyricsConverter
 import com.maxrave.netease.searchAlbums
 import com.maxrave.netease.albumDetail
@@ -808,6 +809,17 @@ class NeteaseRepositoryImpl(
         client.personalRadio().getOrNull()?.let {
             ProviderRadioSession(songs = it.songs.map(NeteaseSong::toSongEntity))
         }
+
+    override suspend fun getSongRadio(
+        songId: String,
+        limit: Int,
+        offset: Int,
+    ): ProviderRadioSession? {
+        val id = songId.toLongOrNull() ?: return null
+        val songs =
+            client.similarSongs(id, limit = limit, offset = offset).getOrNull() ?: return null
+        return ProviderRadioSession(songs = songs.map(NeteaseSong::toSongEntity))
+    }
 
     override suspend fun likeSong(
         songId: String,

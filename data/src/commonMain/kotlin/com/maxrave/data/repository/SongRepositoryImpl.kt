@@ -1,6 +1,7 @@
 package com.maxrave.data.repository
 
 import com.maxrave.common.MERGING_DATA_TYPE
+import com.maxrave.common.NETEASE_RADIO_BATCH_SIZE
 import com.maxrave.data.db.datasource.LocalDataSource
 import com.maxrave.data.extension.getFullDataFromDB
 import com.maxrave.data.mapping.toListTrack
@@ -21,6 +22,7 @@ import com.maxrave.domain.repository.SongRepository
 import com.maxrave.domain.utils.MusicVideoType
 import com.maxrave.domain.utils.Resource
 import com.maxrave.domain.utils.isRadioQueueId
+import com.maxrave.domain.utils.toTrack
 import com.maxrave.kotlinytmusicscraper.YouTube
 import com.maxrave.kotlinytmusicscraper.models.SongItem
 import com.maxrave.kotlinytmusicscraper.models.WatchEndpoint
@@ -571,8 +573,48 @@ internal class SongRepositoryImpl(
             }
         }.flowOn(Dispatchers.IO)
 
+    /**
+     * Lazy for the same reason as [downloadHandler]. The netease repository lives in this same
+     * module; resolved via Koin to keep the constructor untouched (SongRepositoryImpl is wired in
+     * several DI graphs, and radio routing is an internal concern, not a new dependency edge).
+     */
+    private val neteaseRepository: NeteaseRepositoryImpl by lazy { getKoin().get() }
+
     override fun getRadioFromEndpoint(endpoint: YouTubeWatchEndpoint): Flow<Resource<Pair<List<Track>, String?>>> =
         flow {
+            // 网易单曲电台:数字 videoId 进 YT next() 必失败。种子歌取本地库行(三点菜单/播放
+            // 路径在开电台前都已落库),相似歌走 simiSong 首批;continuation 约定为"下一批
+            // item offset"的字符串,由 loadMore 的 NETEASE_RADIO_ 分支续批,null 即收尾。
+            val neteaseSeedId = endpoint.videoId?.takeIf { it.toLongOrNull() != null }
+            if (neteaseSeedId != null) {
+                runCatching {
+                    val seed = localDataSource.getSong(neteaseSeedId)?.toTrack()
+                    val similar =
+                        neteaseRepository
+                            .getSongRadio(neteaseSeedId, limit = NETEASE_RADIO_BATCH_SIZE, offset = 0)
+                            ?.songs
+                            .orEmpty()
+                            .filter { it.videoId != neteaseSeedId }
+                            .map { it.toTrack() }
+                    if (seed == null && similar.isEmpty()) {
+                        emit(Resource.Error("netease radio: no seed and no similar songs"))
+                    } else {
+                        emit(
+                            Resource.Success(
+                                Pair(
+                                    listOfNotNull(seed) + similar,
+                                    // 首批不足一个整批即已见底,不再挂 continuation
+                                    if (similar.size >= NETEASE_RADIO_BATCH_SIZE) similar.size.toString() else null,
+                                ),
+                            ),
+                        )
+                    }
+                }.onFailure {
+                    it.printStackTrace()
+                    emit(Resource.Error(it.message ?: "netease radio error"))
+                }
+                return@flow
+            }
             runCatching {
                 youTube
                     .next(endpoint.toWatchEndpoint())
