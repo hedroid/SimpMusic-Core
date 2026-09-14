@@ -269,8 +269,32 @@ internal class SongRepositoryImpl(
         likeStatus: Int,
     ) = withContext(Dispatchers.Main) {
         localDataSource.updateLiked(likeStatus, videoId)
-        // 网易歌:本地红心变化同步云村(like=1 红心/0 取消),未登录静默跳过、失败不回滚
-        // 本地状态——本地是第一事实源,云端只是跟进
+        // 云端跟进(单向 local→cloud):播放页只留一个红心,同步开关开着时本地赞/取消
+        // 自动推到对应账号;未登录或失败静默跳过、不回滚本地——本地是第一事实源。
+        // YT 歌走 combineLocalAndYouTubeLiked(合并本地与 YouTube 喜欢的歌曲),
+        // 网易歌走 neteaseLikeSync(红心同步到网易云),两开关语义对称。
+        if (dataStoreManager.cookie.first().isNotEmpty() &&
+            dataStoreManager.combineLocalAndYouTubeLiked.first() == TRUE &&
+            videoId.toLongOrNull() == null
+        ) {
+            try {
+                if (likeStatus == 1) {
+                    addToYouTubeLiked(videoId).collect { response ->
+                        if (response != 200) {
+                            Logger.w(TAG, "youtube like sync rejected for $videoId: $response")
+                        }
+                    }
+                } else {
+                    removeFromYouTubeLiked(videoId).collect { response ->
+                        if (response != 200) {
+                            Logger.w(TAG, "youtube unlike sync rejected for $videoId: $response")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Logger.w(TAG, "youtube like sync failed for $videoId: ${e.message}")
+            }
+        }
         if (videoId.toLongOrNull() != null &&
             neteaseRepository.isLoggedIn.first() &&
             dataStoreManager.neteaseLikeSync.first() == TRUE

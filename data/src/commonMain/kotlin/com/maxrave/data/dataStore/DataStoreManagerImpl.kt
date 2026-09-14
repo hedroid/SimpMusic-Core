@@ -1294,7 +1294,7 @@ internal class DataStoreManagerImpl(
 
     override val combineLocalAndYouTubeLiked: Flow<String> =
         settingsDataStore.data.map { preferences ->
-            preferences[COMBINE_LOCAL_AND_YOUTUBE_LIKED] ?: FALSE
+            preferences[COMBINE_LOCAL_AND_YOUTUBE_LIKED] ?: TRUE
         }
 
     override suspend fun setCombineLocalAndYouTubeLiked(combine: Boolean) {
