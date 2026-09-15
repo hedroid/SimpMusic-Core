@@ -948,7 +948,12 @@ class NeteaseRepositoryImpl(
             NeteaseSongInfoEntity(
                 artistId = aid?.toString(),
                 artistName = artist?.name,
-                artistAvatar = artist?.picUrl?.replaceFirst("http://", "https://"),
+                // head/info/get 的 avatar 是小尺寸头像,直接铺 973px 宽的艺人卡横幅会糊+裁切
+                // 感明显;网易 CDN 支持 ?param=WxH 服务端出大图
+                artistAvatar =
+                    artist?.picUrl
+                        ?.replaceFirst("http://", "https://")
+                        ?.let { if (it.contains('?')) it else "$it?param=1080y1080" },
                 artistFans = dynamic?.followerCount,
                 albumId = alid?.toString(),
                 albumName = album?.first?.name,
