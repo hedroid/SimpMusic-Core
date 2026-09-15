@@ -43,7 +43,17 @@
 - **私人雷达（3136952023 等）**：
   - `/v6/playlist/detail`（n=0）的 **trackIds 是 -10000 占位符**，拿去 songDetail 查不到歌；
   - **带 n 的 detail 响应直接内嵌完整 tracks**（NeriPlayer getPlaylistDetail 同款）；
-  - `/playlist/track/all` 对这类特殊歌单**间歇性返回空** → 必须 `track/all → 带 n detail` 双路兜底。
+  - `/playlist/track/all` 对这类特殊歌单**间歇性返回空** → 必须 `trackIds/songDetail → 带 n detail` 双路兜底。
+- **`/playlist/track/all` 已死（2026-09-15 复测）**：weapi 通道对所有歌单返回
+  `{"code":404,"message":"接口未找到！"}`（HTTP 200 包 404），不再可用。
+  歌单曲目获取一律走 **`/v6/playlist/detail`(n=0) 拿 trackIds → `/v3/song/detail` 按 500/批分片**；
+  songDetail 响应顺序与输入一致（探针实测），个别失效 id 缺席需按 slice 顺序回填。
+  歌单详情页滚动分页 = continuation 令牌 `NETEASE_PL_PAGE_{offset}`（core/common Config），
+  经共享 PlaylistViewModel 的 getContinueTrack 契约续拉（SongRepositoryImpl 顶部前缀路由分支）。
+- **`/v6/playlist/detail` 的 trackIds 条目形状 = `{"id":<歌曲id>,"v":<版本号>,...}`**：
+  歌曲在 `id` 字段，`v` 是版本号（1/5/7 这类小数字）。2026-09-15 修正前解析误读 `v`
+  ——拿到的是版本号，雷达"trackIds=-10000 占位"的老结论其实也混有此解析 bug 的成分。
+  修正后 id 优先、v 回退（老形状兼容）。
 - **精品歌单 `/playlist/highquality/list`**：游标分页（`lasttime`/`more`），不是 offset；
   每页上限 50。普通分类歌单 `/playlist/list` 才是 offset + order(hot/new)。
 - **相似歌单**：无 JSON 接口，抓 `music.163.com/playlist?id=` 页面 HTML 正则解析

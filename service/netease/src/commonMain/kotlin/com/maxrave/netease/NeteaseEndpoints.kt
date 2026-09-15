@@ -482,9 +482,16 @@ suspend fun NeteaseClient.playlistDetail(playlistId: Long): Result<Pair<NeteaseP
                 ),
             )
         val pl = body.obj("playlist") ?: error("playlist $playlistId not found")
+        // 条目形状 {"id":<歌曲id>,"v":<版本号>,...}:歌曲 id 在 id 字段,v 是版本号。
+        // (2026-09-15 修正:此前误读 v,拿到的是 1/5/7 这类版本号,雷达歌单的 -10000
+        //  占位其实也是这个解析在特殊形状下的表现。)
         val trackIds =
             pl.array("trackIds")?.mapNotNull { item ->
-                (item as? JsonObject)?.get("v").nLong() ?: (item as? JsonPrimitive).nLong()
+                (item as? JsonObject)
+                    ?.get("id")
+                    ?.nLong()
+                    ?: (item as? JsonObject)?.get("v")?.nLong()
+                    ?: (item as? JsonPrimitive).nLong()
             } ?: emptyList()
         pl.toPlaylist() to trackIds
     }

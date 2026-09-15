@@ -1,6 +1,7 @@
 package com.maxrave.data.repository
 
 import com.maxrave.common.MERGING_DATA_TYPE
+import com.maxrave.common.NETEASE_PLAYLIST_PAGE_PREFIX
 import com.maxrave.common.NETEASE_RADIO_BATCH_SIZE
 import com.maxrave.data.db.datasource.LocalDataSource
 import com.maxrave.data.extension.getFullDataFromDB
@@ -411,7 +412,28 @@ internal class SongRepositoryImpl(
                 var newContinuation: String? = null
                 Logger.d(TAG, "getContinueTrack -> playlistId: $playlistId")
                 Logger.d(TAG, "getContinueTrack -> continuation: $continuation")
-                if (!fromPlaylist) {
+                if (fromPlaylist && continuation.startsWith(NETEASE_PLAYLIST_PAGE_PREFIX)) {
+                    // 网易歌单滚动分页:令牌 = NETEASE_PL_PAGE_{offset},续拉一页
+                    // (playlistDetail 拿 trackIds → songDetail 分片,详见 NeteaseRepositoryImpl)。
+                    // 令牌/歌单 ID 解析失败或请求失败都按分页结束处理(与 YT 分支的
+                    // onFailure 同语义),页面停在已加载内容上不重试。
+                    val offset = continuation.removePrefix(NETEASE_PLAYLIST_PAGE_PREFIX).toIntOrNull()
+                    val id = playlistId.toLongOrNull()
+                    if (offset == null || id == null) {
+                        emit(Pair(null, null))
+                    } else {
+                        neteaseRepository
+                            .getPlaylistTracksPage(id, offset)
+                            .onSuccess { (songs, nextOffset) ->
+                                val nextToken = nextOffset?.let { "$NETEASE_PLAYLIST_PAGE_PREFIX$it" }
+                                Logger.d(TAG, "netease playlist page: offset=$offset got=${songs.size} next=$nextToken")
+                                emit(Pair(ArrayList(songs.map { it.toTrackPlaylist() }), nextToken))
+                            }.onFailure {
+                                Logger.e(TAG, "netease playlist page failed: ${it.message}")
+                                emit(Pair(null, null))
+                            }
+                    }
+                } else if (!fromPlaylist) {
                     youTube
                         .next(
                             if (playlistId.startsWith("RRDAMVM")) {

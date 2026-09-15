@@ -668,6 +668,16 @@ const val NETEASE_RADIO_BATCH_SIZE = 30
 fun songRadioPlaylistId(videoId: String): String =
     if (videoId.toLongOrNull() != null) "$NETEASE_RADIO_PLAYLIST_ID_PREFIX$videoId" else "RDAMVM$videoId"
 
+/**
+ * 网易歌单详情滚动分页:continuation 令牌 = 前缀 + 下一页 offset（如 NETEASE_PL_PAGE_500）。
+ * 走共享 PlaylistViewModel 的 continuation 契约（getPlaylistData 返回令牌、
+ * getContinueTrack 增量拉取）；null 即分页结束。YT 分支永远不会收到该前缀。
+ */
+const val NETEASE_PLAYLIST_PAGE_PREFIX = "NETEASE_PL_PAGE_"
+
+/** 网易歌单每页曲目数（playlistDetail 拿 trackIds 后 songDetail 分片的批大小） */
+const val NETEASE_PLAYLIST_PAGE_SIZE = 500
+
 object MERGING_DATA_TYPE {
     const val SONG = "Song"
     const val VIDEO = "Video"

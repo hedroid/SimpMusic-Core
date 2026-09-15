@@ -5,6 +5,8 @@ import com.maxrave.domain.data.entities.NeteaseAccountEntity
 import com.maxrave.domain.data.entities.NeteaseSongInfoEntity
 import com.maxrave.domain.data.entities.PlaylistEntity
 import com.maxrave.domain.data.entities.SongEntity
+import com.maxrave.common.NETEASE_PLAYLIST_PAGE_PREFIX
+import com.maxrave.common.NETEASE_PLAYLIST_PAGE_SIZE
 import com.maxrave.domain.data.model.home.Content
 import com.maxrave.domain.data.model.home.HomeItem
 import com.maxrave.domain.data.model.home.chart.Artists
@@ -734,17 +736,36 @@ class NeteaseRepositoryImpl(
     /**
      * 歌单详情数据(数字 id=网易歌单),映射进 YT PlaylistBrowse 形状 ——
      * PlaylistScreen/PlaylistViewModel 零改动,数据源切换对页面透明。
-     * 曲目:track/all 优先(普通歌单稳定),空则带 n 的 detail 兜底(雷达类特殊歌单)。
+     * 曲目分页:trackIds 真实可用时 **trackIds → songDetail 分片**(首页 [NETEASE_PLAYLIST_PAGE_SIZE] 首,
+     * 滚动经 NETEASE_PL_PAGE_{offset} 令牌续拉,任意大小歌单都吃得下;track/all 端点
+     * 2026-09-15 复测已 404,不再依赖);trackIds 不可用(雷达类特殊形状)→ 带 n 的
+     * detail 直取一次全量,无分页。
      */
     suspend fun getPlaylistBrowseData(playlistId: String): Result<Pair<com.maxrave.domain.data.model.browse.playlist.PlaylistBrowse, String?>> =
         runCatching {
             val id = playlistId.toLongOrNull() ?: error("netease playlistId 非数字: $playlistId")
             val (meta, trackIds) =
                 client.playlistDetail(id).getOrNull() ?: error("歌单不存在: $playlistId")
+            val firstPage =
+                if (trackIds.isNotEmpty()) {
+                    client.songDetail(trackIds.take(NETEASE_PLAYLIST_PAGE_SIZE)).getOrDefault(emptyList())
+                } else {
+                    emptyList()
+                }
+            // trackIds 路径失败(全空)才走带 n 的 detail 兜底(雷达类,一次给全)
             val tracks =
-                client.playlistTracks(id, limit = 500).getOrNull()?.takeIf { it.isNotEmpty() }
-                    ?: client.playlistTracksViaDetail(id, limit = 500).getOrNull().orEmpty()
+                firstPage.ifEmpty {
+                    client.playlistTracksViaDetail(id, limit = NETEASE_PLAYLIST_PAGE_SIZE).getOrNull().orEmpty()
+                }
             if (tracks.isEmpty() && trackIds.isEmpty()) error("歌单曲目为空: $playlistId")
+            // 令牌 = 下一页 offset。trackIds.size 是权威总数(探针实测 songDetail 响应
+            // 顺序与输入一致,个别失效 id 缺席不影响 offset 推进)。
+            val continuation =
+                if (firstPage.isNotEmpty() && trackIds.size > NETEASE_PLAYLIST_PAGE_SIZE) {
+                    "$NETEASE_PLAYLIST_PAGE_PREFIX$NETEASE_PLAYLIST_PAGE_SIZE"
+                } else {
+                    null
+                }
             val browse =
                 com.maxrave.domain.data.model.browse.playlist.PlaylistBrowse(
                     author =
@@ -764,7 +785,27 @@ class NeteaseRepositoryImpl(
                     // 年份取歌单创建年份(YT 歌单页同位置语义)
                     year = meta.createTimeMs?.let { (it / 31_536_000_000L + 1970).toString() } ?: "",
                 )
-            browse to null // 一次性返回全部曲目,无 continuation
+            browse to continuation
+        }
+
+    /**
+     * 网易歌单分页续拉(getContinueTrack 的 NETEASE_PL_PAGE_{offset} 令牌落地):
+     * 重取 playlistDetail(n=0,只回 id 列表,轻)拿权威 trackIds,按 offset 切片 songDetail。
+     * 返回 (本页歌曲, 下页 offset);切到末尾即 null。
+     */
+    suspend fun getPlaylistTracksPage(
+        playlistId: Long,
+        offset: Int,
+    ): Result<Pair<List<NeteaseSong>, Int?>> =
+        runCatching {
+            val (_, trackIds) = client.playlistDetail(playlistId).getOrThrow()
+            require(trackIds.isNotEmpty()) { "trackIds 不可用: $playlistId" }
+            val slice = trackIds.drop(offset).take(NETEASE_PLAYLIST_PAGE_SIZE)
+            // songDetail 响应顺序与输入一致,但失效 id 会缺席——按 slice 顺序回填防乱序
+            val byId = client.songDetail(slice).getOrThrow().associateBy { it.id }
+            val ordered = slice.mapNotNull { byId[it] }
+            val nextOffset = if (offset + slice.size < trackIds.size) offset + slice.size else null
+            ordered to nextOffset
         }
 
     /** 图表区块:网易排行榜映射进 YT Chart 形状(榜单卡点击进歌单;地区下拉对网易隐藏 → countries=null);
