@@ -232,6 +232,11 @@ interface DataStoreManager {
 
     suspend fun setNeteaseLikeSync(enabled: Boolean)
 
+    /** 播放数据是否上报网易云(默认开,仅网易歌,需登录) */
+    val neteasePlayReport: Flow<String>
+
+    suspend fun setNeteasePlayReport(enabled: Boolean)
+
     /**
      * Whether following an artist in the app also subscribes to their YouTube channel.
      *

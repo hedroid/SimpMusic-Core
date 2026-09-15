@@ -2857,10 +2857,31 @@ internal class MediaServiceHandlerImpl(
     ) {
         coroutineScope.launch {
             val trackingEnabled = dataStoreManager.localTrackingEnabled.first() == TRUE
+            val percent = (currentPositionMillis / (song.durationSeconds * 1000f))
+            // 网易播放上报:与本地统计同阈值(听满 20%),但不依赖 localTrackingEnabled——
+            // 云端推荐数据,开关独立(neteasePlayReport);repo 懒取同 getNeteaseFmBatch,
+            // 未注册/未登录/失败一律静默跳过
+            if (percent >= 0.2f && song.videoId.toLongOrNull() != null &&
+                dataStoreManager.neteasePlayReport.first() == TRUE
+            ) {
+                runCatching { getKoin().get<NeteaseRepositoryImpl>() }.getOrNull()
+                    ?.takeIf { it.isLoggedIn.first() }
+                    ?.let { repo ->
+                        try {
+                            val reported =
+                                repo.scrobble(
+                                    songId = song.videoId,
+                                    timeMs = if (percent >= 0.8f) song.durationSeconds * 1000L else currentPositionMillis,
+                                ).getOrDefault(false)
+                            if (!reported) Logger.w(TAG, "netease scrobble rejected for ${song.videoId}")
+                        } catch (e: Exception) {
+                            Logger.w(TAG, "netease scrobble failed for ${song.videoId}: ${e.message}")
+                        }
+                    }
+            }
             if (!trackingEnabled) {
                 return@launch
             }
-            val percent = (currentPositionMillis / (song.durationSeconds * 1000f))
             Logger.w(TAG, "${song.title} - $currentPositionMillis ms listened, duration: ${song.durationSeconds * 1000} ms, percent: $percent")
             if (percent < 0.2f) {
                 Logger.d(TAG, "Not enough listening time for ${song.title}, skipping tracking")

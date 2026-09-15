@@ -36,7 +36,9 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.longOrNull
 
 // 固定歌单 ID(NeriPlayer 验证):雷达系列每日更新、官方榜单
@@ -1069,6 +1071,37 @@ suspend fun NeteaseClient.similarSongs(
                 ),
             )
         body.array("songs")?.map { it.toSong() } ?: emptyList()
+    }
+
+/** 播放上报(NCA scrobble 同款:weapi /feedback/weblog 的 play/playend 日志)。
+ *  喂网易推荐引擎/播放量/年度报告;time 为收听毫秒,sourceId 可空。 */
+suspend fun NeteaseClient.scrobble(
+    songId: Long,
+    timeMs: Long,
+    sourceId: String? = null,
+): Result<Boolean> =
+    runCatching {
+        val log =
+            buildJsonObject {
+                put("action", "play")
+                put(
+                    "json",
+                    buildJsonObject {
+                        put("download", 0)
+                        put("end", "playend")
+                        put("id", songId)
+                        put("sourceId", sourceId ?: "")
+                        put("time", timeMs)
+                        put("type", "song")
+                    }.toString(),
+                )
+            }.toString()
+        val body =
+            callWeApi(
+                "/feedback/weblog",
+                mapOf("logs" to "[$log]"),
+            )
+        (body["code"] as? JsonPrimitive)?.contentOrNull == "200"
     }
 
 /** 歌曲评论(weapi /v1/resource/comments/R_SO_4_{id}):热评 + 最新评论 + 总数 */

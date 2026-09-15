@@ -74,6 +74,7 @@ import com.maxrave.netease.model.NeteaseQuality
 import com.maxrave.netease.model.NeteaseSong
 import com.maxrave.netease.personalRadio
 import com.maxrave.netease.similarSongs
+import com.maxrave.netease.scrobble
 import com.maxrave.netease.songComments
 import com.maxrave.netease.NeteaseLyricsConverter
 import com.maxrave.netease.searchAlbums
@@ -872,6 +873,15 @@ class NeteaseRepositoryImpl(
     suspend fun isSongLiked(songId: String): Boolean? {
         val id = songId.toLongOrNull() ?: return null
         return likedIdsOrNull()?.contains(id)
+    }
+
+    /** 播放上报(切歌时听满阈值才调):喂推荐引擎/播放量,未登录由调用方拦住 */
+    suspend fun scrobble(
+        songId: String,
+        timeMs: Long,
+    ): Result<Boolean> {
+        val id = songId.toLongOrNull() ?: return Result.success(false)
+        return client.scrobble(id, timeMs)
     }
 
     /** 切换云村红心,成功后同步缓存,让下一次切歌回来的状态立刻正确 */

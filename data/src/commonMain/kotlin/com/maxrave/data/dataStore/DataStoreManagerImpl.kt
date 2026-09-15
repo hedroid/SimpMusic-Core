@@ -711,6 +711,19 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    override val neteasePlayReport =
+        settingsDataStore.data.map { preferences ->
+            preferences[NETEASE_PLAY_REPORT] ?: TRUE
+        }
+
+    override suspend fun setNeteasePlayReport(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[NETEASE_PLAY_REPORT] = if (enabled) TRUE else FALSE
+            }
+        }
+    }
+
     override val equalizerEnabled: Flow<String> =
         settingsDataStore.data.map { preferences ->
             preferences[EQUALIZER_ENABLED] ?: FALSE
@@ -1965,6 +1978,7 @@ internal class DataStoreManagerImpl(
         val NETEASE_FOLLOW_SYNC = stringPreferencesKey("netease_follow_sync")
         val NETEASE_AUTO_SWITCH = stringPreferencesKey("netease_auto_switch")
         val NETEASE_LIKE_SYNC = stringPreferencesKey("netease_like_sync")
+        val NETEASE_PLAY_REPORT = stringPreferencesKey("netease_play_report")
         val SPOTIFY_LYRICS = stringPreferencesKey("spotify_lyrics")
         val SYNC_FOLLOW_TO_YOUTUBE = stringPreferencesKey("sync_follow_to_youtube")
         val EQUALIZER_AUTOEQ_PROFILE = stringPreferencesKey("equalizer_autoeq_profile")
