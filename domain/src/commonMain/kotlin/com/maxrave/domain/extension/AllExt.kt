@@ -69,7 +69,12 @@ fun GenericMediaItem.toSongEntity(): SongEntity =
     )
 
 fun SongEntity.toGenericMediaItem(): GenericMediaItem {
-    val isSong = (this.thumbnails?.contains("w544") == true && this.thumbnails.contains("h544"))
+    // w544-h544 是 YT 封面 URL 的尺寸参数启发式;网易封面 URL(p*.music.126.net)不带它,
+    // 电台/FM 等 SongEntity→mediaItem 直建路径的网易歌会被误判成视频——封面按 16:9
+    // 渲染不再是正方形。数字 videoId 一律是音频。
+    val isSong =
+        (this.thumbnails?.contains("w544") == true && this.thumbnails.contains("h544")) ||
+            this.videoId.toLongOrNull() != null
     return GenericMediaItem(
         mediaId = this.videoId,
         uri = this.videoId,
