@@ -800,7 +800,10 @@ class NeteaseRepositoryImpl(
     override suspend fun getLibraryPlaylists(): Result<List<PlaylistEntity>> {
         val account = client.getAccountStatus().getOrNull() ?: return Result.success(emptyList())
         if (account == null || account.userId == 0L) return Result.success(emptyList())
-        return client.userPlaylists(account.userId).map { list -> list.map { it.toPlaylistEntity() } }
+        return client.userPlaylists(account.userId).map { list ->
+            // 红心歌单固定首位:userPlaylists 已标 specialType=FAVORITE,稳定排序兜底服务端乱序
+            list.sortedBy { it.specialType != NeteasePlaylist.SpecialType.FAVORITE }.map { it.toPlaylistEntity() }
+        }
     }
 
     override suspend fun getPlaylistSongs(playlistId: String): Result<List<SongEntity>> {

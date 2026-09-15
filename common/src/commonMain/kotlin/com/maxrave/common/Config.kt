@@ -678,6 +678,7 @@ enum class LibraryChipType {
     WRAPPED,
     CHART,
     YOUTUBE_MUSIC_PLAYLIST,
+    NETEASE_PLAYLIST,
     YOUTUBE_MIX_FOR_YOU,
     LOCAL_PLAYLIST,
     FAVORITE_PLAYLIST,
@@ -689,6 +690,7 @@ enum class LibraryChipType {
         when (this) {
             YOUR_LIBRARY -> "your_library"
             YOUTUBE_MUSIC_PLAYLIST -> "youtube_music_playlist"
+            NETEASE_PLAYLIST -> "netease_playlist"
             YOUTUBE_MIX_FOR_YOU -> "youtube_mix_for_you"
             LOCAL_PLAYLIST -> "local_playlist"
             FAVORITE_PLAYLIST -> "favorite_playlist"
@@ -703,6 +705,7 @@ enum class LibraryChipType {
             when (value) {
                 "your_library" -> YOUR_LIBRARY
                 "youtube_music_playlist" -> YOUTUBE_MUSIC_PLAYLIST
+                "netease_playlist" -> NETEASE_PLAYLIST
                 "youtube_mix_for_you" -> YOUTUBE_MIX_FOR_YOU
                 "local_playlist" -> LOCAL_PLAYLIST
                 "favorite_playlist" -> FAVORITE_PLAYLIST
