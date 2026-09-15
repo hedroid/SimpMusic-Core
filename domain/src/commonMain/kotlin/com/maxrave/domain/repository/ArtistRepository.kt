@@ -37,6 +37,15 @@ interface ArtistRepository {
     ): Boolean?
 
     /**
+     * 只写本地关注位,不镜像任何账号。浏览艺人页时把服务端关注态落库用——
+     * 走 [updateFollowedStatus] 会对网易歌手再发一次 /artist/sub、对 YT 走镜像逻辑。
+     */
+    suspend fun setFollowedLocal(
+        channelId: String,
+        followed: Boolean,
+    )
+
+    /**
      * Subscribes to every artist already followed locally.
      *
      * Turning the setting on is a statement about the whole library, not about the next artist

@@ -871,6 +871,58 @@ suspend fun NeteaseClient.addToPlaylist(
         (body["code"] as? JsonPrimitive)?.content == "200"
     }
 
+/** 从自己的歌单移除歌曲(同 manipulate op=del;只能操作自己创建的歌单) */
+suspend fun NeteaseClient.removeFromPlaylist(
+    playlistId: Long,
+    songIds: List<Long>,
+): Result<Boolean> =
+    runCatching {
+        require(playlistId > 0L) { "playlistId must be positive" }
+        val ids = songIds.filter { it > 0L }.distinct()
+        require(ids.isNotEmpty()) { "songIds must contain a positive id" }
+        val body =
+            callWeApi(
+                "/playlist/manipulate/tracks",
+                mapOf(
+                    "op" to "del",
+                    "pid" to playlistId,
+                    "id" to playlistId,
+                    "tracks" to ids.joinToString(","),
+                    "trackIds" to ids.joinToString(",", prefix = "[", postfix = "]"),
+                    "imme" to "true",
+                ),
+            )
+        (body["code"] as? JsonPrimitive)?.content == "200"
+    }
+
+/** 收藏/取消收藏歌单(weapi /playlist/subscribe,t=1 收藏 t=0 取消) */
+suspend fun NeteaseClient.subscribePlaylist(
+    playlistId: Long,
+    subscribe: Boolean,
+): Result<Boolean> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/playlist/subscribe",
+                mapOf("id" to playlistId, "t" to if (subscribe) 1 else 0),
+            )
+        (body["code"] as? JsonPrimitive)?.content == "200"
+    }
+
+/** 收藏/取消收藏专辑(weapi /album/sub,t=1 收藏 t=0 取消) */
+suspend fun NeteaseClient.subscribeAlbum(
+    albumId: Long,
+    subscribe: Boolean,
+): Result<Boolean> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/album/sub",
+                mapOf("id" to albumId, "t" to if (subscribe) 1 else 0),
+            )
+        (body["code"] as? JsonPrimitive)?.content == "200"
+    }
+
 // ----------------------------------------------------------------------------
 // 网易云专属浏览能力(YTM 无对应入口):相似歌单、高质量分类标签、DJ 电台
 // ----------------------------------------------------------------------------

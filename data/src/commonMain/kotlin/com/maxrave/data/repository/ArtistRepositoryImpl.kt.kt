@@ -68,6 +68,14 @@ internal class ArtistRepositoryImpl(
      * tracking row survived every unfollow — and once the unfollowed `artist` row is itself swept by
      * `SongRepository.clearHistoryAndOrphanedSongs`, they have nothing left to point back at.
      */
+    /** 只写本地关注位(浏览艺人页把服务端关注态落库),不镜像任何账号 */
+    override suspend fun setFollowedLocal(
+        channelId: String,
+        followed: Boolean,
+    ) = withContext(Dispatchers.IO) {
+        localDataSource.updateFollowed(if (followed) 1 else 0, channelId)
+    }
+
     override suspend fun updateFollowedStatus(
         channelId: String,
         followedStatus: Int,

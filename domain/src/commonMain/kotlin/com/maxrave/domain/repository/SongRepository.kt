@@ -83,6 +83,15 @@ interface SongRepository {
         likeStatus: Int,
     )
 
+    /**
+     * 只写本地红心,不推任何账号。播放页把云端红心合并进显示时回填本地行用——
+     * 走 [updateLikeStatus] 会把"采纳云端状态"误当作用户点赞推回云端。
+     */
+    suspend fun setLikedLocal(
+        videoId: String,
+        likeStatus: Int,
+    )
+
     fun updateSongInLibrary(
         inLibrary: LocalDateTime,
         videoId: String,

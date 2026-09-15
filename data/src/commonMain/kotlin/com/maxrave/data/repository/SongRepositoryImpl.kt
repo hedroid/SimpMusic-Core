@@ -495,6 +495,11 @@ internal class SongRepositoryImpl(
             }
         }.flowOn(Dispatchers.IO)
 
+    override suspend fun setLikedLocal(
+        videoId: String,
+        likeStatus: Int,
+    ) = withContext(Dispatchers.IO) { localDataSource.updateLiked(likeStatus, videoId) }
+
     override fun getSongInfo(videoId: String): Flow<SongInfoEntity?> =
         flow {
             runCatching {

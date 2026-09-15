@@ -100,6 +100,9 @@ import com.maxrave.netease.playlistTracks
 import com.maxrave.netease.playlistTracksViaDetail
 import com.maxrave.netease.songDetail
 import com.maxrave.netease.userLikedSongIds
+import com.maxrave.netease.removeFromPlaylist
+import com.maxrave.netease.subscribeAlbum
+import com.maxrave.netease.subscribePlaylist
 import com.maxrave.netease.radarPlaylists
 import com.maxrave.netease.searchArtists
 import com.maxrave.netease.searchHot
@@ -838,14 +841,66 @@ class NeteaseRepositoryImpl(
             }
         }
 
+    /** 最近一次 getLibraryPlaylists 的 歌单id→创建者id 映射(判定自建/收藏歌单的依据) */
+    @Volatile private var libraryCreatorIds: Map<Long, Long?> = emptyMap()
+
     override suspend fun getLibraryPlaylists(): Result<List<PlaylistEntity>> {
         val account = client.getAccountStatus().getOrNull() ?: return Result.success(emptyList())
         if (account == null || account.userId == 0L) return Result.success(emptyList())
         return client.userPlaylists(account.userId).map { list ->
             // 红心歌单固定首位:userPlaylists 已标 specialType=FAVORITE,稳定排序兜底服务端乱序
+            libraryCreatorIds = list.associate { it.id to it.creatorId }
             list.sortedBy { it.specialType != NeteasePlaylist.SpecialType.FAVORITE }.map { it.toPlaylistEntity() }
         }
     }
+
+    /**
+     * 该网易歌单是否当前账号自建(creatorId==uid)。依赖 [getLibraryPlaylists] 留下的
+     * 创建者缓存;未知歌单 fail-closed 返回 false(收藏入口/移除歌曲等敏感操作不露出)。
+     */
+    suspend fun isOwnNeteasePlaylist(playlistId: String): Boolean {
+        val id = playlistId.toLongOrNull() ?: return false
+        val uid = client.getAccountStatus().getOrNull()?.userId ?: return false
+        if (uid == 0L) return false
+        return libraryCreatorIds[id] == uid
+    }
+
+    /** 自建网易歌单 ID 集(库页长按菜单:仅收藏歌单露出"取消收藏") */
+    suspend fun getOwnNeteasePlaylistIds(): Set<String> {
+        val uid = client.getAccountStatus().getOrNull()?.userId ?: return emptySet()
+        if (uid == 0L) return emptySet()
+        return libraryCreatorIds.filterValues { it == uid }.keys.map { it.toString() }.toSet()
+    }
+
+    /** 收藏/取消收藏网易歌单(/playlist/subscribe);取消后本地最近添加里的行由调用方处理 */
+    suspend fun subscribeNeteasePlaylist(
+        playlistId: String,
+        subscribe: Boolean,
+    ): Result<Boolean> =
+        playlistId.toLongOrNull()
+            ?.let { client.subscribePlaylist(it, subscribe) }
+            ?: Result.failure(IllegalArgumentException("netease playlistId 非数字: $playlistId"))
+
+    /** 收藏/取消收藏网易专辑(/album/sub) */
+    suspend fun subscribeNeteaseAlbum(
+        albumId: String,
+        subscribe: Boolean,
+    ): Result<Boolean> =
+        albumId.toLongOrNull()
+            ?.let { client.subscribeAlbum(it, subscribe) }
+            ?: Result.failure(IllegalArgumentException("netease albumId 非数字: $albumId"))
+
+    /** 从自己的网易歌单移除歌曲(manipulate op=del);仅自建歌单可用,服务端对他人歌单返回错误码 */
+    suspend fun removeTracksFromNeteasePlaylist(
+        playlistId: String,
+        songIds: List<String>,
+    ): Result<Boolean> =
+        runCatching {
+            val pid = playlistId.toLongOrNull() ?: error("netease playlistId 非数字: $playlistId")
+            val ids = songIds.mapNotNull { it.toLongOrNull() }
+            require(ids.isNotEmpty()) { "songIds 为空" }
+            client.removeFromPlaylist(pid, ids).getOrThrow()
+        }
 
     override suspend fun getPlaylistSongs(playlistId: String): Result<List<SongEntity>> {
         val id = playlistId.toLongOrNull() ?: return Result.failure(IllegalArgumentException("netease playlistId 非数字: $playlistId"))
@@ -897,20 +952,24 @@ class NeteaseRepositoryImpl(
      * 或首拉失败,调用方按"未登录"处理(隐藏按钮)。
      */
     private val likedIdsMutex = Mutex()
-    private var likedSongIds: Set<Long>? = null
+    private var likedSongIds: Pair<Set<Long>, kotlin.time.TimeMark>? = null
 
+    /**
+     * 云村红心 ID 全量,10min TTL + Mutex 单飞:会话内切歌零请求,跨会话/超时回刷,
+     * 网易 App 里改的红心几分钟能回流(此前会话级缓存永不回刷)。数据源
+     * /song/like/get 全量 ids(一次请求,比"红心歌单→playlistDetail"链路轻)。
+     * null = 未登录/拉取失败,调用方保持本地状态。
+     */
     private suspend fun likedIdsOrNull(): Set<Long>? {
-        likedSongIds?.let { return it }
-        val account = client.getAccountStatus().getOrNull() ?: return null
-        if (account == null || account.userId == 0L) return null
-        val favId =
-            client.userPlaylists(account.userId).getOrNull()
-                ?.firstOrNull { it.specialType == NeteasePlaylist.SpecialType.FAVORITE }?.id
-                ?: return null
-        val ids = client.playlistDetail(favId).getOrNull()?.second ?: return null
-        val set = ids.toHashSet()
-        likedIdsMutex.withLock { likedSongIds = set }
-        return set
+        likedSongIds?.let { (ids, at) -> if (at.elapsedNow() < 10.minutes) return ids }
+        return likedIdsMutex.withLock {
+            likedSongIds?.let { (ids, at) -> if (at.elapsedNow() < 10.minutes) return ids }
+            val account = client.getAccountStatus().getOrNull() ?: return null
+            if (account.userId == 0L) return null
+            val ids = client.userLikedSongIds(account.userId).getOrNull() ?: return null
+            likedSongIds = ids.toSet() to TimeSource.Monotonic.markNow()
+            ids.toSet()
+        }
     }
 
     /** 云村红心状态;null = 无账号/拉取失败(按钮隐藏),非 null = 歌在不在红心歌单 */
@@ -937,7 +996,10 @@ class NeteaseRepositoryImpl(
         val id = songId.toLongOrNull()
         if (result.isSuccess && id != null) {
             likedIdsMutex.withLock {
-                likedSongIds = (likedSongIds ?: emptySet()).let { if (like) it + id else it - id }
+                // 只改集合保留时间戳:刚拉过的缓存继续按原 TTL 过期
+                likedSongIds?.let { (ids, at) ->
+                    likedSongIds = (if (like) ids + id else ids - id) to at
+                }
             }
         }
         return result
@@ -1507,7 +1569,8 @@ internal fun NeteasePlaylist.toPlaylistEntity(): PlaylistEntity =
     PlaylistEntity(
         id = id.toString(),
         source = MusicSource.NETEASE.name,
-        author = null,
+        // 创建者昵称:库页 tile 副标题显示"创建者"而不是占位"歌单",也方便肉眼区分自建/收藏
+        author = creatorNickname,
         description = description.orEmpty(),
         duration = "",
         durationSeconds = 0,
