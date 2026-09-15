@@ -34,6 +34,7 @@ import com.maxrave.domain.data.model.browse.album.Track
 import com.maxrave.domain.data.model.mediaService.SponsorSkipSegments
 import com.maxrave.domain.data.model.searchResult.songs.Artist
 import com.maxrave.domain.data.model.streams.YouTubeWatchEndpoint
+import com.maxrave.domain.source.MusicSource
 import com.maxrave.domain.data.player.AudioEffects
 import com.maxrave.domain.data.player.DelayEffect
 import com.maxrave.domain.data.player.GenericCastState
@@ -2610,6 +2611,14 @@ internal class MediaServiceHandlerImpl(
             if (dataStoreManager.saveRecentSongAndQueue.first() == TRUE) {
                 val currentPlayingTrack = songRepository.getSongById(dataStoreManager.recentMediaId.first()).lastOrNull()?.toTrack()
                 if (currentPlayingTrack != null) {
+                    // Cross-source backstop: the saved playback state must belong to the
+                    // currently selected source. A normal switch clears it (switchSource),
+                    // this only catches leftovers older than that fix.
+                    val savedIsNetease = currentPlayingTrack.videoId.toLongOrNull() != null
+                    if (savedIsNetease != (dataStoreManager.selectedSource.first() == MusicSource.NETEASE.name)) {
+                        Logger.w(TAG, "Skip queue restore: saved track ${currentPlayingTrack.videoId} is from the other music source")
+                        return@launch
+                    }
                     // Snapshot the position before touching the player: loading the queue fires
                     // onMediaItemTransition -> mayBeSaveRecentSong, which rewrites the stored
                     // position before the seek below would otherwise read it.
