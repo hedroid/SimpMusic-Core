@@ -1427,9 +1427,10 @@ internal fun NeteaseSong.toSongEntity(): SongEntity =
         source = MusicSource.NETEASE.name,
         albumId = albumId?.toString(),
         albumName = albumName,
-        // C 档(歌手详情)未实现前 artistId 留空:播放页点歌手会静默无效(与无艺人信息的
-        // 现有歌曲一致),TODO(NETEASE_C_TIER) 打通艺人页后再填。
-        artistId = emptyList(),
+        // 艺人页 M6 已通:artistId 从此带上(toSong 已解析 ar[].id)。此前留空的年代,
+        // simiSong 电台/FM/每日推荐播的歌 artistId 为空串,播放页艺人卡拿不到头像/粉丝,
+        // 艺人跳转也静默无效。
+        artistId = artistIds.map { it.toString() },
         artistName = artists,
         duration = durationMs.toMinutesSeconds(),
         durationSeconds = (durationMs / 1000).toInt(),
