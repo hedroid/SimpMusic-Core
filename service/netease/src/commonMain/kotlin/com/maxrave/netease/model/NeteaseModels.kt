@@ -106,6 +106,8 @@ data class NeteasePlaylist(
     val description: String?,
     /** 每日推荐/雷达等特殊歌单的标记 */
     val specialType: SpecialType = SpecialType.NORMAL,
+    /** 当前登录用户是否已收藏该歌单(/v6/playlist/detail 响应,自建歌单恒 false) */
+    val subscribed: Boolean? = null,
     /** 网易原生 specialType(5=红心歌单"我喜欢的音乐"),仅解析期使用 */
     val rawSpecialType: Int = 0,
 ) {

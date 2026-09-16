@@ -895,6 +895,15 @@ suspend fun NeteaseClient.removeFromPlaylist(
         (body["code"] as? JsonPrimitive)?.content == "200"
     }
 
+/** 删除自己的歌单(weapi /playlist/delete;不可逆,红心歌单服务端会拒绝) */
+suspend fun NeteaseClient.deletePlaylist(
+    playlistId: Long,
+): Result<Boolean> =
+    runCatching {
+        val body = callWeApi("/playlist/delete", mapOf("id" to playlistId))
+        (body["code"] as? JsonPrimitive)?.content == "200"
+    }
+
 /** 收藏/取消收藏歌单(weapi /playlist/subscribe,t=1 收藏 t=0 取消) */
 suspend fun NeteaseClient.subscribePlaylist(
     playlistId: Long,
@@ -1272,6 +1281,8 @@ internal fun JsonElement.toPlaylist(): NeteasePlaylist {
         name = obj.str("name").orEmpty(),
         creatorId = obj.obj("creator")?.get("userId").nLong(),
         creatorNickname = obj.obj("creator")?.str("nickname"),
+        // 顶层字段(探针实证: "subscribed":true,"creator":{...});userPlaylists 列表项无此字段 → null
+        subscribed = (obj["subscribed"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull(),
         createTimeMs = obj["createTime"].nLong(),
         coverUrl = (obj.str("coverImgUrl") ?: obj.str("picUrl") ?: obj.str("coverUrl"))?.toHttpsUrl(),
         trackCount = obj["trackCount"].nInt() ?: obj["songCount"].nInt() ?: 0,

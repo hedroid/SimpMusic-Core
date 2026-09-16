@@ -685,6 +685,20 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    /** 歌单收藏与网易云双向同步(默认开;关=仅本地收藏) */
+    override val neteaseFavoriteSync =
+        settingsDataStore.data.map { preferences ->
+            preferences[NETEASE_FAVORITE_SYNC] ?: TRUE
+        }
+
+    override suspend fun setNeteaseFavoriteSync(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[NETEASE_FAVORITE_SYNC] = if (enabled) TRUE else FALSE
+            }
+        }
+    }
+
     override val neteaseAutoSwitch =
         settingsDataStore.data.map { preferences ->
             preferences[NETEASE_AUTO_SWITCH] ?: TRUE
@@ -1976,6 +1990,7 @@ internal class DataStoreManagerImpl(
         val NETEASE_QUALITY = stringPreferencesKey("netease_quality")
         val NETEASE_DOWNLOAD_QUALITY = stringPreferencesKey("netease_download_quality")
         val NETEASE_FOLLOW_SYNC = stringPreferencesKey("netease_follow_sync")
+        val NETEASE_FAVORITE_SYNC = stringPreferencesKey("netease_favorite_sync")
         val NETEASE_AUTO_SWITCH = stringPreferencesKey("netease_auto_switch")
         val NETEASE_LIKE_SYNC = stringPreferencesKey("netease_like_sync")
         val NETEASE_PLAY_REPORT = stringPreferencesKey("netease_play_report")

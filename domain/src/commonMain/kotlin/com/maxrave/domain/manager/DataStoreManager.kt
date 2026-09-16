@@ -219,8 +219,10 @@ interface DataStoreManager {
 
     /** 关注与网易云同步(双向:关注/取关同步到账号) */
     val neteaseFollowSync: Flow<String>
+    val neteaseFavoriteSync: Flow<String>
 
     suspend fun setNeteaseFollowSync(enabled: Boolean)
+    suspend fun setNeteaseFavoriteSync(enabled: Boolean)
 
     /** 无版权/VIP 试听音乐自动切另一音源 */
     val neteaseAutoSwitch: Flow<String>

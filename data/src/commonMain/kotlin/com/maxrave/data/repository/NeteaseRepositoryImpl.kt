@@ -103,6 +103,7 @@ import com.maxrave.netease.userLikedSongIds
 import com.maxrave.netease.removeFromPlaylist
 import com.maxrave.netease.subscribeAlbum
 import com.maxrave.netease.subscribePlaylist
+import com.maxrave.netease.deletePlaylist
 import com.maxrave.netease.radarPlaylists
 import com.maxrave.netease.searchArtists
 import com.maxrave.netease.searchHot
@@ -749,6 +750,7 @@ class NeteaseRepositoryImpl(
             val id = playlistId.toLongOrNull() ?: error("netease playlistId 非数字: $playlistId")
             val (meta, trackIds) =
                 client.playlistDetail(id).getOrNull() ?: error("歌单不存在: $playlistId")
+            meta.subscribed?.let { playlistSubscribedCache = playlistSubscribedCache + (id to it) }
             val firstPage =
                 if (trackIds.isNotEmpty()) {
                     client.songDetail(trackIds.take(NETEASE_PLAYLIST_PAGE_SIZE)).getOrDefault(emptyList())
@@ -844,12 +846,20 @@ class NeteaseRepositoryImpl(
     /** 最近一次 getLibraryPlaylists 的 歌单id→创建者id 映射(判定自建/收藏歌单的依据) */
     @Volatile private var libraryCreatorIds: Map<Long, Long?> = emptyMap()
 
+    /** 最近一次歌单详情的 订阅态缓存(歌单id→云端是否已收藏);浏览歌单页红心回填用 */
+    @Volatile private var playlistSubscribedCache: Map<Long, Boolean> = emptyMap()
+
+    /** 红心歌单("我喜欢的音乐")id;不可删除/不可取消收藏,库页与详情页入口都排除它 */
+    @Volatile private var neteaseLikedPlaylistId: Long? = null
+
     override suspend fun getLibraryPlaylists(): Result<List<PlaylistEntity>> {
         val account = client.getAccountStatus().getOrNull() ?: return Result.success(emptyList())
         if (account == null || account.userId == 0L) return Result.success(emptyList())
         return client.userPlaylists(account.userId).map { list ->
             // 红心歌单固定首位:userPlaylists 已标 specialType=FAVORITE,稳定排序兜底服务端乱序
             libraryCreatorIds = list.associate { it.id to it.creatorId }
+            neteaseLikedPlaylistId =
+                list.firstOrNull { it.specialType == NeteasePlaylist.SpecialType.FAVORITE }?.id
             list.sortedBy { it.specialType != NeteasePlaylist.SpecialType.FAVORITE }.map { it.toPlaylistEntity() }
         }
     }
@@ -871,6 +881,36 @@ class NeteaseRepositoryImpl(
         if (uid == 0L) return emptySet()
         return libraryCreatorIds.filterValues { it == uid }.keys.map { it.toString() }.toSet()
     }
+
+    /**
+     * 云端收藏态(歌单页红心回填):详情缓存命中直接回,miss 打一次 n=0 详情(轻)。
+     * null = 未知(未登录/拉取失败/列表项无该字段),调用方保持本地不动。
+     */
+    suspend fun getPlaylistSubscribed(playlistId: String): Boolean? {
+        val id = playlistId.toLongOrNull() ?: return null
+        playlistSubscribedCache[id]?.let { return it }
+        val sub = client.playlistDetail(id).getOrNull()?.first?.subscribed ?: return null
+        playlistSubscribedCache = playlistSubscribedCache + (id to sub)
+        return sub
+    }
+
+    /** 红心歌单 id 缓存读取(库页长按入口排除用);未拉过库则 null */
+    fun getNeteaseLikedPlaylistIdCached(): String? = neteaseLikedPlaylistId?.toString()
+
+    /** 是否红心歌单("我喜欢的音乐"):不可删除、不可取消收藏 */
+    fun isNeteaseLikedPlaylist(playlistId: String): Boolean =
+        neteaseLikedPlaylistId != null && playlistId.toLongOrNull() == neteaseLikedPlaylistId
+
+    /**
+     * 删除自己的网易歌单(/playlist/delete,不可逆)。红心歌单由 UI 层排除
+     * (服务端也会拒绝,这里再兜一层)。
+     */
+    suspend fun deleteNeteasePlaylist(playlistId: String): Result<Boolean> =
+        runCatching {
+            val id = playlistId.toLongOrNull() ?: error("netease playlistId 非数字: $playlistId")
+            require(!isNeteaseLikedPlaylist(id.toString())) { "红心歌单不可删除" }
+            client.deletePlaylist(id).getOrThrow()
+        }
 
     /** 收藏/取消收藏网易歌单(/playlist/subscribe);取消后本地最近添加里的行由调用方处理 */
     suspend fun subscribeNeteasePlaylist(
