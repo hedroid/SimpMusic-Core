@@ -1041,6 +1041,14 @@ suspend fun NeteaseClient.artistDynamic(artistId: Long): Result<NeteaseArtistDyn
         )
     }
 
+/** 歌手粉丝数(api/artist/follow/count/get:data.fansCnt)。dynamic 端点不返回这个字段。 */
+suspend fun NeteaseClient.artistFollowerCount(artistId: Long): Result<Long> =
+    runCatching {
+        val body = callApi("/artist/follow/count/get", mapOf("id" to artistId))
+        body.obj("data")?.get("fansCnt").nLong()
+            ?: error("artist $artistId follower count missing")
+    }
+
 /** 歌手百科(weapi /artist/introduction,分段字段为 ti/txt) */
 suspend fun NeteaseClient.artistIntroduction(artistId: Long): Result<NeteaseArtistIntroduction> =
     runCatching {
@@ -1209,6 +1217,14 @@ suspend fun NeteaseClient.songComments(
             totalCount = body["total"].nInt() ?: 0,
             hasMore = (body["more"] as? JsonPrimitive)?.content == "true",
         )
+    }
+
+/** 歌曲红心总数(api/song/red/count:data.count),与当前用户是否已红心无关。 */
+suspend fun NeteaseClient.songRedCount(songId: Long): Result<Long> =
+    runCatching {
+        val body = callApi("/song/red/count", mapOf("songId" to songId))
+        body.obj("data")?.get("count").nLong()
+            ?: error("song $songId red count missing")
     }
 
 /**

@@ -85,6 +85,7 @@ import com.maxrave.netease.artistDetail
 import com.maxrave.netease.artistSongs
 import com.maxrave.netease.artistAlbums
 import com.maxrave.netease.artistDynamic
+import com.maxrave.netease.artistFollowerCount
 import com.maxrave.netease.similarArtists
 import com.maxrave.netease.topArtists
 import com.maxrave.netease.newAlbums
@@ -93,6 +94,7 @@ import com.maxrave.netease.playRecord
 import com.maxrave.netease.radioTrash
 import com.maxrave.netease.subscribeArtist
 import com.maxrave.netease.subscribedArtists
+import com.maxrave.netease.songRedCount
 import com.maxrave.netease.userStaredAlbums
 import com.maxrave.netease.personalizedNewSongs
 import com.maxrave.netease.playlistDetail
@@ -1081,7 +1083,7 @@ class NeteaseRepositoryImpl(
     }
 
     /**
-     * 播放页网易详情卡:艺人(头像/粉丝)、专辑(发行日/简介)、评论(总数/热评)四个端点
+     * 播放页网易详情卡:艺人(头像/粉丝)、专辑(发行日/简介)、互动(红心/评论)五路数据
      * 并行,各自独立降级——哪路失败哪路留空,整卡不因单路失败消失。
      */
     suspend fun getSongInfo(
@@ -1094,13 +1096,15 @@ class NeteaseRepositoryImpl(
         val alid = albumId?.toLongOrNull()
         return coroutineScope {
             val artistDef = async { aid?.let { client.artistDetail(it).getOrNull() } }
-            val dynamicDef = async { aid?.let { client.artistDynamic(it).getOrNull() } }
+            val followerDef = async { aid?.let { client.artistFollowerCount(it).getOrNull() } }
             val albumDef = async { alid?.let { client.albumDetail(it).getOrNull() } }
             val commentDef = async { client.songComments(sid, limit = 10, offset = 0).getOrNull() }
+            val likeCountDef = async { client.songRedCount(sid).getOrNull() }
             val artist = artistDef.await()
-            val dynamic = dynamicDef.await()
+            val followerCount = followerDef.await()
             val album = albumDef.await()
             val comments = commentDef.await()
+            val likeCount = likeCountDef.await()
             NeteaseSongInfoEntity(
                 artistId = aid?.toString(),
                 artistName = artist?.name,
@@ -1110,7 +1114,7 @@ class NeteaseRepositoryImpl(
                     artist?.picUrl
                         ?.replaceFirst("http://", "https://")
                         ?.let { if (it.contains('?')) it else "$it?param=1080y1080" },
-                artistFans = dynamic?.followerCount,
+                artistFans = followerCount,
                 albumId = alid?.toString(),
                 albumName = album?.first?.name,
                 albumPublishDate =
@@ -1121,6 +1125,7 @@ class NeteaseRepositoryImpl(
                 albumTrackCount = album?.first?.trackCount?.takeIf { it > 0 },
                 albumCompany = album?.first?.company,
                 artistBriefDesc = artist?.briefDesc?.takeIf { it.isNotBlank() },
+                likeCount = likeCount,
                 commentCount = comments?.totalCount ?: 0,
                 hotComments =
                     comments?.hotComments

@@ -9,7 +9,7 @@ data class NeteaseSongInfoEntity(
     val artistId: String? = null,
     val artistName: String? = null,
     val artistAvatar: String? = null,
-    /** 粉丝数(artistDynamic.followerCount),拿不到为 null */
+    /** 粉丝数(artist/follow/count/get),拿不到为 null */
     val artistFans: Long? = null,
     val albumId: String? = null,
     val albumName: String? = null,
@@ -22,6 +22,8 @@ data class NeteaseSongInfoEntity(
     val albumCompany: String? = null,
     /** 艺人简介(详情卡第三行,优先于专辑简介展示) */
     val artistBriefDesc: String? = null,
+    /** 歌曲红心总数(song/red/count),拿不到为 null */
+    val likeCount: Long? = null,
     val commentCount: Int = 0,
     val hotComments: List<HotComment> = emptyList(),
 ) {

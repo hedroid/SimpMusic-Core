@@ -256,10 +256,9 @@ data class NeteaseArtistDetail(
     val identifyTitle: String? = null,
 )
 
-/** 歌手动态信息(api/artist/detail/dynamic:关注状态/粉丝数) */
+/** 歌手动态信息(api/artist/detail/dynamic:关注状态/视频数;粉丝数走独立 follow/count 端点) */
 data class NeteaseArtistDynamic(
     val followed: Boolean? = null,
-    val followerCount: Long? = null,
     val videoCount: Long? = null,
 )
 

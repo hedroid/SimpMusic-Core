@@ -132,7 +132,13 @@ class NewEndpointsProbe {
             }
             section("artistDynamic(6452)") {
                 client.artistDynamic(6452L).fold(
-                    { "followed=${it.followed} fans=${it.followerCount} videos=${it.videoCount}" },
+                    { "followed=${it.followed} videos=${it.videoCount}" },
+                    { "ERR ${it.message}" },
+                )
+            }
+            section("artistFollowerCount(6452)") {
+                client.artistFollowerCount(6452L).fold(
+                    { "fans=$it" },
                     { "ERR ${it.message}" },
                 )
             }
@@ -164,6 +170,12 @@ class NewEndpointsProbe {
                 client.songComments(186016L, limit = 2).fold(
                     { page -> "total=${page.totalCount} more=${page.hasMore} hot=${page.hotComments.size} latest=${page.latestComments.size}\n" +
                         (page.hotComments.firstOrNull()?.let { c -> "hot#1 [${c.nickname}](${c.location}) 赞${c.likedCount}: ${c.content.take(50)}" } ?: "(无热评)") },
+                    { "ERR ${it.message}" },
+                )
+            }
+            section("songRedCount(晴天 186016)") {
+                client.songRedCount(186016L).fold(
+                    { "likes=$it" },
                     { "ERR ${it.message}" },
                 )
             }
