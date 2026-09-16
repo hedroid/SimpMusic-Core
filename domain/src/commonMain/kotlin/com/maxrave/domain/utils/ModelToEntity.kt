@@ -141,7 +141,12 @@ fun SongEntity.toTrack(): Track {
             listArtist.add(Artist(this.artistId?.getOrNull(i) ?: "", artistName[i]))
         }
     }
-    val isSong = (this.thumbnails?.contains("w544") == true && this.thumbnails?.contains("h544") == true)
+    // w544-h544 是 YT 封面 URL 尺寸参数启发式;网易封面(music.126.net)不带 → 被标成
+    // 720x1080 非方形,下游 Track.toGenericMediaItem 误判 VIDEO,播放页封面渲染成宽条。
+    // 数字 videoId 一律是歌(与 5c2eeb3 的 SongEntity.toGenericMediaItem 同款守卫)。
+    val isSong =
+        (this.thumbnails?.contains("w544") == true && this.thumbnails?.contains("h544") == true) ||
+            this.videoId.toLongOrNull() != null
     return Track(
         album = this.albumId?.let { this.albumName?.let { it1 -> Album(it, it1) } },
         artists = listArtist,

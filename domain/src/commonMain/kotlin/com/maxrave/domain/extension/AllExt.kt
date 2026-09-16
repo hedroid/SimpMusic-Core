@@ -98,13 +98,16 @@ fun Track.toGenericMediaItem(): GenericMediaItem {
         thumbUrl = Regex("([wh])120").replace(thumbUrl, "$1544")
     }
     val artistName: String = this.artists.toListName().connectArtists()
+    // 方形判据 + URL 排除是 YT 启发式;网易数字 ID 的 Track 恒为歌(上游 toTrack 曾把
+    // 网易歌标成 720x1080 导致这里误判 VIDEO、封面宽条,双保险防御所有 Track 来源)
     val isSong =
         (
             this.thumbnails?.last()?.height != 0 &&
                 this.thumbnails?.last()?.height == this.thumbnails?.last()?.width &&
                 this.thumbnails?.last()?.height != null
         ) &&
-            (!thumbUrl.contains("hq720") && !thumbUrl.contains("maxresdefault"))
+            (!thumbUrl.contains("hq720") && !thumbUrl.contains("maxresdefault")) ||
+            this.videoId.toLongOrNull() != null
     return GenericMediaItem(
         mediaId = this.videoId,
         uri = this.videoId,
