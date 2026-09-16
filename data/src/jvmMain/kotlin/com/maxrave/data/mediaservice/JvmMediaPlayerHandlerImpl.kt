@@ -1195,9 +1195,13 @@ class JvmMediaPlayerHandlerImpl(
                 if (id.contains("Video")) {
                     id = id.removePrefix("Video")
                 }
+                // 方向判据现读 Room(显示态同源):controlState.isLiked 只在切歌/controlState
+                // 变化时刷新,云村红心 OR-merge 的回填写 Room 不会触发它——按它判方向会把
+                // "取消已赞"发成"点赞"(歌永远留在红心歌单)。
+                val likedNow = songRepository.getSongById(id).singleOrNull()?.liked == true
                 songRepository.updateLikeStatus(
                     id,
-                    if (!(controlState.first().isLiked)) 1 else 0,
+                    if (!likedNow) 1 else 0,
                 )
                 delay(200)
             }
