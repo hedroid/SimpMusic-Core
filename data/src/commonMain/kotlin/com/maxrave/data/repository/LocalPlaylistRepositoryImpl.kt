@@ -18,6 +18,7 @@ import com.maxrave.domain.data.entities.DownloadState
 import com.maxrave.domain.data.entities.LocalPlaylistEntity
 import com.maxrave.domain.data.entities.LocalPlaylistEntity.YouTubeSyncState.Synced
 import com.maxrave.domain.data.entities.LocalPlaylistEntity.YouTubeSyncState.Syncing
+import com.maxrave.domain.data.entities.LocalPlaylistEntity.YouTubeSyncState.NotSynced
 import com.maxrave.domain.data.entities.PairSongLocalPlaylist
 import com.maxrave.domain.data.entities.SetVideoIdEntity
 import com.maxrave.domain.data.entities.SongEntity
@@ -450,7 +451,30 @@ internal class LocalPlaylistRepositoryImpl(
             e?.printStackTrace()
             emit(LocalResource.Error(e?.message ?: errorMessage))
         }
-    }
+    }.flowOn(Dispatchers.IO)
+
+    override fun copyOnlinePlaylistToLocal(
+        playlist: PlaylistState,
+        tracks: List<Track>,
+        successMessage: String,
+    ): Flow<LocalResource<String>> =
+        wrapMessageResource(successMessage = successMessage) {
+            tracks.forEach { track ->
+                localDataSource.insertSong(track.toSongEntity())
+            }
+            val videoIds = tracks.toListVideoId()
+            localDataSource.insertLocalPlaylistWithTracks(
+                LocalPlaylistEntity(
+                    title = playlist.title,
+                    thumbnail = playlist.thumbnail,
+                    youtubePlaylistId = null,
+                    tracks = videoIds,
+                    downloadState = DownloadState.STATE_NOT_DOWNLOADED,
+                    syncState = NotSynced,
+                ),
+                videoIds,
+            )
+        }
 
     /**
      * Mirrors a locally picked cover onto the YouTube playlist backing this local one.

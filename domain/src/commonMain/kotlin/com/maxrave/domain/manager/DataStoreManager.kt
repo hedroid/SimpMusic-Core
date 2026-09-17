@@ -436,6 +436,11 @@ interface DataStoreManager {
 
     suspend fun setCombineLocalAndYouTubeLiked(combine: Boolean)
 
+    /** Mirror playlist and album library membership to the signed-in YouTube Music account. */
+    val youtubeCollectionSync: Flow<String>
+
+    suspend fun setYouTubeCollectionSync(enabled: Boolean)
+
     val shouldShowLogInRequiredAlert: Flow<String>
 
     suspend fun setShouldShowLogInRequiredAlert(shouldShow: Boolean)

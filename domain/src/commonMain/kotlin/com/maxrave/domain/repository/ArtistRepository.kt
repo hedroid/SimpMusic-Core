@@ -36,6 +36,12 @@ interface ArtistRepository {
         followedStatus: Int,
     ): Boolean?
 
+    /** Updates only the source account. The local follow flag is deliberately untouched. */
+    suspend fun setRemoteFollowedStatus(
+        channelId: String,
+        followed: Boolean,
+    ): Boolean
+
     /**
      * 只写本地关注位,不镜像任何账号。浏览艺人页时把服务端关注态落库用——
      * 走 [updateFollowedStatus] 会对网易歌手再发一次 /artist/sub、对 YT 走镜像逻辑。

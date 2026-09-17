@@ -134,6 +134,15 @@ interface SongRepository {
 
     suspend fun getLikeStatus(videoId: String): Flow<Boolean>
 
+    /** Reads the source account state without changing SimpMusic's local favourite. */
+    suspend fun getRemoteLikeStatus(videoId: String): Boolean?
+
+    /** Writes only the source account state; local favourite remains independent. */
+    suspend fun setRemoteLikeStatus(
+        videoId: String,
+        liked: Boolean,
+    ): Boolean
+
     suspend fun addToYouTubeLiked(mediaId: String?): Flow<Int>
 
     suspend fun removeFromYouTubeLiked(mediaId: String?): Flow<Int>

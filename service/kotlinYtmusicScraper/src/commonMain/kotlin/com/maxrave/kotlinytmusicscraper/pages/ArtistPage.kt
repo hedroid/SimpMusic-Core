@@ -29,6 +29,7 @@ data class ArtistPage(
     val sections: List<ArtistSection>,
     val description: String?,
     val subscribers: String? = null,
+    val subscribed: Boolean? = null,
     val view: String? = null,
 ) {
     companion object {

@@ -5,6 +5,8 @@ import com.maxrave.data.repository.NeteaseRepositoryImpl
 import com.maxrave.data.extension.getFullDataFromDB
 import com.maxrave.data.mapping.toAlbumsResult
 import com.maxrave.data.parser.parseAlbumData
+import com.maxrave.data.parser.parseLibraryPlaylist
+import com.maxrave.data.parser.parseNextLibraryPlaylist
 import com.maxrave.domain.data.entities.AlbumEntity
 import com.maxrave.domain.data.entities.FollowedArtistSingleAndAlbum
 import com.maxrave.domain.data.model.browse.album.AlbumBrowse
@@ -18,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.LocalDateTime
 
@@ -61,6 +64,50 @@ internal class AlbumRepositoryImpl(
         albumId: String,
         likeStatus: Int,
     ) = withContext(Dispatchers.Main) { localDataSource.updateAlbumLiked(likeStatus, albumId) }
+
+    override suspend fun getRemoteSavedState(
+        albumId: String,
+        backingPlaylistId: String?,
+    ): Boolean? {
+        if (albumId.toLongOrNull() != null) {
+            if (!neteaseRepository.isLoggedIn.first()) return null
+            // The subscribed-album endpoint is a list rather than a per-album status call.
+            return neteaseRepository.getStarredAlbums().getOrNull()?.any { it.browseId == albumId }
+        }
+        val response = youTube.getLibraryAlbums().getOrNull() ?: return null
+        val grid =
+            response.contents
+                ?.singleColumnBrowseResultsRenderer
+                ?.tabs
+                ?.firstOrNull()
+                ?.tabRenderer
+                ?.content
+                ?.sectionListRenderer
+                ?.contents
+                ?.firstOrNull()
+                ?.gridRenderer
+        val ids = parseLibraryPlaylist(grid?.items.orEmpty()).map { it.browseId }.toMutableSet()
+        var continuation = grid?.continuations?.firstOrNull()?.nextContinuationData?.continuation
+        while (continuation != null) {
+            val next = youTube.nextYouTubePlaylists(continuation).getOrNull() ?: break
+            ids += parseNextLibraryPlaylist(next.first).map { it.browseId }
+            continuation = next.second
+        }
+        return albumId in ids || backingPlaylistId?.removePrefix("VL") in ids.map { it.removePrefix("VL") }
+    }
+
+    override suspend fun setRemoteSavedState(
+        albumId: String,
+        backingPlaylistId: String?,
+        saved: Boolean,
+    ): Boolean =
+        if (albumId.toLongOrNull() != null) {
+            if (!neteaseRepository.isLoggedIn.first()) false
+            else neteaseRepository.subscribeNeteaseAlbum(albumId, saved).getOrDefault(false)
+        } else {
+            val playlistId = backingPlaylistId?.takeIf { it.isNotBlank() } ?: return false
+            youTube.setPlaylistInLibrary(playlistId.removePrefix("VL"), saved).getOrNull() in 200..299
+        }
 
     override suspend fun updateAlbumInLibrary(
         inLibrary: LocalDateTime,

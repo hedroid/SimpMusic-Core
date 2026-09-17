@@ -103,6 +103,7 @@ import com.maxrave.netease.playlistTracksViaDetail
 import com.maxrave.netease.songDetail
 import com.maxrave.netease.userLikedSongIds
 import com.maxrave.netease.removeFromPlaylist
+import com.maxrave.netease.addToPlaylist
 import com.maxrave.netease.subscribeAlbum
 import com.maxrave.netease.subscribePlaylist
 import com.maxrave.netease.deletePlaylist
@@ -884,6 +885,28 @@ class NeteaseRepositoryImpl(
         return libraryCreatorIds.filterValues { it == uid }.keys.map { it.toString() }.toSet()
     }
 
+    /** Current account's editable cloud playlists, for the shared add-to-playlist sheet. */
+    suspend fun getOwnNeteasePlaylists(): List<PlaylistsResult> {
+        val account = client.getAccountStatus().getOrNull() ?: return emptyList()
+        if (account.userId == 0L) return emptyList()
+        return client.userPlaylists(account.userId).getOrNull()
+            .orEmpty()
+            .filter {
+                it.creatorId == account.userId && it.specialType == NeteasePlaylist.SpecialType.NORMAL
+            }
+            .map { it.toPlaylistsResult() }
+    }
+
+    suspend fun addTracksToNeteasePlaylist(
+        playlistId: String,
+        songIds: List<String>,
+    ): Result<Boolean> =
+        runCatching {
+            val pid = playlistId.toLongOrNull() ?: error("Invalid NetEase playlist id")
+            val ids = songIds.mapNotNull(String::toLongOrNull)
+            client.addToPlaylist(pid, ids).getOrThrow()
+        }
+
     /**
      * 云端收藏态(歌单页红心回填):详情缓存命中直接回,miss 打一次 n=0 详情(轻)。
      * null = 未知(未登录/拉取失败/列表项无该字段),调用方保持本地不动。
@@ -920,7 +943,11 @@ class NeteaseRepositoryImpl(
         subscribe: Boolean,
     ): Result<Boolean> =
         playlistId.toLongOrNull()
-            ?.let { client.subscribePlaylist(it, subscribe) }
+            ?.let { id ->
+                client.subscribePlaylist(id, subscribe).onSuccess { ok ->
+                    if (ok) playlistSubscribedCache = playlistSubscribedCache + (id to subscribe)
+                }
+            }
             ?: Result.failure(IllegalArgumentException("netease playlistId 非数字: $playlistId"))
 
     /** 收藏/取消收藏网易专辑(/album/sub) */

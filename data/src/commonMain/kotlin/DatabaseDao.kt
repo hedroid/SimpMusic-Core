@@ -403,7 +403,10 @@ interface DatabaseDao {
         offset: Int,
     ): List<SongEntity>
 
-    @Query("SELECT * FROM song WHERE canvasThumbUrl IS NOT NULL ORDER BY totalPlayTime DESC LIMIT :max")
+    // Library's "most played" card row is the five-item preview of the full most-played page.
+    // Do not require Canvas artwork here: that silently removed every NetEase song and any YT
+    // track without Canvas, making the entire section disappear even when play data existed.
+    @Query("SELECT * FROM song WHERE totalPlayTime > 1 ORDER BY totalPlayTime DESC LIMIT :max")
     suspend fun getCanvasSong(max: Int): List<SongEntity>
 
     @Query("SELECT videoId FROM song WHERE videoId IN (:primaryKeyList) AND downloadState = 3")

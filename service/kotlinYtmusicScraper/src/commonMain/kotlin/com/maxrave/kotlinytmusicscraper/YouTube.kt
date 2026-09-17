@@ -623,6 +623,12 @@ class YouTube {
                         ?.get(
                             0,
                         )?.text,
+                subscribed =
+                    response.header
+                        ?.musicImmersiveHeaderRenderer
+                        ?.subscriptionButton
+                        ?.subscribeButtonRenderer
+                        ?.subscribed,
                 view =
                     response.contents.singleColumnBrowseResultsRenderer.tabs[0]
                         .tabRenderer.content
@@ -1747,6 +1753,11 @@ class YouTube {
             ytMusic.browse(WEB_REMIX, "FEmusic_liked_playlists", setLogin = true).body<BrowseResponse>()
         }
 
+    suspend fun getLibraryAlbums() =
+        runCatching {
+            ytMusic.browse(WEB_REMIX, "FEmusic_liked_albums", setLogin = true).body<BrowseResponse>()
+        }
+
     suspend fun getMixedForYou() =
         runCatching {
             ytMusic.browse(WEB_REMIX, "FEmusic_mixed_for_you", setLogin = true).body<BrowseResponse>()
@@ -1934,6 +1945,18 @@ class YouTube {
         runCatching {
             ytMusic.removeFromLiked(mediaId).status.value
         }
+
+    /** YouTube Music uses the same like endpoints for playlist and album library membership. */
+    suspend fun setPlaylistInLibrary(
+        playlistId: String,
+        saved: Boolean,
+    ) = runCatching {
+        if (saved) {
+            ytMusic.addPlaylistToLibrary(playlistId).status.value
+        } else {
+            ytMusic.removePlaylistFromLibrary(playlistId).status.value
+        }
+    }
 
     suspend fun getSimpMusicChart() =
         runCatching {

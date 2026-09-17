@@ -143,6 +143,13 @@ interface LocalPlaylistRepository {
         errorMessage: String,
     ): Flow<LocalResource<String>>
 
+    /** Creates a one-time, editable local snapshot with no source-playlist binding. */
+    fun copyOnlinePlaylistToLocal(
+        playlist: PlaylistState,
+        tracks: List<Track>,
+        successMessage: String,
+    ): Flow<LocalResource<String>>
+
     fun syncLocalPlaylistToYouTubePlaylist(
         playlistId: Long,
         successMessage: String,

@@ -911,7 +911,7 @@ class Ytmusic {
             setBody(
                 LikeBody(
                     context = WEB_REMIX.toContext(locale, visitorData),
-                    target = LikeBody.Target(videoId),
+                    target = LikeBody.Target(videoId = videoId),
                 ),
             )
         }
@@ -922,7 +922,31 @@ class Ytmusic {
             setBody(
                 LikeBody(
                     context = WEB_REMIX.toContext(locale, visitorData),
-                    target = LikeBody.Target(videoId),
+                    target = LikeBody.Target(videoId = videoId),
+                ),
+            )
+        }
+
+    /** Add a playlist or album's backing playlist to the signed-in YouTube Music library. */
+    suspend fun addPlaylistToLibrary(playlistId: String) =
+        httpClient.post("like/like") {
+            ytClient(WEB_REMIX, true)
+            setBody(
+                LikeBody(
+                    context = WEB_REMIX.toContext(locale, visitorData),
+                    target = LikeBody.Target(playlistId = playlistId.removePrefix("VL")),
+                ),
+            )
+        }
+
+    /** Remove a playlist or album's backing playlist from the signed-in YouTube Music library. */
+    suspend fun removePlaylistFromLibrary(playlistId: String) =
+        httpClient.post("like/removelike") {
+            ytClient(WEB_REMIX, true)
+            setBody(
+                LikeBody(
+                    context = WEB_REMIX.toContext(locale, visitorData),
+                    target = LikeBody.Target(playlistId = playlistId.removePrefix("VL")),
                 ),
             )
         }

@@ -1338,6 +1338,19 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    override val youtubeCollectionSync: Flow<String> =
+        settingsDataStore.data.map { preferences ->
+            preferences[YOUTUBE_COLLECTION_SYNC] ?: TRUE
+        }
+
+    override suspend fun setYouTubeCollectionSync(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[YOUTUBE_COLLECTION_SYNC] = if (enabled) TRUE else FALSE
+            }
+        }
+    }
+
     override val shouldShowLogInRequiredAlert =
         settingsDataStore.data.map { preferences ->
             preferences[SHOULD_SHOW_LOG_IN_REQUIRED_ALERT] ?: TRUE
@@ -2033,6 +2046,7 @@ internal class DataStoreManagerImpl(
         val ENDLESS_QUEUE = stringPreferencesKey("endless_queue")
         val KEEP_YOUTUBE_PLAYLIST_OFFLINE = stringPreferencesKey("keep_youtube_playlist_offline")
         val COMBINE_LOCAL_AND_YOUTUBE_LIKED = stringPreferencesKey("combine_local_and_youtube_liked")
+        val YOUTUBE_COLLECTION_SYNC = stringPreferencesKey("youtube_collection_sync")
         val SHOULD_SHOW_LOG_IN_REQUIRED_ALERT = stringPreferencesKey("should_show_log_in_required_alert")
         val AUTO_CHECK_FOR_UPDATES = stringPreferencesKey("auto_check_for_updates")
         val UPDATE_CHANNEL = stringPreferencesKey("update_channel")

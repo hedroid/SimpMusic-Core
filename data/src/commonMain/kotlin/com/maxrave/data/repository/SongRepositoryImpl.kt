@@ -550,6 +550,34 @@ internal class SongRepositoryImpl(
             }
         }
 
+    override suspend fun getRemoteLikeStatus(videoId: String): Boolean? =
+        if (videoId.toLongOrNull() != null) {
+            if (!neteaseRepository.isLoggedIn.first()) null else neteaseRepository.isSongLiked(videoId)
+        } else {
+            if (dataStoreManager.cookie.first().isEmpty()) {
+                null
+            } else {
+                youTube.getLikedInfo(videoId).getOrNull()?.let { it == LikeStatus.LIKE }
+            }
+        }
+
+    override suspend fun setRemoteLikeStatus(
+        videoId: String,
+        liked: Boolean,
+    ): Boolean =
+        if (videoId.toLongOrNull() != null) {
+            if (!neteaseRepository.isLoggedIn.first()) false
+            else neteaseRepository.setSongLiked(videoId, liked).getOrDefault(false)
+        } else {
+            if (dataStoreManager.cookie.first().isEmpty()) {
+                false
+            } else {
+                val status =
+                    if (liked) youTube.addToLiked(videoId) else youTube.removeFromLiked(videoId)
+                status.getOrNull() in 200..299
+            }
+        }
+
     override suspend fun addToYouTubeLiked(mediaId: String?): Flow<Int> =
         flow {
             if (mediaId != null) {

@@ -155,7 +155,7 @@ internal fun parseArtistData(data: ArtistPage): ArtistBrowse {
         shuffleId = data.artist.shuffleEndpoint?.toYouTubeWatchEndpoint(),
         singles = Singles(browseId = "", params = "", results = listSingle),
         songs = Songs(browseId = songSection?.moreEndpoint?.browseId, results = listSong),
-        subscribed = false,
+        subscribed = data.subscribed,
         subscribers = data.subscribers,
         thumbnails = listOf(Thumbnail(617, data.artist.thumbnail.replace("w1483", "w617"), 617)),
         views = data.view,

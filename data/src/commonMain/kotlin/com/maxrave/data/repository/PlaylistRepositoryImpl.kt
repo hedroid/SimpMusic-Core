@@ -102,6 +102,34 @@ internal class PlaylistRepositoryImpl(
         )
     }
 
+    override suspend fun getRemoteSavedState(playlistId: String): Boolean? {
+        if (playlistId.toLongOrNull() != null) {
+            return if (neteaseRepository.isLoggedIn.first()) {
+                neteaseRepository.getPlaylistSubscribed(playlistId)
+            } else {
+                null
+            }
+        }
+        if (dataStoreManager.cookie.first().isEmpty()) return null
+        val normalized = playlistId.removePrefix("VL")
+        return getLibraryPlaylist().firstOrNull()?.any { it.browseId.removePrefix("VL") == normalized }
+    }
+
+    override suspend fun setRemoteSavedState(
+        playlistId: String,
+        saved: Boolean,
+    ): Boolean =
+        if (playlistId.toLongOrNull() != null) {
+            if (!neteaseRepository.isLoggedIn.first()) false
+            else neteaseRepository.subscribeNeteasePlaylist(playlistId, saved).getOrDefault(false)
+        } else {
+            if (dataStoreManager.cookie.first().isEmpty()) false
+            // Browse navigation commonly prefixes playlist ids with "VL" (VLPL...). The
+            // like/unlike mutation endpoint expects the actual playlist id (PL...), otherwise
+            // YouTube responds with a failed action even though the detail page loaded normally.
+            else youTube.setPlaylistInLibrary(playlistId.removePrefix("VL"), saved).getOrNull() in 200..299
+        }
+
     override suspend fun updatePlaylistInLibrary(
         inLibrary: LocalDateTime,
         playlistId: String,

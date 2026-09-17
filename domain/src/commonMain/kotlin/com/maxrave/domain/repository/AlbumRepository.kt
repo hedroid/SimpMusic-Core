@@ -24,6 +24,19 @@ interface AlbumRepository {
         likeStatus: Int,
     )
 
+    /** Remote account library state. Null means signed out or not currently knowable. */
+    suspend fun getRemoteSavedState(
+        albumId: String,
+        backingPlaylistId: String? = null,
+    ): Boolean?
+
+    /** Saves/removes an album in its source account. */
+    suspend fun setRemoteSavedState(
+        albumId: String,
+        backingPlaylistId: String? = null,
+        saved: Boolean,
+    ): Boolean
+
     suspend fun updateAlbumInLibrary(
         inLibrary: LocalDateTime,
         albumId: String,

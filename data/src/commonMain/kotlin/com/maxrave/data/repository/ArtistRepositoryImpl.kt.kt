@@ -86,8 +86,12 @@ internal class ArtistRepositoryImpl(
                 localDataSource.deleteNotificationsByChannelId(channelId)
                 localDataSource.deleteFollowedArtistSingleAndAlbum(channelId)
             }
-            // 网易歌手:直接走网易关注/取关,不受 YT 同步开关控制(开关镜像的是 YT 账号)
+            // 网易歌手和 YT 歌手都遵守各自账号同步开关。本地关注已经在上面写入，
+            // 关闭同步时返回 null，表示没有尝试远端操作。
             if (channelId.toLongOrNull() != null) {
+                if (dataStoreManager.neteaseFollowSync.first() != DataStoreManager.TRUE) {
+                    return@withContext null
+                }
                 return@withContext neteaseRepository.subscribeArtistNetease(channelId, followedStatus == 1).isSuccess
             }
             // The local flag is already written above and stays written: Follow must not depend
@@ -98,6 +102,18 @@ internal class ArtistRepositoryImpl(
             }
             withContext(Dispatchers.IO) {
                 setSubscription(channelId, followedStatus == 1)
+            }
+        }
+
+    override suspend fun setRemoteFollowedStatus(
+        channelId: String,
+        followed: Boolean,
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            if (channelId.toLongOrNull() != null) {
+                neteaseRepository.subscribeArtistNetease(channelId, followed).isSuccess
+            } else {
+                setSubscription(channelId, followed)
             }
         }
 

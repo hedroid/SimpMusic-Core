@@ -30,6 +30,15 @@ interface PlaylistRepository {
         likeStatus: Int,
     )
 
+    /** Remote account library state. Null means signed out or not currently knowable. */
+    suspend fun getRemoteSavedState(playlistId: String): Boolean?
+
+    /** Saves/removes a foreign online playlist in its source account. */
+    suspend fun setRemoteSavedState(
+        playlistId: String,
+        saved: Boolean,
+    ): Boolean
+
     suspend fun updatePlaylistInLibrary(
         inLibrary: LocalDateTime,
         playlistId: String,
