@@ -1178,6 +1178,8 @@ internal class MediaServiceHandlerImpl(
     }
 
     override fun toggleLike() {
+        // 红心=云端账号状态:通知栏与播放页同一条路径——直接切换云端,成功后镜像
+        // 本地缓存行并同步通知栏图标。
         Logger.w(TAG, "toggleLike: ${nowPlayingState.value.mediaItem.mediaId}")
         toggleLikeJob?.cancel()
         toggleLikeJob =
@@ -1186,14 +1188,12 @@ internal class MediaServiceHandlerImpl(
                 if (id.contains("Video")) {
                     id = id.removePrefix("Video")
                 }
-                // 方向判据现读 Room(显示态同源):controlState.isLiked 只在切歌/controlState
-                // 变化时刷新,云村红心 OR-merge 的回填写 Room 不会触发它——按它判方向会把
-                // "取消已赞"发成"点赞"(歌永远留在红心歌单)。
                 val likedNow = songRepository.getSongById(id).singleOrNull()?.liked == true
-                songRepository.updateLikeStatus(
-                    id,
-                    if (!likedNow) 1 else 0,
-                )
+                val ok = songRepository.setRemoteLikeStatus(id, !likedNow)
+                if (ok) {
+                    songRepository.setLikedLocal(id, if (!likedNow) 1 else 0)
+                    _controlState.value = _controlState.value.copy(isLiked = !likedNow)
+                }
                 delay(200)
             }
     }
@@ -2960,7 +2960,11 @@ internal class MediaServiceHandlerImpl(
                 Logger.e("Player Error", "onPlayerError (${error.errorCode}): ${error.message}")
                 pushPlayerError(error)
                 if (isAppInForeground()) {
-                    showToast(ToastType.PlayerError(error.errorCodeName))
+                    // 403 取不到流 + 网易歌 = 灰歌(无版权/VIP),给专属文案而不是超时模板
+                    val unavailableSong =
+                        error.errorCode == 403 &&
+                            (player.currentMediaItem?.mediaId?.removePrefix("Video")?.toLongOrNull() != null)
+                    showToast(ToastType.PlayerError(error.errorCodeName, unavailableSong))
                 } else {
                     Logger.w("Player Error", "App is not in foreground, skipping toast")
                 }

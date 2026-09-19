@@ -56,6 +56,7 @@ import com.maxrave.domain.source.ProviderLyrics
 import com.maxrave.domain.source.ProviderRadioSession
 import com.maxrave.netease.NeteaseClient
 import com.maxrave.netease.NeteaseConstants
+import com.maxrave.netease.createPlaylist
 import com.maxrave.netease.dailyRecommendPlaylists
 import com.maxrave.netease.dailyRecommendSongs
 import com.maxrave.netease.highQualityPlaylists
@@ -241,6 +242,31 @@ class NeteaseRepositoryImpl(
 
     override val isLoggedIn: Flow<Boolean> =
         dataStoreManager.neteaseCookie.map { it.isNotEmpty() && it != "{}" && it.contains("MUSIC_U") }
+
+    /**
+     * 账户表自愈:cookie 在 DataStore、netease_account 表却没有对应行(典型成因:开发期
+     * 清数据库只清了 Room 不清 DataStore)——账户管理页会显示"无账户"但功能又是登录态。
+     * 拉一次账号摘要把行补回去;cookie 失效则不补,由正式登录流程重建。
+     */
+    suspend fun repairAccountRowIfMissing() {
+        val cookies = loadPersistedCookies()
+        if (!client.hasLoginCookie(cookies)) return
+        val accounts = dao.getAllNeteaseAccount()
+        if (accounts.isNotEmpty()) return
+        val account = client.getAccountStatus().getOrNull() ?: return
+        dao.insertNeteaseAccount(
+            NeteaseAccountEntity(
+                userId = account.userId,
+                nickname = account.nickname ?: "NetEase user",
+                avatarUrl = account.avatarUrl ?: "",
+                cookies = json.encodeToString(cookies),
+                isUsed = true,
+            ),
+        )
+        dataStoreManager.setNeteaseAccountName(account.nickname ?: "NetEase user")
+        dataStoreManager.setNeteaseAccountThumbUrl(account.avatarUrl ?: "")
+        Logger.w(TAG, "repaired missing netease_account row for ${account.userId}")
+    }
 
     val accountName: Flow<String> = dataStoreManager.neteaseAccountName
     val accountThumbUrl: Flow<String> = dataStoreManager.neteaseAccountThumbUrl
@@ -856,9 +882,17 @@ class NeteaseRepositoryImpl(
     @Volatile private var neteaseLikedPlaylistId: Long? = null
 
     override suspend fun getLibraryPlaylists(): Result<List<PlaylistEntity>> {
-        val account = client.getAccountStatus().getOrNull() ?: return Result.success(emptyList())
-        if (account == null || account.userId == 0L) return Result.success(emptyList())
+        val account = client.getAccountStatus().getOrNull()
+        if (account == null) {
+            Logger.w(TAG, "getLibraryPlaylists: account status failed")
+            return Result.success(emptyList())
+        }
+        if (account.userId == 0L) {
+            Logger.w(TAG, "getLibraryPlaylists: userId=0 (profile missing?), nickname=${account.nickname}")
+            return Result.success(emptyList())
+        }
         return client.userPlaylists(account.userId).map { list ->
+            Logger.w(TAG, "getLibraryPlaylists: uid=${account.userId} size=${list.size}")
             // 红心歌单固定首位:userPlaylists 已标 specialType=FAVORITE,稳定排序兜底服务端乱序
             libraryCreatorIds = list.associate { it.id to it.creatorId }
             neteaseLikedPlaylistId =
@@ -906,6 +940,16 @@ class NeteaseRepositoryImpl(
             val ids = songIds.mapNotNull(String::toLongOrNull)
             client.addToPlaylist(pid, ids).getOrThrow()
         }
+
+    /** 创建自己的网易歌单(隐私),返回新歌单 id——本地歌单同步上云的建单步骤。 */
+    suspend fun createNeteasePlaylist(name: String): Result<String> =
+        client.createPlaylist(name).map { it.toString() }
+
+    /** 拉自己歌单的全部 trackIds(增量同步的差集基准);null = 拉取失败。 */
+    suspend fun getNeteasePlaylistTrackIds(playlistId: String): List<Long>? {
+        val id = playlistId.toLongOrNull() ?: return null
+        return client.playlistDetail(id).getOrNull()?.second
+    }
 
     /**
      * 云端收藏态(歌单页红心回填):详情缓存命中直接回,miss 打一次 n=0 详情(轻)。

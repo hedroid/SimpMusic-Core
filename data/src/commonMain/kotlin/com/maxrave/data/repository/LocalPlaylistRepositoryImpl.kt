@@ -8,6 +8,7 @@ import androidx.paging.PagingData
 import com.maxrave.data.db.Converters
 import com.maxrave.data.db.datasource.LocalDataSource
 import com.maxrave.data.io.readLocalImageBytes
+import com.maxrave.data.repository.NeteaseRepositoryImpl
 import com.maxrave.data.extension.getFullDataFromDB
 import com.maxrave.data.mapping.toListTrack
 import com.maxrave.data.mapping.toTrack
@@ -57,6 +58,7 @@ private const val TAG = "LocalPlaylistRepositoryImpl"
 internal class LocalPlaylistRepositoryImpl(
     private val localDataSource: LocalDataSource,
     private val youTube: YouTube,
+    private val neteaseRepository: NeteaseRepositoryImpl,
 ) : LocalPlaylistRepository {
     override fun getLocalPlaylist(id: Long) =
         wrapDataResource {
@@ -405,10 +407,12 @@ internal class LocalPlaylistRepositoryImpl(
     ) = flow<LocalResource<String>> {
         emit(LocalResource.Loading())
         val playlist = localDataSource.getLocalPlaylist(playlistId) ?: return@flow
+        // 混源歌单只把 YT 歌建到 YT(网易数字 id 对 YT 无效);网易侧走 syncLocalPlaylistToNeteasePlaylist
+        val ytTracks = playlist.tracks?.filter { it.toLongOrNull() == null }.orEmpty()
         val res =
             youTube.createPlaylist(
                 playlist.title,
-                playlist.tracks,
+                ytTracks,
             )
         val value = res.getOrNull()
         if (res.isSuccess && value != null) {
@@ -555,6 +559,32 @@ internal class LocalPlaylistRepositoryImpl(
         successMessage = successMessage,
     ) {
         localDataSource.updateLocalPlaylistYouTubePlaylistId(id, youtubePlaylistId)
+    }
+
+    override suspend fun syncLocalPlaylistToNeteasePlaylist(
+        playlistId: Long,
+    ): Result<Pair<String, Int>> {
+        val playlist = localDataSource.getLocalPlaylist(playlistId) ?: return Result.failure(IllegalStateException("playlist not found"))
+        // 混源歌单只把网易歌建到云村(纯数字 id);YT 歌走 syncLocalPlaylistToYouTubePlaylist
+        val neteaseIds = playlist.tracks?.filter { it.toLongOrNull() != null }.orEmpty()
+        if (neteaseIds.isEmpty()) return Result.success((playlist.neteasePlaylistId ?: "") to 0)
+
+        val pid =
+            playlist.neteasePlaylistId?.takeIf { it.isNotBlank() }
+                ?: neteaseRepository.createNeteasePlaylist(playlist.title).getOrNull()
+                ?: return Result.failure(IllegalStateException("create playlist failed"))
+        // 增量:远端已有曲目求差集,只补缺的。新建歌单远端为空,等价于全量。
+        val remoteIds = neteaseRepository.getNeteasePlaylistTrackIds(pid).orEmpty().toSet()
+        val toAdd = neteaseIds.distinct().filterNot { it.toLongOrNull() in remoteIds }
+        var added = 0
+        // 分批:add 携带的 id 列表过大时云村会拒(与歌单分页的 500/批同量级)
+        toAdd.chunked(500).forEach { batch ->
+            if (neteaseRepository.addTracksToNeteasePlaylist(pid, batch).getOrDefault(false)) {
+                added += batch.size
+            }
+        }
+        localDataSource.updateLocalPlaylistNeteasePlaylistId(playlistId, pid)
+        return Result.success(pid to added)
     }
 
     override fun updateListTrackSynced(id: Long) =

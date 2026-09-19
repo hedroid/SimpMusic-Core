@@ -660,6 +660,12 @@ interface DatabaseDao {
         youtubePlaylistId: String?,
     )
 
+    @Query("UPDATE local_playlist SET netease_playlist_id = :neteasePlaylistId WHERE id = :id")
+    suspend fun updateLocalPlaylistNeteasePlaylistId(
+        id: Long,
+        neteasePlaylistId: String?,
+    )
+
     @Query("UPDATE local_playlist SET youtube_sync_state = :state WHERE id = :id")
     suspend fun updateLocalPlaylistYouTubePlaylistSyncState(
         id: Long,

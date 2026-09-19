@@ -871,6 +871,30 @@ suspend fun NeteaseClient.addToPlaylist(
         (body["code"] as? JsonPrimitive)?.content == "200"
     }
 
+/**
+ * 创建自己的歌单(weapi /playlist/create)。隐私歌单(privacy=true)——由本地歌单同步上云
+ * 创建的歌单是备份性质,不该默认公开到个人主页。返回新歌单 id。
+ */
+suspend fun NeteaseClient.createPlaylist(
+    name: String,
+): Result<Long> =
+    runCatching {
+        require(name.isNotBlank()) { "playlist name must not be blank" }
+        val body =
+            callWeApi(
+                "/playlist/create",
+                mapOf(
+                    "name" to name.trim(),
+                    "privacy" to "true",
+                ),
+            )
+        val code = (body["code"] as? JsonPrimitive)?.content
+        require(code == "200") { "playlist/create rejected: code=$code" }
+        val id = (body["id"] as? JsonPrimitive)?.content?.toLongOrNull()
+        require(id != null && id > 0L) { "playlist/create returned no id: $body" }
+        id
+    }
+
 /** 从自己的歌单移除歌曲(同 manipulate op=del;只能操作自己创建的歌单) */
 suspend fun NeteaseClient.removeFromPlaylist(
     playlistId: Long,

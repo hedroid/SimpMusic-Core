@@ -156,6 +156,14 @@ interface LocalPlaylistRepository {
         errorMessage: String,
     ): Flow<LocalResource<String>>
 
+    /**
+     * 把本地歌单的网易曲目同步到云村:无关联时创建(隐私歌单,同名),有关联时增量补
+     * (拉远端 trackIds 求差集再 add)。返回 (远端歌单id, 本次新增曲目数)。
+     */
+    suspend fun syncLocalPlaylistToNeteasePlaylist(
+        playlistId: Long,
+    ): Result<Pair<String, Int>>
+
     fun unsyncLocalPlaylist(
         id: Long,
         successMessage: String,

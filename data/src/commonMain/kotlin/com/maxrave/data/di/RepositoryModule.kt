@@ -93,7 +93,7 @@ val repositoryModule =
         }
 
         single<LocalPlaylistRepository>(createdAtStart = true) {
-            LocalPlaylistRepositoryImpl(get(), get())
+            LocalPlaylistRepositoryImpl(get(), get(), get())
         }
 
         single<LyricsCanvasRepository>(createdAtStart = true) {

@@ -373,5 +373,7 @@ sealed class ToastType(
 
     data class PlayerError(
         val error: String,
+        /** 403/取不到流且当前歌是网易数字 id:按"灰歌不可播"说人话,而非超时模板 */
+        val unavailable: Boolean = false,
     ) : ToastType(error)
 }

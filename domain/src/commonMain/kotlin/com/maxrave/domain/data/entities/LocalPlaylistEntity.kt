@@ -19,6 +19,9 @@ data class LocalPlaylistEntity(
     val downloadedAt: LocalDateTime? = now(),
     val downloadState: Int = DownloadState.STATE_NOT_DOWNLOADED,
     val youtubePlaylistId: String? = null,
+    /** 本地歌单同步到网易云后的远端歌单 id(纯数字);null = 未同步网易 */
+    @ColumnInfo(name = "netease_playlist_id", defaultValue = "NULL")
+    val neteasePlaylistId: String? = null,
     @ColumnInfo(name = "youtube_sync_state", defaultValue = "0")
     val syncState: Int = YouTubeSyncState.NotSynced,
     val tracks: List<String>? = null,

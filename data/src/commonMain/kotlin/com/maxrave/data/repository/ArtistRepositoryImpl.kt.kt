@@ -76,34 +76,17 @@ internal class ArtistRepositoryImpl(
         localDataSource.updateFollowed(if (followed) 1 else 0, channelId)
     }
 
+    /** 纯本地关注位:云端账号由 [setRemoteFollowedStatus] 显式操作,不再自动镜像。 */
     override suspend fun updateFollowedStatus(
         channelId: String,
         followedStatus: Int,
-    ): Boolean? =
-        withContext(Dispatchers.Main) {
-            localDataSource.updateFollowed(followedStatus, channelId)
-            if (followedStatus == 0) {
-                localDataSource.deleteNotificationsByChannelId(channelId)
-                localDataSource.deleteFollowedArtistSingleAndAlbum(channelId)
-            }
-            // 网易歌手和 YT 歌手都遵守各自账号同步开关。本地关注已经在上面写入，
-            // 关闭同步时返回 null，表示没有尝试远端操作。
-            if (channelId.toLongOrNull() != null) {
-                if (dataStoreManager.neteaseFollowSync.first() != DataStoreManager.TRUE) {
-                    return@withContext null
-                }
-                return@withContext neteaseRepository.subscribeArtistNetease(channelId, followedStatus == 1).isSuccess
-            }
-            // The local flag is already written above and stays written: Follow must not depend
-            // on the network. Mirroring is opt-in, and its outcome is handed back rather than
-            // swallowed so the caller can say something when the account could not be reached.
-            if (dataStoreManager.syncFollowToYouTube.first() != DataStoreManager.TRUE) {
-                return@withContext null
-            }
-            withContext(Dispatchers.IO) {
-                setSubscription(channelId, followedStatus == 1)
-            }
+    ) = withContext(Dispatchers.Main) {
+        localDataSource.updateFollowed(followedStatus, channelId)
+        if (followedStatus == 0) {
+            localDataSource.deleteNotificationsByChannelId(channelId)
+            localDataSource.deleteFollowedArtistSingleAndAlbum(channelId)
         }
+    }
 
     override suspend fun setRemoteFollowedStatus(
         channelId: String,

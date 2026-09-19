@@ -42,7 +42,7 @@ import com.maxrave.domain.data.entities.analytics.PlaybackEventEntity
         YourYouTubePlaylistList::class, PlaybackEventEntity::class, EventArtistEntity::class,
         AutoEqEntryEntity::class, AutoEqIndexMetaEntity::class, AutoEqCurveEntity::class
     ],
-    version = 28,
+    version = 29,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 2, to = 3), AutoMigration(
@@ -98,6 +98,12 @@ import com.maxrave.domain.data.entities.analytics.PlaybackEventEntity
         AutoMigration(26, 27),
         AutoMigration(25, 27),
         AutoMigration(24, 27),
+        // 28 is the manual 27→28 source backfill (see MusicDatabase.android.kt) — no auto path.
+        // 29 adds local_playlist.netease_playlist_id (nullable ADD COLUMN) — plain enough for
+        // the generator on all three arrivals.
+        AutoMigration(28, 29),
+        AutoMigration(27, 29),
+        AutoMigration(26, 29),
     ],
 )
 @TypeConverters(Converters::class)
