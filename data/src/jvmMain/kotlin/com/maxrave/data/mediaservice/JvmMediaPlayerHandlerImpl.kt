@@ -1659,48 +1659,74 @@ class JvmMediaPlayerHandlerImpl(
                                             ),
                                     )
                                 }
-                                if (runBlocking { dataStoreManager.endlessQueue.first() } == TRUE) {
-                                    Logger.w(TAG, "loadMore: Endless Queue")
-                                    val lastTrack =
-                                        queueData.value.data.listTracks
-                                            .lastOrNull() ?: return@launch
-                                    val radioId = "RDAMVM${lastTrack.videoId}"
-                                    if (radioId == queueData.value.data.playlistId) {
-                                        Logger.w(TAG, "loadMore: Already in radio mode")
-                                        return@launch
-                                    }
-                                    _queueData.update {
-                                        it.copy(
-                                            data =
-                                                it.data.copy(
-                                                    playlistId = radioId,
-                                                ),
-                                            queueState = QueueData.StateSource.STATE_INITIALIZED,
-                                        )
-                                    }
-                                    reorderShuffledQueue(player.getCurrentMediaTimeLine())
-                                    Logger.d("Check loadMore", "queueData: ${queueData.value}")
-                                    getRelated(lastTrack.videoId)
-                                }
+                                startEndlessRadio()
                             }
                         }
                 }
             }
-        } else if (runBlocking { dataStoreManager.endlessQueue.first() } == TRUE) {
-            Logger.w(TAG, "loadMore: Endless Queue")
-            val lastTrack =
-                queueData.value.data.listTracks
-                    .lastOrNull() ?: return
+        } else {
+            startEndlessRadio()
+        }
+    }
+
+    /**
+     * 无尽队列钩子：队列内容耗尽时以当前尾曲为种子转入电台模式，续播不停。种子按 ID 形状
+     * 分流（[songRadioPlaylistId]）——YT 走 RDAMVM + getRelated 原路径；网易纯数字 ID 走
+     * NETEASE_RADIO_ 哨兵 + simiSong 首批（[getNeteaseRadioBatch] 读 playlistId 当种子、
+     * continuation 当偏移，首批判 "0"）。种子与当前 playlistId 相同视为已在该电台模式，早退。
+     */
+    private fun startEndlessRadio() {
+        if (runBlocking { dataStoreManager.endlessQueue.first() } != TRUE) return
+        Logger.w(TAG, "loadMore: Endless Queue")
+        val lastTrack =
+            queueData.value.data.listTracks
+                .lastOrNull() ?: return
+        val radioId = songRadioPlaylistId(lastTrack.videoId)
+        if (radioId == queueData.value.data.playlistId) {
+            Logger.w(TAG, "loadMore: Already in radio mode")
+            return
+        }
+        if (radioId.startsWith(NETEASE_RADIO_PLAYLIST_ID_PREFIX)) {
             _queueData.update {
                 it.copy(
                     queueState = QueueData.StateSource.STATE_INITIALIZED,
-                    data = it.data.copy(playlistId = "RDAMVM${lastTrack.videoId}"),
+                    data = it.data.copy(playlistId = radioId, continuation = "0"),
                 )
             }
             reorderShuffledQueue(player.getCurrentMediaTimeLine())
-            Logger.d("Check loadMore", "queueData: ${queueData.value}")
+            getNeteaseRadioBatch()
+        } else {
+            _queueData.update {
+                it.copy(
+                    queueState = QueueData.StateSource.STATE_INITIALIZED,
+                    data = it.data.copy(playlistId = radioId),
+                )
+            }
+            reorderShuffledQueue(player.getCurrentMediaTimeLine())
             getRelated(lastTrack.videoId)
         }
+    }
+
+    /**
+     * simiSong 电台见底后的无尽续链：以**当前**尾曲换一个新种子接着开电台（YT 的 RDAMVM
+     * 钩子每次耗尽也天然换尾曲重播种子）。种子没变——整批撞重、队列没长——就不再续，
+     * 与 FM 批次的重试上限同理，防"同一批相似歌反复拉"的死循环。
+     */
+    private fun reseedNeteaseRadioIfEndless() {
+        if (runBlocking { dataStoreManager.endlessQueue.first() } != TRUE) return
+        val lastTrack =
+            queueData.value.data.listTracks
+                .lastOrNull() ?: return
+        val nextRadioId = songRadioPlaylistId(lastTrack.videoId)
+        if (nextRadioId == queueData.value.data.playlistId) return
+        Logger.w(TAG, "getNeteaseRadioBatch: endless reseed to $nextRadioId")
+        _queueData.update {
+            it.copy(
+                queueState = QueueData.StateSource.STATE_INITIALIZED,
+                data = it.data.copy(playlistId = nextRadioId, continuation = "0"),
+            )
+        }
+        getNeteaseRadioBatch()
     }
 
     override fun getRelated(videoId: String) {
@@ -1822,10 +1848,11 @@ class JvmMediaPlayerHandlerImpl(
             }
             val offset = queueData.value.data.continuation?.toIntOrNull()
             if (offset == null) {
-                // 已收尾的电台再次触底：仅复位状态，不再发请求
+                // 已收尾的电台再次触底：先复位状态，再由无尽钩子决定是否换尾曲种子续链
                 _queueData.update {
                     it.copy(queueState = QueueData.StateSource.STATE_INITIALIZED)
                 }
+                reseedNeteaseRadioIfEndless()
                 return@launch
             }
             var batch: List<Track> = emptyList()
@@ -1865,6 +1892,8 @@ class JvmMediaPlayerHandlerImpl(
                     )
                 }
                 reorderShuffledQueue(player.getCurrentMediaTimeLine())
+                // 无尽队列开着：simiSong 见底不收摊，换尾曲种子接着续
+                reseedNeteaseRadioIfEndless()
             }
         }
     }
