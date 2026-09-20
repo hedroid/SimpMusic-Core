@@ -1820,11 +1820,14 @@ internal fun NeteaseSong.toTrackPlaylist(): com.maxrave.domain.data.model.browse
         resultType = "song",
     )
 
-/** 网易封面统一到清晰度安全的尺寸:服务端 URL 常自带小参数(如 ?param=140y140),网格 tile
- *  实际渲染 ~500px 时被强行拉糊;已有参数替换、无参数补上。网易 CDN 对自家图源参数通用。 */
+/** 网易封面统一到清晰度安全的尺寸。服务端 URL 常自带 imageView/watermark/thumbnail 处理链
+ *  (实测 /playlist/list:链尾 thumbnail=140y140 才是最终生效变换 → 140px 小图+水印,
+ *  分类页封面"很模糊"的根因),把 ?param= 追加到既有 query 后会被 CDN 忽略——
+ *  必须整段替换 query。裸路径+?param=NNNyNN 是网易 CDN 官方变换格式
+ *  (探针实测:140y140=34KB,500y500=390KB)。 */
 internal fun String?.toNeteaseCoverUrl(size: Int = 500): String? {
     if (isNullOrEmpty()) return null
-    val base = substringBefore("?param=")
+    val base = substringBefore('?')
     return "$base?param=${size}y$size"
 }
 
