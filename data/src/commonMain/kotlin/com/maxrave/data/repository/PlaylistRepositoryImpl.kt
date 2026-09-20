@@ -773,6 +773,60 @@ internal class PlaylistRepositoryImpl(
                 }
         }.flowOn(Dispatchers.IO)
 
+    override fun getLibraryPlaylistSplit(): Flow<PlaylistRepository.YouTubeLibraryPlaylists?> =
+        flow {
+            youTube
+                .getLibraryPlaylists()
+                .onSuccess { data ->
+                    val tabs = data.contents?.singleColumnBrowseResultsRenderer?.tabs.orEmpty()
+                    val sections = mutableListOf<List<PlaylistsResult>>()
+                    tabs.forEach { tab ->
+                        val grid =
+                            tab.tabRenderer.content
+                                ?.sectionListRenderer
+                                ?.contents
+                                ?.firstOrNull()
+                                ?.gridRenderer
+                        val items = mutableListOf<PlaylistsResult>()
+                        grid?.items?.let { items.addAll(parseLibraryPlaylist(it)) }
+                        var continuation =
+                            grid?.continuations
+                                ?.firstOrNull()
+                                ?.nextContinuationData
+                                ?.continuation
+                        while (continuation != null) {
+                            youTube
+                                .nextYouTubePlaylists(continuation)
+                                .onSuccess { nextData ->
+                                    continuation = nextData.second
+                                    items.addAll(parseNextLibraryPlaylist(nextData.first))
+                                }.onFailure { exception ->
+                                    exception.printStackTrace()
+                                    Logger.e("Library", "getLibraryPlaylistSplit continuation error: ${exception.message}")
+                                    continuation = null
+                                }
+                        }
+                        // W 级:分区假设若不成立(单 tab/顺序不符),凭这行日志即可定位修正
+                        Logger.w("Library", "getLibraryPlaylistSplit tab '${tab.tabRenderer.title}': ${items.size} playlists")
+                        if (items.isNotEmpty()) sections.add(items)
+                    }
+                    if (sections.isEmpty()) {
+                        emit(null)
+                        return@onSuccess
+                    }
+                    emit(
+                        PlaylistRepository.YouTubeLibraryPlaylists(
+                            own = sections.getOrNull(0).orEmpty(),
+                            liked = sections.getOrNull(1).orEmpty(),
+                        ),
+                    )
+                }.onFailure { e ->
+                    Logger.e("Library", "getLibraryPlaylistSplit error: ${e.message}")
+                    e.printStackTrace()
+                    emit(null)
+                }
+        }.flowOn(Dispatchers.IO)
+
     override suspend fun createYouTubePlaylistWithTracks(
         title: String,
         videoIds: List<String>,

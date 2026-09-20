@@ -809,6 +809,8 @@ class NeteaseRepositoryImpl(
                     client.playlistTracksViaDetail(id, limit = NETEASE_PLAYLIST_PAGE_SIZE).getOrNull().orEmpty()
                 }
             if (tracks.isEmpty() && trackIds.isEmpty()) error("歌单曲目为空: $playlistId")
+            // 歌曲行红心:云村 likedIds(OR 合并缓存,null=未登录视作空)
+            val likedIds = likedIdsOrNull().orEmpty()
             // 令牌 = 下一页 offset。trackIds.size 是权威总数(探针实测 songDetail 响应
             // 顺序与输入一致,个别失效 id 缺席不影响 offset 推进)。
             val continuation =
@@ -832,7 +834,7 @@ class NeteaseRepositoryImpl(
                     thumbnails = meta.coverUrl.toThumbnails(),
                     title = meta.name,
                     trackCount = meta.trackCount,
-                    tracks = tracks.map { it.toTrackPlaylist() },
+                    tracks = tracks.map { it.toTrackPlaylist(likedIds.contains(it.id)) },
                     // 年份取歌单创建年份(YT 歌单页同位置语义)
                     year = meta.createTimeMs?.let { (it / 31_536_000_000L + 1970).toString() } ?: "",
                 )
@@ -1439,7 +1441,7 @@ class NeteaseRepositoryImpl(
                 thumbnails = album.coverUrl.toThumbnails(),
                 title = album.name,
                 trackCount = songs.size,
-                tracks = songs.map { it.toTrackPlaylist() },
+                tracks = songs.map { it.toTrackPlaylist(likedIdsOrNull().orEmpty().contains(it.id)) },
                 type = "album",
                 year = album.publishTimeMs?.let { (it / 31_536_000_000L + 1970).toString() } ?: "",
             )
@@ -1794,7 +1796,7 @@ private fun String?.sanitizeCardSubtitle(): String? =
     this?.trim()?.takeIf { it.isNotEmpty() && !it.all(Char::isDigit) }
 
 /** NeteaseSong → 歌单页曲目形状(PlaylistBrowse.tracks = browse.album.Track) */
-internal fun NeteaseSong.toTrackPlaylist(): com.maxrave.domain.data.model.browse.album.Track =
+internal fun NeteaseSong.toTrackPlaylist(liked: Boolean = false): com.maxrave.domain.data.model.browse.album.Track =
     com.maxrave.domain.data.model.browse.album.Track(
         album =
             com.maxrave.domain.data.model.searchResult.songs.Album(
@@ -1812,7 +1814,9 @@ internal fun NeteaseSong.toTrackPlaylist(): com.maxrave.domain.data.model.browse
         durationSeconds = (durationMs / 1000).toInt(),
         isAvailable = hasCopyright ?: true,
         isExplicit = false,
-        likeStatus = "INDIFFERENT",
+        // 歌单/专辑页歌曲行的红心:吃云村 likedIds(OR 合并缓存),此前恒 INDIFFERENT——
+        // 收藏歌单里明明红心过的歌全显示空心("收藏歌单中的红心状态不对")
+        likeStatus = if (liked) "LIKE" else "INDIFFERENT",
         thumbnails = coverUrl.toThumbnails(),
         title = name,
         videoId = id.toString(),
