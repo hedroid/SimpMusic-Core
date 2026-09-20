@@ -399,22 +399,37 @@ class NeteaseRepositoryImpl(
         // 从所选档位向下走降级链;只剩试听(freeTrialInfo)视为不可完整播放 → null,
         // 由调用方按 neteaseAutoSwitch 设置决定是否自动切另一音源。
         val order = NeteaseQuality.FALLBACK_ORDER.dropWhile { it != wanted }
-        for (level in order) {
-            val result = client.songUrl(id, level).getOrNull() ?: return Result.success(null)
-            val url = result.url
-            if (!url.isNullOrEmpty() && result.freeTrialInfo == null) {
-                // CDN 签发的链接是 http://,Android 默认禁明文流量(ExoPlayer 报 Source error),
-                // music.126.net 的 CDN 支持 https,统一升级
-                return Result.success(
-                    NeteaseStreamInfo(
-                        url = url.replaceFirst("http://", "https://"),
-                        mimeType = result.mimeType,
-                        level = level.key,
-                    ),
-                )
+        // 请求失败(网络抖动/网易频控)≠灰歌:带增量退避重试(NeriPlayer 同款语义),别把可恢复
+        // 的瞬时失败一次性判成"不可播放"。灰歌(响应成功但无 url/全试听)不进重试分支。
+        var retriesLeft = 2
+        chainLoop@ while (true) {
+            for (level in order) {
+                val result = client.songUrl(id, level).getOrNull()
+                if (result == null) {
+                    if (retriesLeft > 0) {
+                        val backoffMs = 1500L * (3 - retriesLeft)
+                        retriesLeft--
+                        Logger.w(TAG, "songUrl request failed ($songId @${level.key}), retry in ${backoffMs}ms ($retriesLeft left)")
+                        delay(backoffMs)
+                        continue@chainLoop
+                    }
+                    return Result.success(null)
+                }
+                val url = result.url
+                if (!url.isNullOrEmpty() && result.freeTrialInfo == null) {
+                    // CDN 签发的链接是 http://,Android 默认禁明文流量(ExoPlayer 报 Source error),
+                    // music.126.net 的 CDN 支持 https,统一升级
+                    return Result.success(
+                        NeteaseStreamInfo(
+                            url = url.replaceFirst("http://", "https://"),
+                            mimeType = result.mimeType,
+                            level = level.key,
+                        ),
+                    )
+                }
             }
+            return Result.success(null)
         }
-        return Result.success(null)
     }
 
     override suspend fun getLyrics(songId: String): Result<ProviderLyrics?> {
@@ -1670,7 +1685,7 @@ private fun List<NeteasePlaylist>.toMoodsMomentObject(tag: String): MoodsMomentO
                                     subtitle = pl.description.sanitizeCardSubtitle().orEmpty(),
                                     thumbnails =
                                         pl.coverUrl?.let {
-                                            listOf(Thumbnail(height = 540, url = it, width = 540))
+                                            listOf(Thumbnail(height = 540, url = it.toNeteaseCoverUrl() ?: it, width = 540))
                                         },
                                     title = pl.name,
                                 )
@@ -1721,7 +1736,7 @@ internal fun NeteasePlaylist.toPlaylistEntity(): PlaylistEntity =
         description = description.orEmpty(),
         duration = "",
         durationSeconds = 0,
-        thumbnails = coverUrl.orEmpty(),
+        thumbnails = coverUrl.toNeteaseCoverUrl().orEmpty(),
         title = name,
         trackCount = trackCount,
         tracks = null,
@@ -1805,8 +1820,16 @@ internal fun NeteaseSong.toTrackPlaylist(): com.maxrave.domain.data.model.browse
         resultType = "song",
     )
 
+/** 网易封面统一到清晰度安全的尺寸:服务端 URL 常自带小参数(如 ?param=140y140),网格 tile
+ *  实际渲染 ~500px 时被强行拉糊;已有参数替换、无参数补上。网易 CDN 对自家图源参数通用。 */
+internal fun String?.toNeteaseCoverUrl(size: Int = 500): String? {
+    if (isNullOrEmpty()) return null
+    val base = substringBefore("?param=")
+    return "$base?param=${size}y$size"
+}
+
 private fun String?.toThumbnails(): List<Thumbnail> =
-    takeUnless { it.isNullOrEmpty() }?.let {
+    toNeteaseCoverUrl()?.let {
         listOf(Thumbnail(height = 540, url = it, width = 540))
     } ?: emptyList()
 
