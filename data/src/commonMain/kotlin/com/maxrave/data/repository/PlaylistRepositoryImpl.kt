@@ -9,6 +9,7 @@ import com.maxrave.data.parser.parseLibraryPlaylist
 import com.maxrave.data.parser.parseNextLibraryPlaylist
 import com.maxrave.data.parser.parsePlaylistData
 import com.maxrave.domain.data.entities.ArtistEntity
+import com.maxrave.domain.data.model.searchResult.albums.AlbumsResult
 import com.maxrave.domain.data.entities.PlaylistEntity
 import com.maxrave.domain.data.entities.SetVideoIdEntity
 import com.maxrave.domain.data.entities.SongEntity
@@ -17,6 +18,7 @@ import com.maxrave.domain.data.model.browse.album.Track
 import com.maxrave.domain.data.model.browse.playlist.Author
 import com.maxrave.domain.data.model.browse.playlist.PlaylistBrowse
 import com.maxrave.domain.data.model.searchResult.playlists.PlaylistsResult
+import com.maxrave.domain.data.model.searchResult.songs.Artist
 import com.maxrave.domain.data.model.searchResult.songs.Thumbnail
 import com.maxrave.domain.data.type.ChartItem
 import com.maxrave.domain.data.type.PlaylistType
@@ -713,6 +715,64 @@ internal class PlaylistRepositoryImpl(
                 }
         }.flowOn(Dispatchers.IO)
 
+    override fun getLibraryAlbum(): Flow<List<AlbumsResult>?> =
+        flow {
+            youTube
+                .getLibraryAlbums()
+                .onSuccess { data ->
+                    val input =
+                        data.contents
+                            ?.singleColumnBrowseResultsRenderer
+                            ?.tabs
+                            ?.firstOrNull()
+                            ?.tabRenderer
+                            ?.content
+                            ?.sectionListRenderer
+                            ?.contents
+                            ?.firstOrNull()
+                            ?.gridRenderer
+                            ?.items
+                    if (input.isNullOrEmpty()) {
+                        Logger.w("Library", "No liked albums found")
+                        emit(null)
+                        return@onSuccess
+                    }
+                    val listItem = parseLibraryPlaylist(input).map { it.toAlbumsResult() }.toMutableList()
+                    var continuation =
+                        data.contents
+                            ?.singleColumnBrowseResultsRenderer
+                            ?.tabs
+                            ?.firstOrNull()
+                            ?.tabRenderer
+                            ?.content
+                            ?.sectionListRenderer
+                            ?.contents
+                            ?.firstOrNull()
+                            ?.gridRenderer
+                            ?.continuations
+                            ?.firstOrNull()
+                            ?.nextContinuationData
+                            ?.continuation
+                    while (continuation != null) {
+                        youTube
+                            .nextYouTubePlaylists(continuation)
+                            .onSuccess { nextData ->
+                                continuation = nextData.second
+                                listItem.addAll(parseNextLibraryPlaylist(nextData.first).map { it.toAlbumsResult() })
+                            }.onFailure { exception ->
+                                exception.printStackTrace()
+                                Logger.e("Library", "getLibraryAlbum continuation error: ${exception.message}")
+                                continuation = null
+                            }
+                    }
+                    if (listItem.isNotEmpty()) emit(listItem) else emit(null)
+                }.onFailure { e ->
+                    Logger.e("Library", "getLibraryAlbum error: ${e.message}")
+                    e.printStackTrace()
+                    emit(null)
+                }
+        }.flowOn(Dispatchers.IO)
+
     override fun getMixedForYou(): Flow<List<PlaylistsResult>?> =
         flow {
             youTube
@@ -828,4 +888,19 @@ internal class PlaylistRepositoryImpl(
                     emit(Resource.Error<List<ChartItem>>(exception.message ?: "Unknown error"))
                 }
         }.flowOn(Dispatchers.IO)
+
+/** 库页"收藏的专辑"tile:liked_albums 网格项(playlist 形状解析)→ 专辑形状(author 行即艺人副标题) */
+private fun PlaylistsResult.toAlbumsResult() =
+    AlbumsResult(
+        artists = author.takeIf { it.isNotBlank() }?.let { listOf(Artist(id = null, name = it)) } ?: emptyList(),
+        browseId = browseId,
+        category = "Album",
+        duration = Unit,
+        isExplicit = false,
+        resultType = "Album",
+        thumbnails = thumbnails,
+        title = title,
+        type = "album",
+        year = "",
+    )
 }

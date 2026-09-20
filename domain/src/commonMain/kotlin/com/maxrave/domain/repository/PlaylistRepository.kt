@@ -5,6 +5,7 @@ import com.maxrave.domain.data.entities.PlaylistEntity
 import com.maxrave.domain.data.entities.SongEntity
 import com.maxrave.domain.data.entities.YourYouTubePlaylistList
 import com.maxrave.domain.data.model.browse.playlist.PlaylistBrowse
+import com.maxrave.domain.data.model.searchResult.albums.AlbumsResult
 import com.maxrave.domain.data.model.searchResult.playlists.PlaylistsResult
 import com.maxrave.domain.data.type.ChartItem
 import com.maxrave.domain.data.type.PlaylistType
@@ -78,6 +79,9 @@ interface PlaylistRepository {
     ): Flow<Resource<Pair<PlaylistBrowse, String?>>>
 
     fun getLibraryPlaylist(): Flow<List<PlaylistsResult>?>
+
+    /** 当前 YT 账号收藏的专辑(FEmusic_liked_albums,含 continuation 翻页) */
+    fun getLibraryAlbum(): Flow<List<AlbumsResult>?>
 
     fun getMixedForYou(): Flow<List<PlaylistsResult>?>
 
