@@ -83,6 +83,13 @@ interface PlaylistRepository {
     /** 当前 YT 账号收藏的专辑(FEmusic_liked_albums,含 continuation 翻页) */
     fun getLibraryAlbum(): Flow<List<AlbumsResult>?>
 
+    /** 在 YT 账号下新建歌单并把初始曲目一次塞进去(三点菜单"添加到歌单→新建歌单")。
+     *  返回新歌单 id;失败(null)由调用方提示。 */
+    suspend fun createYouTubePlaylistWithTracks(
+        title: String,
+        videoIds: List<String>,
+    ): String?
+
     fun getMixedForYou(): Flow<List<PlaylistsResult>?>
 
     fun updateYourYouTubePlaylistTitle(

@@ -773,6 +773,18 @@ internal class PlaylistRepositoryImpl(
                 }
         }.flowOn(Dispatchers.IO)
 
+    override suspend fun createYouTubePlaylistWithTracks(
+        title: String,
+        videoIds: List<String>,
+    ): String? =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            youTube
+                .createPlaylist(title, videoIds)
+                .getOrNull()
+                ?.playlistId
+                ?.takeIf { it.isNotBlank() }
+        }
+
     override fun getMixedForYou(): Flow<List<PlaylistsResult>?> =
         flow {
             youTube
