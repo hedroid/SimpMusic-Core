@@ -297,6 +297,13 @@ private fun provideResolvingDataSourceFactory(
         var dataSpecReturn: DataSpec = dataSpec
         var resolved = false
         runBlocking(Dispatchers.IO) {
+            fun networkSpec(url: String): DataSpec =
+                // 网络路径不封顶:一次 open 流完剩余整首。曾经这里像缓存路径一样截成 5MiB
+                // 分块,但 Media3 把"读满截断长度的 EOF"当流结束,第二个分块永远不会装载
+                // ——网易 320k mp3 普遍 9-12MB(>5MiB),每首歌在 ~2 分钟(chunk1 解码完)
+                // 静音到曲尾,表现即"播放一会就没声音"(OkHttp 日志实锤:每曲仅发
+                // Range:0-5242879 一个请求)。YT 多数曲 <5MiB 故长期未暴露。
+                dataSpec.withUri(url.toUri())
             if (mediaId.contains(MERGING_DATA_TYPE.VIDEO)) {
                 val id = mediaId.removePrefix(MERGING_DATA_TYPE.VIDEO)
                 streamRepository.getNewFormat(id).lastOrNull()?.let {
@@ -307,7 +314,7 @@ private fun provideResolvingDataSourceFactory(
                         val is403Url = streamRepository.is403Url(videoUrl).firstOrNull() != false
                         Logger.d("Stream", "is 403 $is403Url")
                         if (!is403Url) {
-                            dataSpecReturn = dataSpec.withUri(videoUrl.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
+                            dataSpecReturn = networkSpec(videoUrl)
                             resolved = true
                             return@runBlocking
                         }
@@ -323,30 +330,19 @@ private fun provideResolvingDataSourceFactory(
                     ?.let {
                         Logger.d("Stream", it)
                         Logger.w("Stream", "Video")
-                        dataSpecReturn = dataSpec.withUri(it.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
+                        dataSpecReturn = networkSpec(it)
                         resolved = true
                     }
             } else {
-                // 网易歌的 mediaId 是纯数字;其 NewFormat 行的 600s TTL 是我们取流时自己盖的,已保守。
-                // 网易 CDN 对裸 HEAD 常回 405/403,用 HEAD 探活会反复误判 URL 失效,每误判一次就多打
-                // 一次 /song/url/v1 —— 连续听一段时间就触发网易频控(表现为"听了一会就不能播放")。
-                // TTL 内直接用,真 403 了由 CrossfadeExoPlayerAdapter 的重试兜底换新链接;
-                // YT 的 googlevideo URL 有效期 6h 且 HEAD 探活准确,保留探测。
-                val isNeteaseMedia = mediaId.toLongOrNull() != null
                 streamRepository.getNewFormat(mediaId).lastOrNull()?.let {
                     val audioUrl = it.audioUrl
                     if (audioUrl != null && it.expiredTime > now()) {
                         Logger.d("Stream", audioUrl)
                         Logger.w("Stream", "Audio from format")
-                        if (isNeteaseMedia) {
-                            dataSpecReturn = dataSpec.withUri(audioUrl.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
-                            resolved = true
-                            return@runBlocking
-                        }
                         val is403Url = streamRepository.is403Url(audioUrl).firstOrNull() != false
                         Logger.d("Stream", "is 403 $is403Url")
                         if (!is403Url) {
-                            dataSpecReturn = dataSpec.withUri(audioUrl.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
+                            dataSpecReturn = networkSpec(audioUrl)
                             resolved = true
                             return@runBlocking
                         }
@@ -362,7 +358,7 @@ private fun provideResolvingDataSourceFactory(
                     ?.let {
                         Logger.d("Stream", it)
                         Logger.w("Stream", "Audio")
-                        dataSpecReturn = dataSpec.withUri(it.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
+                        dataSpecReturn = networkSpec(it)
                         resolved = true
                     }
             }
