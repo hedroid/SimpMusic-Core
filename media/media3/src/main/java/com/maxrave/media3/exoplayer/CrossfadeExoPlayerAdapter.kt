@@ -228,15 +228,29 @@ internal class CrossfadeExoPlayerAdapter(
     @Volatile
     private var resumeOnFocusGain = false
 
+    /**
+     * Monotonic counter bumped on every user-initiated play/pause (in-app UI, notification,
+     * MediaSession). A transient-focus auto-pause records the counter value it observed; the
+     * GAIN handler only auto-resumes when no user interaction has happened since — otherwise
+     * "nav prompt auto-pauses, user taps pause to keep it quiet, prompt ends" would resurrect
+     * playback on its own.
+     */
+    private val userPlaybackInteractionSeq = java.util.concurrent.atomic.AtomicInteger(0)
+
+    @Volatile
+    private var transientPauseInteractionSeq = -1
+
     private val audioFocusListener =
         AudioManager.OnAudioFocusChangeListener { focusChange ->
             when (focusChange) {
                 AudioManager.AUDIOFOCUS_GAIN -> {
                     // Don't fight the crossfade ramp; while crossfading it owns the volume.
                     if (!isCrossfading) currentPlayer?.volume = internalVolume
-                    if (resumeOnFocusGain) {
+                    if (resumeOnFocusGain && transientPauseInteractionSeq == userPlaybackInteractionSeq.get()) {
                         resumeOnFocusGain = false
                         play()
+                    } else {
+                        resumeOnFocusGain = false
                     }
                 }
 
@@ -248,9 +262,15 @@ internal class CrossfadeExoPlayerAdapter(
                 }
 
                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                    // Temporary loss (e.g. an incoming call): pause and remember to resume.
-                    resumeOnFocusGain = internalState == InternalState.PLAYING
+                    // Temporary loss (e.g. an incoming call): pause and remember to resume —
+                    // but only until the user touches play/pause again (see counter above).
+                    val wasPlaying = internalState == InternalState.PLAYING
+                    resumeOnFocusGain = false
                     pause()
+                    if (wasPlaying) {
+                        resumeOnFocusGain = true
+                        transientPauseInteractionSeq = userPlaybackInteractionSeq.get()
+                    }
                 }
 
                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
@@ -591,6 +611,7 @@ internal class CrossfadeExoPlayerAdapter(
 
     override fun play() {
         Logger.d(TAG, "play() called (state: $internalState, playWhenReady: $internalPlayWhenReady)")
+        userPlaybackInteractionSeq.incrementAndGet()
         castRemotePlayer?.let { remote ->
             internalPlayWhenReady = true
             remote.play()
@@ -624,6 +645,35 @@ internal class CrossfadeExoPlayerAdapter(
                     cachedIsLoading = false
                 }
 
+                InternalState.ERROR -> {
+                    // Error-state recovery (NeriPlayer refreshCurrentSongUrl semantics): a play
+                    // press on a failed track is a stream-refresh retry at the last position.
+                    // Previously ERROR fell into the "invalid state" branch and the play button
+                    // stayed dead until the user changed tracks — that is exactly what an
+                    // expired/throttled netease URL looked like ("after a while nothing plays").
+                    val videoId = playlist.getOrNull(localCurrentMediaItemIndex)?.mediaId
+                    if (videoId == null) {
+                        Logger.w(TAG, "Play: ERROR state but no current track to recover")
+                    } else {
+                        internalPlayWhenReady = true
+                        coroutineScope.launch {
+                            try {
+                                streamRepository.invalidateFormat(videoId)
+                                streamRepository.invalidateFormat("${com.maxrave.common.MERGING_DATA_TYPE.VIDEO}$videoId")
+                                precachedPlayers.remove(videoId)?.player?.release()
+                                loadAndPlayTrackInternal(
+                                    localCurrentMediaItemIndex,
+                                    cachedPosition.coerceAtLeast(0L),
+                                    shouldPlay = true,
+                                )
+                            } catch (e: Exception) {
+                                if (e is CancellationException) throw e
+                                Logger.e(TAG, "Error-state recovery failed: ${e.message}", e)
+                            }
+                        }
+                    }
+                }
+
                 else -> {
                     Logger.w(TAG, "Play: Called in invalid state: $internalState")
                 }
@@ -633,6 +683,7 @@ internal class CrossfadeExoPlayerAdapter(
 
     override fun pause() {
         Logger.d(TAG, "pause() called (state: $internalState, playWhenReady: $internalPlayWhenReady)")
+        userPlaybackInteractionSeq.incrementAndGet()
         castRemotePlayer?.let { remote ->
             internalPlayWhenReady = false
             remote.pause()
@@ -1602,8 +1653,11 @@ internal class CrossfadeExoPlayerAdapter(
                         cachedPosition = startPositionMs
                     }
 
-                    // Auto-play if requested
-                    if (shouldPlay) {
+                    // Auto-play if requested — and only if the user hasn't paused while the load
+                    // was in flight. shouldPlay captures the intent at call time; a netease track
+                    // can take seconds to resolve, and finishing that load with shouldPlay=true
+                    // after a pause mid-load would start a track the user just silenced.
+                    if (shouldPlay && internalPlayWhenReady) {
                         requestAudioFocusInternal()
                         player.play()
                         transitionToState(InternalState.PLAYING)
@@ -1723,7 +1777,10 @@ internal class CrossfadeExoPlayerAdapter(
                     val isRetryableSourceError =
                         error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ||
                             error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
-                            error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND
+                            error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND ||
+                            // Listed in the comment above but missing from the condition; a refused
+                            // connection is just as recoverable as the other IO failures.
+                            error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED
 
                     val currentVideoId = playlist.getOrNull(localCurrentMediaItemIndex)?.mediaId
                     if (error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND) {
@@ -1747,6 +1804,15 @@ internal class CrossfadeExoPlayerAdapter(
                             // Snapshot the current position so the retry resumes where playback
                             // failed instead of restarting the track from the beginning.
                             val resumePositionMs = cachedPosition.coerceAtLeast(0L)
+                            // Whether recovery resumes playback follows the intent at the moment
+                            // of the error (NeriPlayer semantics: playWhenReady || isPlaying).
+                            // ExoPlayer keeps filling the buffer while paused, so a chunk can
+                            // fail to resolve under a user pause — reloading with shouldPlay=true
+                            // there would resurrect a paused track on its own.
+                            val resumeAfterRetry =
+                                player.playWhenReady ||
+                                    player.isPlaying ||
+                                    internalState == InternalState.PLAYING
                             coroutineScope.launch {
                                 try {
                                     // Invalidate cached format so ResolvingDataSource fetches a fresh URL
@@ -1755,7 +1821,7 @@ internal class CrossfadeExoPlayerAdapter(
                                     // Evict from precache (it may hold a stale player)
                                     precachedPlayers.remove(currentVideoId)?.player?.release()
                                     // Reload the track at the saved position
-                                    loadAndPlayTrackInternal(localCurrentMediaItemIndex, resumePositionMs, shouldPlay = true)
+                                    loadAndPlayTrackInternal(localCurrentMediaItemIndex, resumePositionMs, shouldPlay = resumeAfterRetry)
                                 } catch (e: Exception) {
                                     if (e is CancellationException) throw e
                                     Logger.e(TAG, "Retry failed: ${e.message}", e)

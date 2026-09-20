@@ -327,11 +327,22 @@ private fun provideResolvingDataSourceFactory(
                         resolved = true
                     }
             } else {
+                // 网易歌的 mediaId 是纯数字;其 NewFormat 行的 600s TTL 是我们取流时自己盖的,已保守。
+                // 网易 CDN 对裸 HEAD 常回 405/403,用 HEAD 探活会反复误判 URL 失效,每误判一次就多打
+                // 一次 /song/url/v1 —— 连续听一段时间就触发网易频控(表现为"听了一会就不能播放")。
+                // TTL 内直接用,真 403 了由 CrossfadeExoPlayerAdapter 的重试兜底换新链接;
+                // YT 的 googlevideo URL 有效期 6h 且 HEAD 探活准确,保留探测。
+                val isNeteaseMedia = mediaId.toLongOrNull() != null
                 streamRepository.getNewFormat(mediaId).lastOrNull()?.let {
                     val audioUrl = it.audioUrl
                     if (audioUrl != null && it.expiredTime > now()) {
                         Logger.d("Stream", audioUrl)
                         Logger.w("Stream", "Audio from format")
+                        if (isNeteaseMedia) {
+                            dataSpecReturn = dataSpec.withUri(audioUrl.toUri()).subrange(dataSpec.uriPositionOffset, chunkLength)
+                            resolved = true
+                            return@runBlocking
+                        }
                         val is403Url = streamRepository.is403Url(audioUrl).firstOrNull() != false
                         Logger.d("Stream", "is 403 $is403Url")
                         if (!is403Url) {
