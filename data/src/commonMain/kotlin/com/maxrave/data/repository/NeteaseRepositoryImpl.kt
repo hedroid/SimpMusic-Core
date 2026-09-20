@@ -1197,11 +1197,12 @@ class NeteaseRepositoryImpl(
                 artistId = aid?.toString(),
                 artistName = artist?.name,
                 // head/info/get 的 avatar 是小尺寸头像,直接铺 973px 宽的艺人卡横幅会糊+裁切
-                // 感明显;网易 CDN 支持 ?param=WxH 服务端出大图
+                // 感明显;toNeteaseCoverUrl 整段换 query 成 ?param=1080y1080(裸追加会被
+                // 服务端自带处理链忽略,同歌单封面模糊根因)
                 artistAvatar =
                     artist?.picUrl
                         ?.replaceFirst("http://", "https://")
-                        ?.let { if (it.contains('?')) it else "$it?param=1080y1080" },
+                        ?.toNeteaseCoverUrl(1080),
                 artistFans = followerCount,
                 albumId = alid?.toString(),
                 albumName = album?.first?.name,
@@ -1720,7 +1721,8 @@ internal fun NeteaseSong.toSongEntity(): SongEntity =
         isAvailable = hasCopyright ?: true,
         isExplicit = false,
         likeStatus = "INDIFFERENT",
-        thumbnails = coverUrl,
+        // 播放页大图/通知栏/FM 卡都吃这里:统一 1080(服务端图片处理链同歌单封面,见 toNeteaseCoverUrl)
+        thumbnails = coverUrl.toNeteaseCoverUrl(1080),
         title = name,
         videoType = VIDEO_TYPE_SONG,
         category = null,
