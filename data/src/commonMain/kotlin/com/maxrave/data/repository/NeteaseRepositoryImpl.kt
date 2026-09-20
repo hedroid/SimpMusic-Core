@@ -21,6 +21,8 @@ import com.maxrave.domain.data.model.browse.artist.ResultRelated
 import com.maxrave.domain.data.model.browse.artist.ResultSong
 import com.maxrave.domain.data.model.browse.artist.Songs
 import com.maxrave.domain.data.model.browse.artist.ResultPlaylist
+import com.maxrave.domain.data.model.browse.artist.ResultSingle
+import com.maxrave.domain.data.model.browse.artist.Singles
 import com.maxrave.domain.data.model.mood.Mood
 import com.maxrave.domain.data.model.mood.genre.GenreObject
 import com.maxrave.domain.data.model.mood.MoodItem
@@ -1442,16 +1444,19 @@ class NeteaseRepositoryImpl(
                 val songs = songsDeferred.await()?.items.orEmpty()
                 val albums = albumsDeferred.await()?.first.orEmpty()
                 val similar = similarDeferred.await().orEmpty()
+                // 按 type 拆单曲/专辑两组(与 getArtistMoreAlbums 同规则,保持行内与"更多"页一致)
+                val singleItems = albums.filter { it.type == "Single" }
+                val albumItems = albums.filter { it.type != "Single" }
                 ArtistBrowse(
                     albums =
-                        if (albums.isEmpty()) {
+                        if (albumItems.isEmpty()) {
                             null
                         } else {
                             Albums(
                                 browseId = id,
                                 params = "", // 网易一次性给全,无"更多"页
                                 results =
-                                    albums.map {
+                                    albumItems.map {
                                         ResultAlbum(
                                             browseId = it.id.toString(),
                                             isExplicit = false,
@@ -1484,7 +1489,24 @@ class NeteaseRepositoryImpl(
                             )
                         },
                     shuffleId = null,
-                    singles = null,
+                    singles =
+                        if (singleItems.isEmpty()) {
+                            null
+                        } else {
+                            Singles(
+                                browseId = id.toString(),
+                                params = "", // 同 albums:网易一次性给全
+                                results =
+                                    singleItems.map {
+                                        ResultSingle(
+                                            browseId = it.id.toString(),
+                                            thumbnails = it.coverUrl.toThumbnails(),
+                                            title = it.name,
+                                            year = it.publishTimeMs?.let { p -> (p / 31_536_000_000L + 1970).toString() } ?: "",
+                                        )
+                                    },
+                            )
+                        },
                     songs =
                         if (songs.isEmpty()) {
                             null
@@ -1563,10 +1585,19 @@ class NeteaseRepositoryImpl(
             .onSuccess { starredAlbumsCache.set(it) }
     }
 
-    /** 艺人页"更多专辑"(AlbumRepository.getAlbumMore 的 MPAD{数字} 路由):一次 50 张无分页 */
-    suspend fun getArtistMoreAlbums(artistId: Long): ArrayList<AlbumsResult> =
+    /**
+     * 艺人页"更多专辑/单曲"(AlbumRepository.getAlbumMore 的 MPAD{数字} 路由):一次 50 张无分页,
+     * 按 type 拆不相交的两组(单曲=Single,专辑/EP/未知归专辑组)。不相交是硬约束——
+     * NotifyWork 对 ALBUM/SINGLE 两个参数各调一次,同一张发行若同时落两组会发两条重复通知。
+     */
+    suspend fun getArtistMoreAlbums(
+        artistId: Long,
+        singles: Boolean = false,
+    ): ArrayList<AlbumsResult> =
         ArrayList(
-            client.artistAlbums(artistId, limit = 50).getOrNull()?.first.orEmpty().map { it.toAlbumsResult() },
+            client.artistAlbums(artistId, limit = 50).getOrNull()?.first.orEmpty()
+                .filter { (it.type == "Single") == singles }
+                .map { it.toAlbumsResult() },
         )
 
     /** 搜专辑 → AlbumsResult(搜索 tab;netease 数字 browseId → AlbumScreen 同页路由)。 */

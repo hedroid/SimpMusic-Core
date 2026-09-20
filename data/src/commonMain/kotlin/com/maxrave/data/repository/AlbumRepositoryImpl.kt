@@ -26,6 +26,9 @@ import kotlinx.datetime.LocalDateTime
 
 private const val TAG = "AlbumRepositoryImpl"
 
+/** MoreAlbumsViewModel.SINGLE_PARAM 的同值复制(composeApp 常量,core 无法引用,只认这一个) */
+private const val NETEASE_SINGLE_PARAM = "ggMIegYIAhoCAQI%3D"
+
 internal class AlbumRepositoryImpl(
     private val localDataSource: LocalDataSource,
     private val youTube: YouTube,
@@ -180,11 +183,14 @@ internal class AlbumRepositoryImpl(
     ): Flow<Pair<String, List<AlbumsResult>>?> =
         flow {
             runCatching {
-                // 网易艺人"更多专辑":ArtistScreen 拼的是 MPAD{数字id} → artistAlbums 一次给全
+                // 网易艺人"更多专辑/单曲":ArtistScreen/NotifyWork 拼的是 MPAD{数字id} → artistAlbums
+                // 一次给全再按 type 拆两组。params 值与 MoreAlbumsViewModel 的常量同源
+                // (core 不依赖 composeApp,只能复制这两个不透明 YTM 参数串)。
                 if (browseId.startsWith("MPAD")) {
                     browseId.removePrefix("MPAD").toLongOrNull()?.let { artistId ->
-                        val albums = neteaseRepository.getArtistMoreAlbums(artistId)
-                        emit(if (albums.isEmpty()) null else "专辑" to albums)
+                        val singles = params == NETEASE_SINGLE_PARAM
+                        val albums = neteaseRepository.getArtistMoreAlbums(artistId, singles)
+                        emit(if (albums.isEmpty()) null else (if (singles) "单曲" else "专辑") to albums)
                         return@flow
                     }
                 }

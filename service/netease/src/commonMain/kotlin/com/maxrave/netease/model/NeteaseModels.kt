@@ -144,6 +144,11 @@ data class NeteaseAlbum(
     val description: String?,
     /** 唱片公司(播放页详情卡发行信息行用) */
     val company: String? = null,
+    /**
+     * 发行类型,/artist/albums 原始词表实测为 "Single"/"专辑"(推断另有 "EP"):
+     * 单曲=Single,其余一律归专辑组。albumDetail 等其它端点无此字段时为 null,按专辑处理。
+     */
+    val type: String? = null,
 )
 
 /** DJ 电台(网易云专属能力,YTM 无对应入口) */

@@ -1347,6 +1347,7 @@ internal fun JsonElement.toAlbum(): NeteaseAlbum {
         publishTimeMs = obj["publishTime"].nLong(),
         description = obj.str("description"),
         company = obj.str("company")?.takeIf { it.isNotBlank() },
+        type = obj.str("type")?.takeIf { it.isNotBlank() },
     )
 }
 
