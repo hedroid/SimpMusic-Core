@@ -71,7 +71,13 @@ internal class HomeRepositoryImpl(
                     .customQuery(browseId = "FEmusic_home", params = params)
                     .onSuccess { result ->
                         val list: ArrayList<HomeItem> = arrayListOf()
-                        if (result.contents
+                        // The account chips row only leads contents[0] on the UNFILTERED home of
+                        // a logged-in user. A mood-filtered response (params != null) leads with
+                        // the mood header, whose strapline/artwork would overwrite AccountName/
+                        // AccountThumbUrl and pollute the Library avatar.
+                        if (params == null &&
+                            dataStoreManager.cookie.first().isNotEmpty() &&
+                            result.contents
                                 ?.singleColumnBrowseResultsRenderer
                                 ?.tabs
                                 ?.get(
