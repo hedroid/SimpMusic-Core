@@ -160,6 +160,7 @@ internal class ArtistRepositoryImpl(
                 .onSuccess { data ->
                     // 两种已知形状都收:shelf(musicResponsiveListItemRenderer)/grid(musicTwoRowItemRenderer)
                     val parsed = mutableListOf<com.maxrave.data.parser.LibraryArtistItem>()
+                    var fetchComplete = true
                     data.contents?.singleColumnBrowseResultsRenderer?.tabs.orEmpty().forEach { tab ->
                         val sections = tab.tabRenderer.content?.sectionListRenderer?.contents.orEmpty()
                         sections.forEach { content ->
@@ -178,6 +179,7 @@ internal class ArtistRepositoryImpl(
                                             parsed.addAll(parseLibraryArtistsFromGrid(gridItems))
                                             continuation = next
                                         }.onFailure {
+                                            fetchComplete = false
                                             Logger.w("ArtistRepositoryImpl", "library artists continuation error: ${it.message}")
                                             continuation = null
                                         }
@@ -188,13 +190,13 @@ internal class ArtistRepositoryImpl(
                             }
                         }
                     }
-                    Logger.w("ArtistRepositoryImpl", "getLibraryArtists parsed ${parsed.size} subscribed artists")
+                    Logger.w("ArtistRepositoryImpl", "getLibraryArtists parsed ${parsed.size} subscribed artists, fetchComplete=$fetchComplete")
                     if (parsed.isEmpty()) {
                         // 空响应(未登录/形状又变了):回落本地镜像,别把已有分区清掉
                         emit(ytFollowedFromLocal())
                         return@onSuccess
                     }
-                    // adopt-on 回填:新行 INSERT IGNORE(followed=1),老行补关注位;只加不减
+                    // 云端为准回填:新行 INSERT IGNORE(followed=1),老行补关注位
                     parsed.forEach { item ->
                         localDataSource.insertArtist(
                             ArtistEntity(
@@ -205,6 +207,19 @@ internal class ArtistRepositoryImpl(
                             ),
                         )
                         localDataSource.updateFollowed(1, item.channelId)
+                    }
+                    // 云端取关:拉取完整(翻页无失败)才执行删除方向,半截响应不动本地
+                    if (fetchComplete) {
+                        val remoteIds = parsed.map { it.channelId }.toSet()
+                        val removed = ytFollowedFromLocal().filter { it.channelId !in remoteIds }
+                        if (removed.isNotEmpty()) {
+                            Logger.w(
+                                "ArtistRepositoryImpl",
+                                "unfollowing ${removed.size} artists absent from cloud: " +
+                                    removed.joinToString { "${it.name}(${it.channelId})" },
+                            )
+                            removed.forEach { updateFollowedStatus(it.channelId, 0) }
+                        }
                     }
                     val merged = ytFollowedFromLocal()
                     youTubeLibraryArtistsCache = merged to TimeSource.Monotonic.markNow()

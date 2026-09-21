@@ -57,9 +57,10 @@ interface ArtistRepository {
     fun getFollowedArtists(): Flow<List<ArtistEntity>>
 
     /**
-     * YT 库"关注的歌手"真源:FEmusic_library_corpus_artists 拉账号订阅列表,adopt-on 回填
-     * 本地关注位(只加不减,本地关注动作本就即时推云端)后返回回填结果(仅 YT 艺人)。
-     * 失败/未登录回落本地镜像;force=false 走 10 分钟内存缓存。
+     * YT 库"关注的歌手"真源:FEmusic_library_corpus_artists 拉账号订阅列表,以云端为准
+     * 双向同步本地关注位——云端新增回填;云端已取关而本地仍关注的,在拉取完整(翻页无
+     * 失败)时就地取关(含通知/新发行清理)。关注动作即时推云端且成功才落本地,本地⊆云端
+     * 成立,删除方向安全。失败/未登录回落本地镜像;force=false 走 10 分钟内存缓存。
      */
     fun getYouTubeLibraryArtists(force: Boolean = false): Flow<List<ArtistEntity>?>
 
