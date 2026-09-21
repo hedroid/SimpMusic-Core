@@ -13,6 +13,7 @@ import com.maxrave.kotlinytmusicscraper.models.BrowseEndpoint
 import com.maxrave.kotlinytmusicscraper.models.GridRenderer
 import com.maxrave.kotlinytmusicscraper.models.MediaType
 import com.maxrave.kotlinytmusicscraper.models.MusicCarouselShelfRenderer
+import com.maxrave.kotlinytmusicscraper.models.MusicResponsiveListItemRenderer
 import com.maxrave.kotlinytmusicscraper.models.MusicShelfRenderer
 import com.maxrave.kotlinytmusicscraper.models.MusicTwoRowItemRenderer
 import com.maxrave.kotlinytmusicscraper.models.PlaylistItem
@@ -1751,6 +1752,43 @@ class YouTube {
     suspend fun getLibraryPlaylists() =
         runCatching {
             ytMusic.browse(WEB_REMIX, "FEmusic_liked_playlists", setLogin = true).body<BrowseResponse>()
+        }
+
+    /** YT 库"关注的歌手"订阅列表(需登录),FEmusic_library_corpus_artists */
+    suspend fun getLibraryArtists() =
+        runCatching {
+            val res = ytMusic.browse(WEB_REMIX, "FEmusic_library_corpus_artists", setLogin = true)
+            // TEMP-PROBE: 响应形状验证,确认解析后删除
+            runCatching { println("YT-ARTISTS raw=" + res.bodyAsText().take(3000)) }
+            res.body<BrowseResponse>()
+        }
+
+    /** 库艺人列表翻页:响应可能是 shelf 形状(musicResponsiveListItemRenderer)或
+     *  grid 形状(musicTwoRowItemRenderer),两者都带回由数据层各自解析 */
+    suspend fun nextLibraryArtists(
+        continuation: String,
+    ): Result<Triple<List<MusicResponsiveListItemRenderer>, List<MusicTwoRowItemRenderer>, String?>> =
+        runCatching {
+            val response =
+                ytMusic
+                    .nextCtoken(
+                        WEB_REMIX,
+                        continuation,
+                    ).body<BrowseResponse>()
+            Triple(
+                response
+                    .continuationContents
+                    ?.musicShelfContinuation
+                    ?.contents
+                    ?.mapNotNull { it.musicResponsiveListItemRenderer } ?: emptyList(),
+                response
+                    .continuationContents
+                    ?.gridContinuation
+                    ?.items
+                    ?.mapNotNull { it.musicTwoRowItemRenderer } ?: emptyList(),
+                response.continuationContents?.musicShelfContinuation?.continuations?.getContinuation()
+                    ?: response.continuationContents?.gridContinuation?.continuations?.getContinuation(),
+            )
         }
 
     suspend fun getLibraryAlbums() =

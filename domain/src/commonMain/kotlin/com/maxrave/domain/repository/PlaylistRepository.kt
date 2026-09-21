@@ -84,18 +84,33 @@ interface PlaylistRepository {
     fun getLibraryAlbum(): Flow<List<AlbumsResult>?>
 
     /**
-     * YT 库歌单分区:FEmusic_liked_playlists 的响应 tab 即 YTM App"已创建/已喜欢"筛选。
-     * 单 tab 响应(假设不成立/老账号)退化为 own=全部、liked=空;tab 标题打 W 级日志备查。
+     * [getLibraryPlaylistSplit] 的分区结果。auto=系统歌单(红心歌单 Liked Music browseId=LM、
+     * YouTube 稍后在听 WL,及标题兜底识别);自建/收藏的区分:响应带两个 tab 时按 tab,
+     * 单 tab(grid 混排,实测常态)按 kebab 菜单动作签名(见 data 层 savedByMenuSignature)。
      */
     fun getLibraryPlaylistSplit(): Flow<YouTubeLibraryPlaylists?>
 
-    /** [getLibraryPlaylistSplit] 的分区结果。auto=系统歌单(红心歌单 Liked Music,browseId=LM)。 */
     data class YouTubeLibraryPlaylists(
         val own: List<PlaylistsResult>,
         val liked: List<PlaylistsResult>,
     ) {
-        val auto: List<PlaylistsResult> get() = own.filter { it.browseId == "LM" }
-        val created: List<PlaylistsResult> get() = own.filter { it.browseId != "LM" }
+        val auto: List<PlaylistsResult> get() = own.filter { it.isSystemPlaylist() }
+        val created: List<PlaylistsResult> get() = own.filter { !it.isSystemPlaylist() }
+
+        companion object {
+            /** 系统歌单固定 browseId:LM=喜欢的音乐(WT 行),WL=YouTube 稍后在听 */
+            private val SYSTEM_PLAYLIST_BROWSE_IDS = setOf("LM", "WL")
+
+            /**
+             * 系统歌单标题兜底(服务端按账号语言下发,zh/en 双语都收):"稍后在听/稍后再听/
+             * Listen later/稍后再看/Watch later"。用户自建同名歌单会被误收进置顶行,可接受。
+             */
+            private val SYSTEM_PLAYLIST_TITLES =
+                setOf("稍后在听", "稍后再听", "Listen later", "稍后再看", "Watch later", "待听清单")
+
+            fun PlaylistsResult.isSystemPlaylist(): Boolean =
+                browseId in SYSTEM_PLAYLIST_BROWSE_IDS || title in SYSTEM_PLAYLIST_TITLES
+        }
     }
 
     /** 在 YT 账号下新建歌单并把初始曲目一次塞进去(三点菜单"添加到歌单→新建歌单")。

@@ -1342,6 +1342,9 @@ internal fun JsonElement.toAlbum(): NeteaseAlbum {
         artistName =
             obj.array("artists")?.firstOrNull()?.jsonObject?.str("name")
                 ?: obj.obj("artist")?.str("name"),
+        artistId =
+            obj.array("artists")?.firstOrNull()?.jsonObject?.get("id").nLong()
+                ?: obj.obj("artist")?.get("id").nLong(),
         coverUrl = (obj.str("picUrl") ?: obj.str("coverImgUrl"))?.toHttpsUrl(),
         trackCount = obj["size"].nInt() ?: obj["trackCount"].nInt() ?: 0,
         publishTimeMs = obj["publishTime"].nLong(),

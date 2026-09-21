@@ -138,6 +138,8 @@ data class NeteaseAlbum(
     val id: Long,
     val name: String,
     val artistName: String?,
+    /** 主歌手 id(/v1/album 的 album.artists[0].id / artist.id;缺失为 null,专辑页歌手名随之不可点) */
+    val artistId: Long? = null,
     val coverUrl: String?,
     val trackCount: Int,
     val publishTimeMs: Long?,

@@ -56,6 +56,13 @@ interface ArtistRepository {
 
     fun getFollowedArtists(): Flow<List<ArtistEntity>>
 
+    /**
+     * YT 库"关注的歌手"真源:FEmusic_library_corpus_artists 拉账号订阅列表,adopt-on 回填
+     * 本地关注位(只加不减,本地关注动作本就即时推云端)后返回回填结果(仅 YT 艺人)。
+     * 失败/未登录回落本地镜像;force=false 走 10 分钟内存缓存。
+     */
+    fun getYouTubeLibraryArtists(force: Boolean = false): Flow<List<ArtistEntity>?>
+
     suspend fun updateArtistInLibrary(
         inLibrary: LocalDateTime,
         channelId: String,

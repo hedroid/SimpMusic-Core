@@ -7,6 +7,7 @@ import com.maxrave.data.mapping.toTrack
 import com.maxrave.data.mapping.toYouTubeWatchEndpoint
 import com.maxrave.data.parser.parseLibraryPlaylist
 import com.maxrave.data.parser.parseNextLibraryPlaylist
+import com.maxrave.data.parser.savedByMenuSignature
 import com.maxrave.data.parser.parsePlaylistData
 import com.maxrave.domain.data.entities.ArtistEntity
 import com.maxrave.domain.data.model.searchResult.albums.AlbumsResult
@@ -780,6 +781,8 @@ internal class PlaylistRepositoryImpl(
                 .onSuccess { data ->
                     val tabs = data.contents?.singleColumnBrowseResultsRenderer?.tabs.orEmpty()
                     val sections = mutableListOf<List<PlaylistsResult>>()
+                    // 收藏他人歌单的 browseId 集合:单 tab 响应(grid 自建/收藏混排)按菜单签名分
+                    val savedIds = mutableSetOf<String>()
                     tabs.forEach { tab ->
                         val grid =
                             tab.tabRenderer.content
@@ -788,7 +791,14 @@ internal class PlaylistRepositoryImpl(
                                 ?.firstOrNull()
                                 ?.gridRenderer
                         val items = mutableListOf<PlaylistsResult>()
-                        grid?.items?.let { items.addAll(parseLibraryPlaylist(it)) }
+                        grid?.items?.let { raw ->
+                            items.addAll(parseLibraryPlaylist(raw))
+                            savedIds.addAll(
+                                raw.mapNotNull { it.musicTwoRowItemRenderer }
+                                    .filter { it.savedByMenuSignature() }
+                                    .mapNotNull { it.navigationEndpoint?.browseEndpoint?.browseId },
+                            )
+                        }
                         var continuation =
                             grid?.continuations
                                 ?.firstOrNull()
@@ -800,6 +810,11 @@ internal class PlaylistRepositoryImpl(
                                 .onSuccess { nextData ->
                                     continuation = nextData.second
                                     items.addAll(parseNextLibraryPlaylist(nextData.first))
+                                    savedIds.addAll(
+                                        nextData.first
+                                            .filter { it.savedByMenuSignature() }
+                                            .mapNotNull { it.navigationEndpoint?.browseEndpoint?.browseId },
+                                    )
                                 }.onFailure { exception ->
                                     exception.printStackTrace()
                                     Logger.e("Library", "getLibraryPlaylistSplit continuation error: ${exception.message}")
@@ -807,17 +822,30 @@ internal class PlaylistRepositoryImpl(
                                 }
                         }
                         // W 级:分区假设若不成立(单 tab/顺序不符),凭这行日志即可定位修正
-                        Logger.w("Library", "getLibraryPlaylistSplit tab '${tab.tabRenderer.title}': ${items.size} playlists")
+                        Logger.w("Library", "getLibraryPlaylistSplit tab '${tab.tabRenderer.title}': ${items.size} playlists, saved-by-menu ${items.count { it.browseId in savedIds }}")
+                        // TEMP-PROBE: 逐条打印 browseId+标题+菜单签名,确认"稍后在听"识别与自建/收藏分流后删除
+                        items.forEach { println("YT-SPLIT tab='${tab.tabRenderer.title}' id='${it.browseId}' title='${it.title}' saved=${it.browseId in savedIds}") }
                         if (items.isNotEmpty()) sections.add(items)
                     }
                     if (sections.isEmpty()) {
                         emit(null)
                         return@onSuccess
                     }
+                    // 响应真带两个 tab(已创建/已保存)时结构优先;单 tab(实测常态)按菜单签名分
+                    val own: List<PlaylistsResult>
+                    val liked: List<PlaylistsResult>
+                    if (sections.size >= 2) {
+                        own = sections[0]
+                        liked = sections[1]
+                    } else {
+                        val all = sections.first()
+                        own = all.filterNot { it.browseId in savedIds }
+                        liked = all.filter { it.browseId in savedIds }
+                    }
                     emit(
                         PlaylistRepository.YouTubeLibraryPlaylists(
-                            own = sections.getOrNull(0).orEmpty(),
-                            liked = sections.getOrNull(1).orEmpty(),
+                            own = own,
+                            liked = liked,
                         ),
                     )
                 }.onFailure { e ->

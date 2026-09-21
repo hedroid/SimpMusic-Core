@@ -457,29 +457,6 @@ internal class LocalPlaylistRepositoryImpl(
         }
     }.flowOn(Dispatchers.IO)
 
-    override fun copyOnlinePlaylistToLocal(
-        playlist: PlaylistState,
-        tracks: List<Track>,
-        successMessage: String,
-    ): Flow<LocalResource<String>> =
-        wrapMessageResource(successMessage = successMessage) {
-            tracks.forEach { track ->
-                localDataSource.insertSong(track.toSongEntity())
-            }
-            val videoIds = tracks.toListVideoId()
-            localDataSource.insertLocalPlaylistWithTracks(
-                LocalPlaylistEntity(
-                    title = playlist.title,
-                    thumbnail = playlist.thumbnail,
-                    youtubePlaylistId = null,
-                    tracks = videoIds,
-                    downloadState = DownloadState.STATE_NOT_DOWNLOADED,
-                    syncState = NotSynced,
-                ),
-                videoIds,
-            )
-        }
-
     /**
      * Mirrors a locally picked cover onto the YouTube playlist backing this local one.
      *

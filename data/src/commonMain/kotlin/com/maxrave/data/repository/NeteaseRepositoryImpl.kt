@@ -821,9 +821,11 @@ class NeteaseRepositoryImpl(
                 }
             val browse =
                 com.maxrave.domain.data.model.browse.playlist.PlaylistBrowse(
+                    // creator 是账号不是歌手(creatorId 传去歌手页必报"歌手不存在"),
+                    // id 恒置空串 → PlaylistScreen 的 isNotEmpty 守卫令作者名不可点
                     author =
                         com.maxrave.domain.data.model.browse.playlist.Author(
-                            id = meta.creatorId?.toString() ?: "",
+                            id = "",
                             name = meta.creatorNickname ?: "网易云音乐",
                         ),
                     description = meta.description,
@@ -1433,7 +1435,8 @@ class NeteaseRepositoryImpl(
             val id = albumId.toLongOrNull() ?: error("netease albumId 非数字: $albumId")
             val (album, songs) = client.albumDetail(id).getOrNull() ?: error("专辑不存在: $albumId")
             AlbumBrowse(
-                artists = listOf(Artist(id = "", name = album.artistName ?: "网易云音乐")),
+                // artistId 缺失(合辑/官方账号专辑)时置空串,AlbumScreen 的 isNotEmpty 守卫让歌手名不可点
+                artists = listOf(Artist(id = album.artistId?.toString() ?: "", name = album.artistName ?: "网易云音乐")),
                 audioPlaylistId = "",
                 description = album.description,
                 duration = "",
