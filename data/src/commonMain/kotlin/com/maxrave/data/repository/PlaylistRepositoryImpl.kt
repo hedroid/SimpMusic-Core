@@ -7,7 +7,7 @@ import com.maxrave.data.mapping.toTrack
 import com.maxrave.data.mapping.toYouTubeWatchEndpoint
 import com.maxrave.data.parser.parseLibraryPlaylist
 import com.maxrave.data.parser.parseNextLibraryPlaylist
-import com.maxrave.data.parser.savedByMenuSignature
+import com.maxrave.data.parser.ownSavedByMenu
 import com.maxrave.data.parser.parsePlaylistData
 import com.maxrave.domain.data.entities.ArtistEntity
 import com.maxrave.domain.data.model.searchResult.albums.AlbumsResult
@@ -123,8 +123,12 @@ internal class PlaylistRepositoryImpl(
         saved: Boolean,
     ): Boolean =
         if (playlistId.toLongOrNull() != null) {
-            if (!neteaseRepository.isLoggedIn.first()) false
-            else neteaseRepository.subscribeNeteasePlaylist(playlistId, saved).getOrDefault(false)
+            if (!neteaseRepository.isLoggedIn.first()) {
+                false
+            } else {
+                // 失败抛出(异常消息=服务端原文,如"操作过于频繁"),由 VM 透传 toast
+                neteaseRepository.subscribeNeteasePlaylist(playlistId, saved).getOrThrow()
+            }
         } else {
             if (dataStoreManager.cookie.first().isEmpty()) false
             // Browse navigation commonly prefixes playlist ids with "VL" (VLPL...). The
@@ -779,73 +783,65 @@ internal class PlaylistRepositoryImpl(
             youTube
                 .getLibraryPlaylists()
                 .onSuccess { data ->
-                    val tabs = data.contents?.singleColumnBrowseResultsRenderer?.tabs.orEmpty()
-                    val sections = mutableListOf<List<PlaylistsResult>>()
-                    // 收藏他人歌单的 browseId 集合:单 tab 响应(grid 自建/收藏混排)按菜单签名分
+                    // 实测响应 tab=[媒体库, 下载内容]:歌单全在 tabs[0] 的 grid(自建/收藏混排),
+                    // 后面的 tab 是下载内容等无关分区(ytmusicapi 也只读 tab0),一律不碰
+                    val grid =
+                        data.contents?.singleColumnBrowseResultsRenderer?.tabs
+                            ?.firstOrNull()
+                            ?.tabRenderer?.content
+                            ?.sectionListRenderer
+                            ?.contents
+                            ?.firstOrNull()
+                            ?.gridRenderer
+                    val items = mutableListOf<PlaylistsResult>()
+                    // 收藏他人歌单的 browseId 集合:按 kebab 菜单动作签名分(见 ownSavedByMenu)
                     val savedIds = mutableSetOf<String>()
-                    tabs.forEach { tab ->
-                        val grid =
-                            tab.tabRenderer.content
-                                ?.sectionListRenderer
-                                ?.contents
-                                ?.firstOrNull()
-                                ?.gridRenderer
-                        val items = mutableListOf<PlaylistsResult>()
-                        grid?.items?.let { raw ->
-                            items.addAll(parseLibraryPlaylist(raw))
-                            savedIds.addAll(
-                                raw.mapNotNull { it.musicTwoRowItemRenderer }
-                                    .filter { it.savedByMenuSignature() }
-                                    .mapNotNull { it.navigationEndpoint?.browseEndpoint?.browseId },
-                            )
-                        }
-                        var continuation =
-                            grid?.continuations
-                                ?.firstOrNull()
-                                ?.nextContinuationData
-                                ?.continuation
-                        while (continuation != null) {
-                            youTube
-                                .nextYouTubePlaylists(continuation)
-                                .onSuccess { nextData ->
-                                    continuation = nextData.second
-                                    items.addAll(parseNextLibraryPlaylist(nextData.first))
-                                    savedIds.addAll(
-                                        nextData.first
-                                            .filter { it.savedByMenuSignature() }
-                                            .mapNotNull { it.navigationEndpoint?.browseEndpoint?.browseId },
-                                    )
-                                }.onFailure { exception ->
-                                    exception.printStackTrace()
-                                    Logger.e("Library", "getLibraryPlaylistSplit continuation error: ${exception.message}")
-                                    continuation = null
-                                }
-                        }
-                        // W 级:分区假设若不成立(单 tab/顺序不符),凭这行日志即可定位修正
-                        Logger.w("Library", "getLibraryPlaylistSplit tab '${tab.tabRenderer.title}': ${items.size} playlists, saved-by-menu ${items.count { it.browseId in savedIds }}")
-                        // TEMP-PROBE: 逐条打印 browseId+标题+菜单签名,确认"稍后在听"识别与自建/收藏分流后删除
-                        items.forEach { println("YT-SPLIT tab='${tab.tabRenderer.title}' id='${it.browseId}' title='${it.title}' saved=${it.browseId in savedIds}") }
-                        if (items.isNotEmpty()) sections.add(items)
+                    grid?.items?.let { raw ->
+                        items.addAll(parseLibraryPlaylist(raw))
+                        savedIds.addAll(
+                            raw.mapNotNull { it.musicTwoRowItemRenderer }
+                                .mapNotNull { renderer ->
+                                    renderer.navigationEndpoint?.browseEndpoint?.browseId
+                                        ?.takeIf { renderer.ownSavedByMenu() == true }
+                                },
+                        )
                     }
-                    if (sections.isEmpty()) {
+                    var continuation =
+                        grid?.continuations
+                            ?.firstOrNull()
+                            ?.nextContinuationData
+                            ?.continuation
+                    while (continuation != null) {
+                        youTube
+                            .nextYouTubePlaylists(continuation)
+                            .onSuccess { nextData ->
+                                continuation = nextData.second
+                                items.addAll(parseNextLibraryPlaylist(nextData.first))
+                                savedIds.addAll(
+                                    nextData.first
+                                        .mapNotNull { renderer ->
+                                            renderer.navigationEndpoint?.browseEndpoint?.browseId
+                                                ?.takeIf { renderer.ownSavedByMenu() == true }
+                                        },
+                                )
+                            }.onFailure { exception ->
+                                exception.printStackTrace()
+                                Logger.e("Library", "getLibraryPlaylistSplit continuation error: ${exception.message}")
+                                continuation = null
+                            }
+                    }
+                    if (items.isEmpty()) {
                         emit(null)
                         return@onSuccess
                     }
-                    // 响应真带两个 tab(已创建/已保存)时结构优先;单 tab(实测常态)按菜单签名分
-                    val own: List<PlaylistsResult>
-                    val liked: List<PlaylistsResult>
-                    if (sections.size >= 2) {
-                        own = sections[0]
-                        liked = sections[1]
-                    } else {
-                        val all = sections.first()
-                        own = all.filterNot { it.browseId in savedIds }
-                        liked = all.filter { it.browseId in savedIds }
-                    }
+                    Logger.w(
+                        "Library",
+                        "getLibraryPlaylistSplit: ${items.size} playlists, saved-by-menu ${items.count { it.browseId in savedIds }}",
+                    )
                     emit(
                         PlaylistRepository.YouTubeLibraryPlaylists(
-                            own = own,
-                            liked = liked,
+                            own = items.filterNot { it.browseId in savedIds },
+                            liked = items.filter { it.browseId in savedIds },
                         ),
                     )
                 }.onFailure { e ->

@@ -16,6 +16,9 @@ data class Menu(
         data class Item(
             val menuNavigationItemRenderer: MenuNavigationItemRenderer?,
             val menuServiceItemRenderer: MenuServiceItemRenderer?,
+            // "保存播放列表到媒体库"这类双态项(库歌单 kebab 里收藏他人歌单的专属动作,
+            // defaultIcon=BOOKMARK_BORDER/toggledIcon=BOOKMARK,自建歌单没有这一项)
+            val toggleMenuServiceItemRenderer: ToggleMenuServiceItemRenderer? = null,
         ) {
             @Serializable
             data class MenuNavigationItemRenderer(
@@ -29,6 +32,15 @@ data class Menu(
                 val text: Runs,
                 val icon: Icon,
                 val serviceEndpoint: NavigationEndpoint,
+            )
+
+            @Serializable
+            data class ToggleMenuServiceItemRenderer(
+                val defaultText: Runs? = null,
+                val toggledText: Runs? = null,
+                val defaultIcon: Icon? = null,
+                val toggledIcon: Icon? = null,
+                val isToggled: Boolean? = null,
             )
         }
 

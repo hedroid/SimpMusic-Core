@@ -50,9 +50,14 @@
   songDetail 响应顺序与输入一致（探针实测），个别失效 id 缺席需按 slice 顺序回填。
   歌单详情页滚动分页 = continuation 令牌 `NETEASE_PL_PAGE_{offset}`（core/common Config），
   经共享 PlaylistViewModel 的 getContinueTrack 契约续拉（SongRepositoryImpl 顶部前缀路由分支）。
-- **写操作端点的 405 频控（/playlist/subscribe 等）**：短时间多次调同一写端点（探针/脚本
-  连发）会返回 `{"code":405,"message":"操作过于频繁"}`（HTTP 200 包 405），且是**端点级连带**
-  ——换歌单 id 也 405，需等几分钟自行解除。正常 UI 使用（人手点击）不会触发。
+- **/playlist/subscribe 的 405（2026-09-21 重大更正）**：旧结论"频控，等几分钟自解"是
+  **误诊**——真凶是**请求形状**：收藏/取消收藏是**两个独立端点**（binaryify 4.9.2 社区实现
+  同款），`POST /weapi/playlist/subscribe` 与 `POST /weapi/playlist/unsubscribe`，body 只带
+  `{"id":...}`、**没有 t 参数**。把 `t=1/t=0` 发给同一端点，服务端直接回
+  `{"code":405,"message":"操作过于频繁"}`（HTTP 200 包 405）——与频控文案相同但其实是
+  畸形参数被拒。**附加真相：反复用错误形状重试后，正确形状也会 405 一段时间（实测
+  >20 分钟，期间每次调用疑似续期）**，所以用户"收藏失败→重试"会把窗口无限拉长。
+  排查方法：响应体探针（println body）一眼定位；修好后正确形状 200。
   成功响应 body `code` 为数字 200，`(body["code"] as? JsonPrimitive)?.content == "200"` 判定有效。
 - **`/v6/playlist/detail` 的 trackIds 条目形状 = `{"id":<歌曲id>,"v":<版本号>,...}`**：
   歌曲在 `id` 字段，`v` 是版本号（1/5/7 这类小数字）。2026-09-15 修正前解析误读 `v`

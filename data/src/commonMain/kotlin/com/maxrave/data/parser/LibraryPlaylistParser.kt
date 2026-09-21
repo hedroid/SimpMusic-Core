@@ -4,29 +4,37 @@ import com.maxrave.domain.data.model.searchResult.playlists.PlaylistsResult
 import com.maxrave.kotlinytmusicscraper.models.GridRenderer
 import com.maxrave.kotlinytmusicscraper.models.MusicTwoRowItemRenderer
 
-/** kebab 菜单里只有歌单主人可见的动作(编辑/删除播放列表),与界面语言无关的 iconType token */
-private val OWN_MENU_ICON_TOKENS = setOf("PLAYLIST_EDIT", "DELETE")
-
-/** kebab 菜单里只有收藏他人歌单才有的动作(从媒体库移除) */
-private val SAVED_MENU_ICON_TOKENS = setOf("LIBRARY_REMOVE", "REMOVE_FROM_LIBRARY")
+/**
+ * kebab 菜单动作签名(与界面语言无关的 iconType token,2026-09-21 登录账号响应实测):
+ * - 自建歌单独有:修改播放列表(EDIT)/删除播放列表(DELETE);
+ * - 收藏他人歌单独有:"保存播放列表到媒体库"双态项(toggle,defaultIcon=BOOKMARK_BORDER、
+ *   toggledIcon=BOOKMARK,已收藏时也是这两枚,只有文案切换)。
+ */
+private val OWN_MENU_ICON_TOKENS = setOf("EDIT", "DELETE")
+private val SAVED_MENU_ICON_TOKENS = setOf("BOOKMARK", "BOOKMARK_BORDER")
 
 /**
- * 用菜单动作签名判断这条库歌单是不是"收藏的他人歌单"。
  * FEmusic_liked_playlists 的 grid 把自建/收藏混在一个列表里(YTM App 的"已创建/已保存"
- * 筛选是请求侧 params,不在响应里),菜单动作是唯一稳定的区分信号:
- * - 自建歌单菜单有 编辑播放列表/删除播放列表;
- * - 收藏的他人歌单菜单只有 从媒体库移除。
- * token 若对不上(YT 改名)则返回 false 归"自建"侧,行为退化为不分区——不会错分。
+ * 筛选是请求侧 params,不在响应里),菜单动作是唯一稳定的区分信号。
+ * 返回 true=收藏的他人歌单、false=自建;token 全都对不上(YT 改名/字段缺席)返回 null,
+ * 调用方按自建处理——宁可不分区也不能错分。
  */
-internal fun MusicTwoRowItemRenderer.savedByMenuSignature(): Boolean {
-    val tokens =
-        menu?.menuRenderer?.items.orEmpty().mapNotNull { item ->
-            item.menuNavigationItemRenderer?.icon?.iconType
-                ?: item.menuServiceItemRenderer?.icon?.iconType
+internal fun MusicTwoRowItemRenderer.ownSavedByMenu(): Boolean? {
+    var own = false
+    var saved = false
+    menu?.menuRenderer?.items.orEmpty().forEach { item ->
+        item.menuNavigationItemRenderer?.icon?.iconType?.let { if (it in OWN_MENU_ICON_TOKENS) own = true }
+        item.menuServiceItemRenderer?.icon?.iconType?.let { if (it in OWN_MENU_ICON_TOKENS) own = true }
+        item.toggleMenuServiceItemRenderer?.let { toggle ->
+            toggle.defaultIcon?.iconType?.let { if (it in SAVED_MENU_ICON_TOKENS) saved = true }
+            toggle.toggledIcon?.iconType?.let { if (it in SAVED_MENU_ICON_TOKENS) saved = true }
         }
-    val own = tokens.any { it in OWN_MENU_ICON_TOKENS }
-    val saved = tokens.any { it in SAVED_MENU_ICON_TOKENS }
-    return saved && !own
+    }
+    return when {
+        own && !saved -> false
+        saved && !own -> true
+        else -> null
+    }
 }
 
 internal fun parseLibraryPlaylist(input: List<GridRenderer.Item>): List<PlaylistsResult> {

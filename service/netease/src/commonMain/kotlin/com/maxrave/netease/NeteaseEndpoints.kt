@@ -928,7 +928,12 @@ suspend fun NeteaseClient.deletePlaylist(
         (body["code"] as? JsonPrimitive)?.content == "200"
     }
 
-/** 收藏/取消收藏歌单(weapi /playlist/subscribe,t=1 收藏 t=0 取消) */
+/**
+ * 收藏/取消收藏歌单。**两个独立端点**(binaryify 4.9.2 社区实现同款):收藏
+ * /playlist/subscribe、取消 /playlist/unsubscribe,body 只带 id——**没有 t 参数**。
+ * 2026-09-21 实测:把 t=1/t=0 发给同一端点会被服务端回 405"操作过于频繁"
+ * (PITFALLS 旧的"频控"结论其实是这个畸形参数的误诊),换双端点后立即 200。
+ */
 suspend fun NeteaseClient.subscribePlaylist(
     playlistId: Long,
     subscribe: Boolean,
@@ -936,10 +941,16 @@ suspend fun NeteaseClient.subscribePlaylist(
     runCatching {
         val body =
             callWeApi(
-                "/playlist/subscribe",
-                mapOf("id" to playlistId, "t" to if (subscribe) 1 else 0),
+                if (subscribe) "/playlist/subscribe" else "/playlist/unsubscribe",
+                mapOf("id" to playlistId),
             )
-        (body["code"] as? JsonPrimitive)?.content == "200"
+        val code = (body["code"] as? JsonPrimitive)?.content
+        if (code != "200") {
+            // 405"操作过于频繁"是账号级长效风控窗口(重试会续期),把服务端消息抛给 UI
+            // 直接 toast,用户才知道该静置而不是反复重试
+            error(body.str("message") ?: "playlist subscribe code=$code")
+        }
+        true
     }
 
 /** 收藏/取消收藏专辑(weapi /album/sub,t=1 收藏 t=0 取消) */

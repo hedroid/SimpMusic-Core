@@ -1757,10 +1757,7 @@ class YouTube {
     /** YT 库"关注的歌手"订阅列表(需登录),FEmusic_library_corpus_artists */
     suspend fun getLibraryArtists() =
         runCatching {
-            val res = ytMusic.browse(WEB_REMIX, "FEmusic_library_corpus_artists", setLogin = true)
-            // TEMP-PROBE: 响应形状验证,确认解析后删除
-            runCatching { println("YT-ARTISTS raw=" + res.bodyAsText().take(3000)) }
-            res.body<BrowseResponse>()
+            ytMusic.browse(WEB_REMIX, "FEmusic_library_corpus_artists", setLogin = true).body<BrowseResponse>()
         }
 
     /** 库艺人列表翻页:响应可能是 shelf 形状(musicResponsiveListItemRenderer)或

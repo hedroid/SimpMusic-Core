@@ -84,9 +84,11 @@ interface PlaylistRepository {
     fun getLibraryAlbum(): Flow<List<AlbumsResult>?>
 
     /**
-     * [getLibraryPlaylistSplit] 的分区结果。auto=系统歌单(红心歌单 Liked Music browseId=LM、
-     * YouTube 稍后在听 WL,及标题兜底识别);自建/收藏的区分:响应带两个 tab 时按 tab,
-     * 单 tab(grid 混排,实测常态)按 kebab 菜单动作签名(见 data 层 savedByMenuSignature)。
+     * [getLibraryPlaylistSplit] 的分区结果(2026-09-21 登录账号实测重写):
+     * - auto=系统歌单置顶满行:赞过的音乐(LM)/稍后再听(SE),browseId 匹配前先剥 VL 前缀
+     *   (响应实测给的是 VLLM/VLSE),标题兜底;
+     * - own/liked(自建/收藏)按 kebab 菜单动作签名分(见 data 层 ownSavedByMenu:
+     *   EDIT/DELETE=自建、BOOKMARK 双态项=收藏),token 失配退化为全自建不误分。
      */
     fun getLibraryPlaylistSplit(): Flow<YouTubeLibraryPlaylists?>
 
@@ -94,22 +96,33 @@ interface PlaylistRepository {
         val own: List<PlaylistsResult>,
         val liked: List<PlaylistsResult>,
     ) {
-        val auto: List<PlaylistsResult> get() = own.filter { it.isSystemPlaylist() }
+        /** 系统歌单置顶行,LM(赞过的音乐)固定在 SE(稍后再听)上方 */
+        val auto: List<PlaylistsResult>
+            get() = own.filter { it.isSystemPlaylist() }.sortedBy { systemRowRank(it) }
+
         val created: List<PlaylistsResult> get() = own.filter { !it.isSystemPlaylist() }
 
         companion object {
-            /** 系统歌单固定 browseId:LM=喜欢的音乐(WT 行),WL=YouTube 稍后在听 */
-            private val SYSTEM_PLAYLIST_BROWSE_IDS = setOf("LM", "WL")
+            /** 系统歌单固定 browseId(剥 VL 前缀后匹配):LM=赞过的音乐,SE=稍后再听,WL=YouTube 待看 */
+            private val SYSTEM_PLAYLIST_BROWSE_IDS = setOf("LM", "SE", "WL")
+
+            /** 置顶行顺序:LM 在 SE 上方,其余系统歌单按原顺序跟在后面 */
+            private val SYSTEM_ROW_ORDER = listOf("LM", "SE")
 
             /**
-             * 系统歌单标题兜底(服务端按账号语言下发,zh/en 双语都收):"稍后在听/稍后再听/
-             * Listen later/稍后再看/Watch later"。用户自建同名歌单会被误收进置顶行,可接受。
+             * 系统歌单标题兜底(服务端按账号语言下发,zh/en 双语都收)。用户自建同名歌单
+             * 会被误收进置顶行,可接受。
              */
             private val SYSTEM_PLAYLIST_TITLES =
-                setOf("稍后在听", "稍后再听", "Listen later", "稍后再看", "Watch later", "待听清单")
+                setOf("赞过的音乐", "喜欢的音乐", "稍后在听", "稍后再听", "Listen later", "Liked music", "Liked songs", "稍后再看", "Watch later", "待听清单")
 
             fun PlaylistsResult.isSystemPlaylist(): Boolean =
-                browseId in SYSTEM_PLAYLIST_BROWSE_IDS || title in SYSTEM_PLAYLIST_TITLES
+                browseId.removePrefix("VL") in SYSTEM_PLAYLIST_BROWSE_IDS || title in SYSTEM_PLAYLIST_TITLES
+
+            internal fun systemRowRank(playlist: PlaylistsResult): Int {
+                val idx = SYSTEM_ROW_ORDER.indexOf(playlist.browseId.removePrefix("VL"))
+                return if (idx >= 0) idx else SYSTEM_ROW_ORDER.size
+            }
         }
     }
 
