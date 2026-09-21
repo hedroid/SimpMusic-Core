@@ -241,31 +241,16 @@ private fun provideResolvingDataSourceFactory(
     streamRepository: StreamRepository,
     coroutineScope: CoroutineScope,
 ): DataSource.Factory {
-    val chunkLength = 10 * 512 * 1024L
     return ResolvingDataSource.Factory(cacheDataSourceFactory) { dataSpec ->
         val mediaId = dataSpec.key ?: error("No media id")
         Logger.w("Stream", mediaId)
         Logger.w("Stream", mediaId.startsWith(MERGING_DATA_TYPE.VIDEO).toString())
-        if (downloadCache.isFullyCached(mediaId, dataSpec.position)) {
-            // Only on the first chunk: the subrange below makes the resolver run once per
-            // chunk, and updateFormat is a fire-and-forget youTube.player() call with no
-            // in-flight dedup, so leaving it ungated would fan out one request per 5 MiB.
-            if (dataSpec.position == 0L) {
-                coroutineScope.launch(Dispatchers.IO) {
-                    streamRepository.updateFormat(
-                        if (mediaId.contains(MERGING_DATA_TYPE.VIDEO)) {
-                            mediaId.removePrefix(MERGING_DATA_TYPE.VIDEO)
-                        } else {
-                            mediaId
-                        },
-                    )
-                }
-            }
-            Logger.w("Stream", "Downloaded $mediaId")
-            return@Factory dataSpec.subrange(dataSpec.uriPositionOffset, chunkLength)
-        }
-        if (playerCache.isFullyCached(mediaId, dataSpec.position)) {
-            // See the note above: once per track, not once per chunk.
+        val fullyCached =
+            downloadCache.isFullyCached(mediaId, dataSpec.position) ||
+                playerCache.isFullyCached(mediaId, dataSpec.position)
+        if (fullyCached) {
+            // Once per track, not once per open: updateFormat is a fire-and-forget
+            // youTube.player() call with no in-flight dedup.
             if (dataSpec.position == 0L) {
                 coroutineScope.launch(Dispatchers.IO) {
                     streamRepository.updateFormat(
@@ -278,21 +263,12 @@ private fun provideResolvingDataSourceFactory(
                 }
             }
             Logger.w("Stream", "Cached $mediaId")
-            // Every byte is on disk right now, so CacheDataSource can serve this chunk
-            // without ever reaching upstream, and the bare media id is safe as the URI.
-            //
-            // It is only safe for ONE chunk though. A bare id has no scheme, so
-            // DefaultDataSource routes it to FileDataSource, not to OkHttp — the failure
-            // is FileNotFoundException (ERROR_CODE_IO_FILE_NOT_FOUND), which Media3 lists
-            // as non-retriable and which CrossfadeExoPlayerAdapter does not recover from
-            // either. Meanwhile CacheDataSource.read() walks span to span inside a single
-            // open() without consulting this resolver again, so an unbounded DataSpec
-            // would stake the whole remaining track on a snapshot taken here: one LRU
-            // eviction (precache and downloads write to playerCache concurrently) or one
-            // "clear cache" tap mid-song and playback dies with no way back.
-            // Capping to chunkLength forces a re-check at every chunk boundary, so a
-            // cache that shrinks under us falls back to resolving a real URL.
-            return@Factory dataSpec.subrange(dataSpec.uriPositionOffset, chunkLength)
+            // 缓存命中也不提前返回:和下面的网络路径一样解析出真实 URL 且**不封顶**。
+            // 曾经这里 subrange 截 5MiB 分块——Media3 把"读满声明长度"当流结束(与网络路径
+            // 7532dec 修掉的病同源),整首被缓存的歌(网易 320k mp3/flac 全部 >5MiB)在
+            // chunk1 解码完后就静音到曲尾,"缓存过的歌反而没声音"即此。缓存命中时
+            // CacheDataSource(dataSpec.key=mediaId)全程读盘不走网络;中途被 LRU 驱逐则
+            // 透明回退 OkHttp 上游——比裸 id(驱逐时 FileNotFound 不可恢复)更稳。
         }
         var dataSpecReturn: DataSpec = dataSpec
         var resolved = false
@@ -364,6 +340,12 @@ private fun provideResolvingDataSourceFactory(
             }
         }
         if (!resolved) {
+            if (fullyCached) {
+                // 灰歌等取不到流但整首还在缓存:裸 id 不封顶兜底直读缓存(仅此兜底路径
+                // 存在"读盘中被驱逐"风险,可接受——取不到 URL 的歌没别的播法)
+                Logger.w("Stream", "unresolved but fully cached, serving cache: $mediaId")
+                return@Factory dataSpec
+            }
             Logger.e("Stream", "Failed to resolve stream URL for $mediaId")
             throw java.io.IOException("Failed to resolve stream URL for $mediaId")
         }
