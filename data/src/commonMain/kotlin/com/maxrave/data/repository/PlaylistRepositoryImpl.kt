@@ -856,11 +856,17 @@ internal class PlaylistRepositoryImpl(
         videoIds: List<String>,
     ): String? =
         kotlinx.coroutines.withContext(Dispatchers.IO) {
+            // 空曲目建单传 null(省略 videoIds 字段)——InnerTube 对缺省最宽容,空数组未验证
             youTube
-                .createPlaylist(title, videoIds)
+                .createPlaylist(title, videoIds.takeIf { it.isNotEmpty() })
                 .getOrNull()
                 ?.playlistId
                 ?.takeIf { it.isNotBlank() }
+        }
+
+    override suspend fun deleteYouTubePlaylist(playlistId: String): Boolean =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            youTube.deletePlaylist(playlistId).isSuccess
         }
 
     override fun getMixedForYou(): Flow<List<PlaylistsResult>?> =

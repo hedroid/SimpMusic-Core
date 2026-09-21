@@ -127,11 +127,15 @@ interface PlaylistRepository {
     }
 
     /** 在 YT 账号下新建歌单并把初始曲目一次塞进去(三点菜单"添加到歌单→新建歌单")。
-     *  返回新歌单 id;失败(null)由调用方提示。 */
+     *  videoIds 传空 = 建空歌单(库页"新建歌单"入口);返回新歌单 id;失败(null)由调用方提示。 */
     suspend fun createYouTubePlaylistWithTracks(
         title: String,
         videoIds: List<String>,
     ): String?
+
+    /** 删除自建 YT 歌单,或把收藏的他人歌单移出资料库(同一端点 playlist/delete,
+     *  语义由歌单归属决定,与 Metrolist/YTM 网页一致)。返回是否成功。 */
+    suspend fun deleteYouTubePlaylist(playlistId: String): Boolean
 
     fun getMixedForYou(): Flow<List<PlaylistsResult>?>
 

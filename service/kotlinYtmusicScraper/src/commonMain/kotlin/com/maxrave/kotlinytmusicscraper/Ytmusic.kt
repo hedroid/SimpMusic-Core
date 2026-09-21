@@ -13,6 +13,7 @@ import com.maxrave.kotlinytmusicscraper.models.YouTubeLocale
 import com.maxrave.kotlinytmusicscraper.models.body.AccountMenuBody
 import com.maxrave.kotlinytmusicscraper.models.body.BrowseBody
 import com.maxrave.kotlinytmusicscraper.models.body.CreatePlaylistBody
+import com.maxrave.kotlinytmusicscraper.models.body.DeletePlaylistBody
 import com.maxrave.kotlinytmusicscraper.models.body.EditPlaylistBody
 import com.maxrave.kotlinytmusicscraper.models.body.FormData
 import com.maxrave.kotlinytmusicscraper.models.body.GetQueueBody
@@ -503,6 +504,18 @@ class Ytmusic {
             ),
         )
     }
+
+    /** 删除自建歌单 / 把收藏的他人歌单移出资料库(同一端点,语义由归属决定,见 DeletePlaylistBody)。 */
+    suspend fun deleteYouTubePlaylist(playlistId: String) =
+        httpClient.post("playlist/delete") {
+            ytClient(WEB_REMIX, setLogin = true)
+            setBody(
+                DeletePlaylistBody(
+                    context = WEB_REMIX.toContext(locale, visitorData),
+                    playlistId = playlistId.removePrefix("VL"),
+                ),
+            )
+        }
 
     /**
      * Step 1 of setting a playlist cover: reserve a resumable upload slot.

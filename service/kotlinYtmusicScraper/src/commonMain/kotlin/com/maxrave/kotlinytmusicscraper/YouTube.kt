@@ -1956,6 +1956,15 @@ class YouTube {
     }
 
     /**
+     * 删除自建歌单 / 把收藏的他人歌单移出资料库(同一 InnerTube 端点 `playlist/delete`,
+     * 语义由歌单归属决定)。与 [editPlaylist] 一样返回 HTTP 状态——响应体为空。
+     */
+    suspend fun deletePlaylist(playlistId: String) =
+        runCatching {
+            ytMusic.deleteYouTubePlaylist(playlistId).status.value
+        }
+
+    /**
      * Subscribes the signed-in account to a channel.
      *
      * Returns the HTTP status rather than a parsed body, the same way the like endpoints do —
