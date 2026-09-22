@@ -282,20 +282,10 @@ private fun provideResolvingDataSourceFactory(
                 dataSpec.withUri(url.toUri())
             if (mediaId.contains(MERGING_DATA_TYPE.VIDEO)) {
                 val id = mediaId.removePrefix(MERGING_DATA_TYPE.VIDEO)
-                streamRepository.getNewFormat(id).lastOrNull()?.let {
-                    val videoUrl = it.videoUrl
-                    if (videoUrl != null && it.expiredTime > now()) {
-                        Logger.d("Stream", videoUrl)
-                        Logger.w("Stream", "Video from format")
-                        val is403Url = streamRepository.is403Url(videoUrl).firstOrNull() != false
-                        Logger.d("Stream", "is 403 $is403Url")
-                        if (!is403Url) {
-                            dataSpecReturn = networkSpec(videoUrl)
-                            resolved = true
-                            return@runBlocking
-                        }
-                    }
-                }
+                // 2026-09-22:new_format 表退役为纯记录(下载/watchtime/投屏/Info 面板读),
+                // 播放取流一律现拉——三方客户端语义:URL 有时效,本地命中分支省下的一次
+                // player 请求换来取流路径单一化(不再有"表里 URL 过期/403 判定失效"一类
+                // 缓存不一致问题;getStream 成功后照常写表)
                 streamRepository
                     .getStream(
                         dataStoreManager,
@@ -310,20 +300,7 @@ private fun provideResolvingDataSourceFactory(
                         resolved = true
                     }
             } else {
-                streamRepository.getNewFormat(mediaId).lastOrNull()?.let {
-                    val audioUrl = it.audioUrl
-                    if (audioUrl != null && it.expiredTime > now()) {
-                        Logger.d("Stream", audioUrl)
-                        Logger.w("Stream", "Audio from format")
-                        val is403Url = streamRepository.is403Url(audioUrl).firstOrNull() != false
-                        Logger.d("Stream", "is 403 $is403Url")
-                        if (!is403Url) {
-                            dataSpecReturn = networkSpec(audioUrl)
-                            resolved = true
-                            return@runBlocking
-                        }
-                    }
-                }
+                // 同上:播放不读表,现拉
                 streamRepository
                     .getStream(
                         dataStoreManager,
