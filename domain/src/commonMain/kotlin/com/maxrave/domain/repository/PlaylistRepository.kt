@@ -26,6 +26,15 @@ interface PlaylistRepository {
 
     suspend fun insertRadioPlaylist(playlistEntity: PlaylistEntity)
 
+    /**
+     * 收藏歌单对账(2026-09-22 短期方案):云端列表拉取成功后调用——本地 playlist 表里
+     * liked=1 但不在云端集合的行清零(云端已在别处取消收藏/删除)。neteaseIds/YT 语义
+     * 由两个方法分别限定源(数字/非数字 id),互不误伤。调用方负责"拉取成功非空才调"。
+     */
+    suspend fun reconcileLikedNeteasePlaylists(cloudIds: Set<String>)
+
+    suspend fun reconcileLikedYouTubePlaylists(cloudIds: Set<String>)
+
     suspend fun updatePlaylistLiked(
         playlistId: String,
         likeStatus: Int,

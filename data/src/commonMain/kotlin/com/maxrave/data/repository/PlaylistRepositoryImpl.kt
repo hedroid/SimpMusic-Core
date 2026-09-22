@@ -95,6 +95,35 @@ internal class PlaylistRepositoryImpl(
     override suspend fun insertRadioPlaylist(playlistEntity: PlaylistEntity) =
         withContext(Dispatchers.IO) { localDataSource.insertRadioPlaylist(playlistEntity) }
 
+    override suspend fun reconcileLikedNeteasePlaylists(cloudIds: Set<String>) {
+        if (cloudIds.isEmpty()) return
+        withContext(Dispatchers.IO) {
+            val stale =
+                getLikedPlaylists().firstOrNull().orEmpty().filter { row ->
+                    row.id.toLongOrNull() != null && row.id !in cloudIds
+                }
+            stale.forEach {
+                Logger.w("Library", "reconcile liked netease: clearing ${it.title}(${it.id})")
+                localDataSource.updatePlaylistLiked(0, it.id)
+            }
+        }
+    }
+
+    override suspend fun reconcileLikedYouTubePlaylists(cloudIds: Set<String>) {
+        if (cloudIds.isEmpty()) return
+        withContext(Dispatchers.IO) {
+            val normalized = cloudIds.map { it.removePrefix("VL") }.toSet()
+            val stale =
+                getLikedPlaylists().firstOrNull().orEmpty().filter { row ->
+                    row.id.toLongOrNull() == null && row.id.removePrefix("VL") !in normalized
+                }
+            stale.forEach {
+                Logger.w("Library", "reconcile liked youtube: clearing ${it.title}(${it.id})")
+                localDataSource.updatePlaylistLiked(0, it.id)
+            }
+        }
+    }
+
     override suspend fun updatePlaylistLiked(
         playlistId: String,
         likeStatus: Int,
