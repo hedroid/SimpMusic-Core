@@ -240,9 +240,8 @@ class NeteaseClient(
         // 的唯一线索来源(release 包 kermit 默认进 logcat,D 级 POST 行已验证可见)
         val bodyCode = (bodyObj["code"] as? kotlinx.serialization.json.JsonPrimitive)?.content
         if (bodyCode != null && bodyCode != "200") {
-            com.maxrave.logger.Logger.w(
-                TAG,
-                "netease api rejected: $url code=$bodyCode " +
+            println(
+                "QQQ netease rejected: $url code=$bodyCode " +
                     "msg=${(bodyObj["message"] ?: bodyObj["msg"])?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }}",
             )
         }
