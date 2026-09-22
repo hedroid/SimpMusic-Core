@@ -2734,8 +2734,9 @@ internal class MediaServiceHandlerImpl(
                 val currentPlayingTrack = songRepository.getSongById(dataStoreManager.recentMediaId.first()).lastOrNull()?.toTrack()
                 if (currentPlayingTrack != null) {
                     // Cross-source backstop: the saved playback state must belong to the
-                    // currently selected source. A normal switch clears it (switchSource),
-                    // this only catches leftovers older than that fix.
+                    // currently selected source. Source switches no longer clear the saved
+                    // queue (they keep playing), so this guard is what skips restoring a
+                    // queue left over from the other source.
                     val savedIsNetease = currentPlayingTrack.videoId.toLongOrNull() != null
                     if (savedIsNetease != (dataStoreManager.selectedSource.first() == MusicSource.NETEASE.name)) {
                         Logger.w(TAG, "Skip queue restore: saved track ${currentPlayingTrack.videoId} is from the other music source")
