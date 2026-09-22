@@ -2629,14 +2629,21 @@ class JvmMediaPlayerHandlerImpl(
 //        }
     }
 
-    override fun mayBeSavePlaybackState() {
-        if (runBlocking { dataStoreManager.saveStateOfPlayback.first() } == TRUE) {
-            runBlocking {
+    override fun mayBeSavePlaybackState(runBlocking: Boolean) {
+        // Same posture as the android handler: the is-playing callback hits the UI thread
+        // on every pause, so only release() may block on the DataStore write queue.
+        val unit = suspend {
+            if (dataStoreManager.saveStateOfPlayback.first() == TRUE) {
                 dataStoreManager.recoverShuffleAndRepeatKey(
                     player.shuffleModeEnabled,
                     player.repeatMode,
                 )
             }
+        }
+        if (runBlocking) {
+            runBlocking { unit() }
+        } else {
+            coroutineScope.launch { unit() }
         }
     }
 
@@ -2720,7 +2727,7 @@ class JvmMediaPlayerHandlerImpl(
             discordRPC = null
             // Save state first
             mayBeSaveRecentSong(true)
-            mayBeSavePlaybackState()
+            mayBeSavePlaybackState(true)
 
             // Stop and release player
             player.removeListener(this)

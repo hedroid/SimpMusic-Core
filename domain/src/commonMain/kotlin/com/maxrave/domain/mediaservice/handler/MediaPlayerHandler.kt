@@ -157,7 +157,7 @@ interface MediaPlayerHandler {
 
     fun mayBeSaveRecentSong(runBlocking: Boolean = false)
 
-    fun mayBeSavePlaybackState()
+    fun mayBeSavePlaybackState(runBlocking: Boolean = false)
 
     fun mayBeRestoreQueue()
 

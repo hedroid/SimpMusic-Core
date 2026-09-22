@@ -2640,14 +2640,24 @@ internal class MediaServiceHandlerImpl(
         }
     }
 
-    override fun mayBeSavePlaybackState() {
-        if (runBlocking { dataStoreManager.saveStateOfPlayback.first() } == TRUE) {
-            runBlocking {
+    override fun mayBeSavePlaybackState(runBlocking: Boolean) {
+        // onIsPlayingChanged(false) lands on the main thread on every pause and crossfade
+        // transition; blocking there on DataStore's serialized write queue ANRs the app
+        // (5s+ while writes pile up). Default path defers to the service scope (Main,
+        // suspending); release() passes runBlocking = true so the state is on disk before
+        // the process can go away.
+        val unit = suspend {
+            if (dataStoreManager.saveStateOfPlayback.first() == TRUE) {
                 dataStoreManager.recoverShuffleAndRepeatKey(
                     shuffleRestoreListTracks != null,
                     player.repeatMode,
                 )
             }
+        }
+        if (runBlocking) {
+            runBlocking { unit() }
+        } else {
+            coroutineScope.launch { unit() }
         }
     }
 
@@ -2727,7 +2737,7 @@ internal class MediaServiceHandlerImpl(
             discordRPC = null
             // Save state first
             mayBeSaveRecentSong(true)
-            mayBeSavePlaybackState()
+            mayBeSavePlaybackState(true)
 
             // Stop and release player
             player.removeListener(this)
