@@ -1053,6 +1053,33 @@ internal class CrossfadeExoPlayerAdapter(
         }
     }
 
+    override fun reorderQueueByMediaIds(mediaIds: List<String>) {
+        if (playlist.isEmpty()) return
+        coroutineScope.launch {
+            // 消费式匹配:同 mediaId 的重复条目按给定顺序逐个取用,不因重复 id 错位
+            val pool = playlist.toMutableList()
+            val newPlaylist = mediaIds.mapNotNull { id ->
+                val idx = pool.indexOfFirst { it.mediaId == id }
+                if (idx >= 0) pool.removeAt(idx) else null
+            }
+            if (newPlaylist.size != playlist.size || pool.isNotEmpty()) {
+                Logger.w(TAG, "reorderQueueByMediaIds: id set mismatch (${mediaIds.size} ids vs ${playlist.size} items) — ignored")
+                return@launch
+            }
+            val currentId = playlist.getOrNull(localCurrentMediaItemIndex)?.mediaId
+            playlist.clear()
+            playlist.addAll(newPlaylist)
+            val restoredIndex = newPlaylist.indexOfFirst { it.mediaId == currentId }
+            if (restoredIndex >= 0) {
+                localCurrentMediaItemIndex = restoredIndex
+            }
+            clearPrecacheExceptCurrentInternal()
+            triggerPrecachingInternal()
+            notifyTimelineChanged("TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED")
+            Logger.d(TAG, "reorderQueueByMediaIds: reordered ${newPlaylist.size} items, currentIndex=$localCurrentMediaItemIndex")
+        }
+    }
+
     override fun clearMediaItems() {
         coroutineScope.launch {
             playlist.clear()

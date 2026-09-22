@@ -98,7 +98,9 @@ internal class ArtistRepositoryImpl(
     ): Boolean =
         withContext(Dispatchers.IO) {
             if (channelId.toLongOrNull() != null) {
-                neteaseRepository.subscribeArtistNetease(channelId, followed).isSuccess
+                // getOrDefault(false) 而非 isSuccess:endpoint 对业务 code!=200 返回
+                // success(false),isSuccess 会把"服务端拒绝"误读为成功(用户实测假成功根源)
+                neteaseRepository.subscribeArtistNetease(channelId, followed).getOrDefault(false)
             } else {
                 setSubscription(channelId, followed)
             }

@@ -58,6 +58,13 @@ interface MediaPlayerInterface {
         toIndex: Int,
     )
 
+    /**
+     * 物理重排当前播放队列为给定 mediaId 顺序（NeriPlayer 式随机播放的原语）：
+     * 不打断当前曲、当前索引按正在播放的 mediaId 重新定位、集合不一致时安全放弃。
+     * 默认空实现——不支持的后端忽略（随机退化为顺序，不会错序）。
+     */
+    fun reorderQueueByMediaIds(mediaIds: List<String>) = Unit
+
     fun clearMediaItems()
 
     fun replaceMediaItem(

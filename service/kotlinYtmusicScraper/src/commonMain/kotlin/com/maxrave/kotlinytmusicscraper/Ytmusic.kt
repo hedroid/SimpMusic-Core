@@ -512,7 +512,8 @@ class Ytmusic {
             setBody(
                 DeletePlaylistBody(
                     context = WEB_REMIX.toContext(locale, visitorData),
-                    playlistId = playlistId.removePrefix("VL"),
+                    // 原样透传(含 VL 前缀):Metrolist/YTM 网页端同款;剥前缀会被服务端拒绝
+                    playlistId = playlistId,
                 ),
             )
         }

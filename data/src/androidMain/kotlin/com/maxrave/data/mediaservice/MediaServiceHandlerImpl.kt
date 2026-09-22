@@ -129,6 +129,9 @@ internal class MediaServiceHandlerImpl(
     private val context: Context = getKoin().get()
     override val player: MediaPlayerInterface = getKoin().get()
 
+    /** 随机播放快照:开着随机时保存队列原序(空列表=装载完成后待洗牌的哨兵),关闭后清空。 */
+    private var shuffleRestoreListTracks: List<Track>? = null
+
     @Volatile
     private var discordRPC: DiscordRPC? = null
 
@@ -464,7 +467,9 @@ internal class MediaServiceHandlerImpl(
                     DataStoreManager.REPEAT_ALL -> PlayerConstants.REPEAT_MODE_ALL
                     else -> PlayerConstants.REPEAT_MODE_OFF
                 }
-            player.shuffleModeEnabled = restoredShuffle
+            // 物理随机(2026-09-22):恢复只置哨兵,等队列装载完成(load 尾部)统一洗牌;
+            // 不再驱动 adapter 内部 shuffleOrder(那套与 queueData 的顺序映射已废弃)
+            if (restoredShuffle) shuffleRestoreListTracks = emptyList()
             player.repeatMode = restoredRepeatMode
             // Ensure controlState is in sync after restore, regardless of listener callbacks
             _controlState.value =
@@ -1084,12 +1089,14 @@ internal class MediaServiceHandlerImpl(
             }
 
             PlayerEvent.Shuffle -> {
-                if (player.shuffleModeEnabled) {
-                    player.shuffleModeEnabled = false
-                    _controlState.value = _controlState.value.copy(isShuffle = false)
+                // 随机播放=物理洗牌队列(NeriPlayer 同款,2026-09-22 重做):不再驱动 adapter
+                // 内部 shuffleOrder(旧行为下 queueData 的 id 匹配重排与 adapter 顺序错位,
+                // 表现为"随机没生效"且开关瞬间队列 UI 闪跳)。开=快照原序+当前曲置首+其余
+                // 随机;关=按当前曲恢复快照。
+                if (shuffleRestoreListTracks != null) {
+                    restoreQueueFromShuffle()
                 } else {
-                    player.shuffleModeEnabled = true
-                    _controlState.value = _controlState.value.copy(isShuffle = true)
+                    shuffleQueuePhysical()
                 }
             }
 
@@ -1341,8 +1348,8 @@ internal class MediaServiceHandlerImpl(
     }
 
     override fun playMediaItemInMediaSource(index: Int) {
-        val i = if (player.shuffleModeEnabled) player.getUnshuffledIndex(index) else index
-        player.seekTo(i, 0)
+        // 物理随机:queueData 与 player playlist 同序,UI 行号即 player 索引,无需换算
+        player.seekTo(index, 0)
         player.prepare()
         player.playWhenReady = true
     }
@@ -1960,6 +1967,11 @@ internal class MediaServiceHandlerImpl(
                 )
             }
             reorderShuffledQueue(player.getCurrentMediaTimeLine())
+            // 随机开着(恢复哨兵或上轮未关):新队列装载完成后物理洗牌(NeriPlayer 语义)。
+            // 追加型 loadMore 不走 load(),已洗牌队列的追加歌保持队尾,不触发重洗。
+            if (shuffleRestoreListTracks != null) {
+                shuffleQueuePhysical()
+            }
         }
     }
 
@@ -2320,7 +2332,7 @@ internal class MediaServiceHandlerImpl(
     }
 
     override fun currentOrderIndex(): Int =
-        if (player.shuffleModeEnabled) {
+        if (shuffleRestoreListTracks != null) {
             queueData.value.data.listTracks.indexOfLast {
                 it.videoId == player.currentMediaItem?.mediaId?.removePrefix(MERGING_DATA_TYPE.VIDEO)
             }
@@ -2632,7 +2644,7 @@ internal class MediaServiceHandlerImpl(
         if (runBlocking { dataStoreManager.saveStateOfPlayback.first() } == TRUE) {
             runBlocking {
                 dataStoreManager.recoverShuffleAndRepeatKey(
-                    player.shuffleModeEnabled,
+                    shuffleRestoreListTracks != null,
                     player.repeatMode,
                 )
             }
@@ -3091,21 +3103,63 @@ internal class MediaServiceHandlerImpl(
                 return
             }
         }
-        list
-            .mapNotNull {
-                listTrack.firstOrNull { track -> track.videoId == it.mediaId }
-            }.let { sorted ->
-                if (sorted.size != listTrack.size) return
-                Logger.d(TAG, "Reordering shuffled queue: ${sorted.map { it.title }}")
-                _queueData.update {
-                    it.copy(
-                        data =
-                            it.data.copy(
-                                listTracks = sorted,
-                            ),
-                    )
-                }
+        // 消费式匹配:队列里同 videoId 的重复条目按 player 顺序逐个取用,不因 firstOrNull
+        // 重复命中同一条导致 size 对不上而整次放弃(旧实现=随机对含重复歌的队列静默失效)
+        val pool = listTrack.toMutableList()
+        val sorted = list.mapNotNull { item ->
+            val idx = pool.indexOfFirst { it.videoId == item.mediaId }
+            if (idx >= 0) pool.removeAt(idx) else null
+        }
+        if (sorted.size != listTrack.size || pool.isNotEmpty()) return
+        Logger.d(TAG, "Reordering shuffled queue: ${sorted.map { it.title }}")
+        _queueData.update {
+            it.copy(
+                data =
+                    it.data.copy(
+                        listTracks = sorted.toCollection(ArrayList()),
+                    ),
+            )
+        }
+    }
+
+    /**
+     * 开随机(NeriPlayer 同款):快照当前队列原序 → 当前曲置首、其余随机 → player 与
+     * queueData 同步物理重排。不打断正在播放的曲目。
+     */
+    private fun shuffleQueuePhysical() {
+        val tracks = queueData.value.data.listTracks
+        if (tracks.size < 2) return
+        val currentId = player.currentMediaItem?.mediaId
+        if (shuffleRestoreListTracks.isNullOrEmpty()) {
+            // 哨兵(空)或首次进入才记快照;恢复流程 467 处只置哨兵,由这里补真快照
+            shuffleRestoreListTracks = tracks.toList()
+        }
+        val currentTrack = tracks.firstOrNull { it.videoId == currentId }
+        val shuffled =
+            listOfNotNull(currentTrack) + tracks.filter { it !== currentTrack }.shuffled()
+        player.reorderQueueByMediaIds(shuffled.map { it.videoId })
+        _controlState.value = _controlState.value.copy(isShuffle = true)
+        updateNextPreviousTrackAvailability()
+    }
+
+    /** 关随机:恢复洗牌前的队列原序,当前曲用最新播放状态回填。 */
+    private fun restoreQueueFromShuffle() {
+        val snapshot = shuffleRestoreListTracks
+        shuffleRestoreListTracks = null
+        // 恢复哨兵(随机开着但从未真正洗过牌,如恢复播放后队列一直没装载)只关开关
+        if (snapshot.isNullOrEmpty()) {
+            _controlState.value = _controlState.value.copy(isShuffle = false)
+            return
+        }
+        val currentId = player.currentMediaItem?.mediaId
+        val currentTrack = queueData.value.data.listTracks.firstOrNull { it.videoId == currentId }
+        val restored =
+            snapshot.map { track ->
+                if (currentTrack != null && track.videoId == currentId) currentTrack else track
             }
+        player.reorderQueueByMediaIds(restored.map { it.videoId })
+        _controlState.value = _controlState.value.copy(isShuffle = false)
+        updateNextPreviousTrackAvailability()
     }
 }
 
