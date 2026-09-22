@@ -367,9 +367,12 @@ internal class SongRepositoryImpl(
                 var newContinuation: String? = null
                 Logger.d(TAG, "getContinueTrack -> playlistId: $playlistId")
                 Logger.d(TAG, "getContinueTrack -> continuation: $continuation")
-                if (fromPlaylist && continuation.startsWith(NETEASE_PLAYLIST_PAGE_PREFIX)) {
+                if (continuation.startsWith(NETEASE_PLAYLIST_PAGE_PREFIX)) {
                     // 网易歌单滚动分页:令牌 = NETEASE_PL_PAGE_{offset},续拉一页
                     // (playlistDetail 拿 trackIds → songDetail 分片,详见 NeteaseRepositoryImpl)。
+                    // 只认令牌前缀、不看 fromPlaylist:播放队列侧的 loadMore 以默认
+                    // fromPlaylist=false 进来,若这里还要求 true,网易令牌会掉进 YT 的
+                    // next() 分支必失败,>500 首歌单的队列分页就此断头。
                     // 令牌/歌单 ID 解析失败或请求失败都按分页结束处理(与 YT 分支的
                     // onFailure 同语义),页面停在已加载内容上不重试。
                     val offset = continuation.removePrefix(NETEASE_PLAYLIST_PAGE_PREFIX).toIntOrNull()

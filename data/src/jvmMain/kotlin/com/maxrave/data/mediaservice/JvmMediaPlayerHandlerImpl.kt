@@ -1653,6 +1653,9 @@ class JvmMediaPlayerHandlerImpl(
                             } else {
                                 _queueData.update {
                                     it.copy(
+                                        // 先复位:无尽开关关闭时 startEndlessRadio 直接早退,
+                                        // 不置回 INITIALIZED 会让队列尾永久转圈、loadMore 被锁死
+                                        queueState = QueueData.StateSource.STATE_INITIALIZED,
                                         data =
                                             it.data.copy(
                                                 continuation = null,
