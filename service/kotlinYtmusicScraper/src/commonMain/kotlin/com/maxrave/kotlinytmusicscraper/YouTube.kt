@@ -1983,12 +1983,12 @@ class YouTube {
     suspend fun subscribeChannel(channelId: String) =
         runCatching {
             ytMusic.subscribeChannel(channelId).status.value
-        }.onFailure { println("QQQ subscribeChannel $channelId failed: ${it.message}") }
+        }.onFailure { com.maxrave.logger.Logger.w("YouTube", "subscribeChannel $channelId failed: ${it.message}") }
 
     suspend fun unsubscribeChannel(channelId: String) =
         runCatching {
             ytMusic.unsubscribeChannel(channelId).status.value
-        }.onFailure { println("QQQ unsubscribeChannel $channelId failed: ${it.message}") }
+        }.onFailure { com.maxrave.logger.Logger.w("YouTube", "unsubscribeChannel $channelId failed: ${it.message}") }
 
     suspend fun addToLiked(mediaId: String) =
         runCatching {
