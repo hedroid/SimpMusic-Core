@@ -102,7 +102,9 @@ internal class ArtistRepositoryImpl(
                 // success(false),isSuccess 会把"服务端拒绝"误读为成功(用户实测假成功根源)
                 neteaseRepository.subscribeArtistNetease(channelId, followed).getOrDefault(false)
             } else {
-                setSubscription(channelId, followed)
+                val ok = setSubscription(channelId, followed)
+                if (!ok) println("QQQ setSubscription($channelId, $followed) returned false")
+                ok
             }
         }
 
