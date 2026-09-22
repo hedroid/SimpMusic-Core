@@ -505,15 +505,29 @@ class Ytmusic {
         )
     }
 
-    /** 删除自建歌单 / 把收藏的他人歌单移出资料库(同一端点,语义由归属决定,见 DeletePlaylistBody)。 */
+    /** 删除自建歌单(playlist/delete 只对自建歌单有权限;playlistId 必须**不带 VL 前缀**,
+     *  带 VL 报 400 INVALID_ARGUMENT,2026-09-22 curl 实验定论)。 */
     suspend fun deleteYouTubePlaylist(playlistId: String) =
         httpClient.post("playlist/delete") {
             ytClient(WEB_REMIX, setLogin = true)
             setBody(
                 DeletePlaylistBody(
                     context = WEB_REMIX.toContext(locale, visitorData),
-                    // 原样透传(含 VL 前缀):Metrolist/YTM 网页端同款;剥前缀会被服务端拒绝
-                    playlistId = playlistId,
+                    playlistId = playlistId.removePrefix("VL"),
+                ),
+            )
+        }
+
+    /** 把收藏的他人歌单移出资料库(`like/removelike`,target.playlistId 不带 VL 前缀;
+     *  ytmusicapi rate_playlist(INDIFFERENT) 同款,2026-09-22 curl 实证。收藏方向=like/like。
+     *  playlist/delete 对收藏歌单是 403(仅自建可删),别走错。 */
+    suspend fun removeYouTubePlaylistFromLibrary(playlistId: String) =
+        httpClient.post("like/removelike") {
+            ytClient(WEB_REMIX, setLogin = true)
+            setBody(
+                LikeBody(
+                    context = WEB_REMIX.toContext(locale, visitorData),
+                    target = LikeBody.Target(playlistId = playlistId.removePrefix("VL")),
                 ),
             )
         }

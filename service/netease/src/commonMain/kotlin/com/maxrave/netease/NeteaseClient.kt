@@ -235,7 +235,18 @@ class NeteaseClient(
                     "hasCookieField=${bodyObj?.containsKey("cookie") == true}",
             )
         }
-        return json.parseToJsonElement(text).jsonObject
+        val bodyObj = json.parseToJsonElement(text).jsonObject
+        // 写操作被服务端拒绝(HTTP 200 + 业务 code!=200)时留痕:真机建单/关注/收藏失败
+        // 的唯一线索来源(release 包 kermit 默认进 logcat,D 级 POST 行已验证可见)
+        val bodyCode = (bodyObj["code"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+        if (bodyCode != null && bodyCode != "200") {
+            com.maxrave.logger.Logger.w(
+                TAG,
+                "netease api rejected: $url code=$bodyCode " +
+                    "msg=${(bodyObj["message"] ?: bodyObj["msg"])?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }}",
+            )
+        }
+        return bodyObj
     }
 
     private suspend fun buildCookieHeader(): String =

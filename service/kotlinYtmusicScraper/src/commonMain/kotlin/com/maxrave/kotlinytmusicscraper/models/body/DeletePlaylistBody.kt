@@ -4,8 +4,8 @@ import com.maxrave.kotlinytmusicscraper.models.Context
 import kotlinx.serialization.Serializable
 
 /**
- * Body for `playlist/delete`. 端点语义由歌单归属决定:自建歌单=真删除;
- * 收藏的他人歌单=移出资料库(取消收藏)——Metrolist/YTM 网页端同款用法。
+ * Body for `playlist/delete` — 删除**自建**歌单(playlistId 不带 VL 前缀;带 VL 报 400,
+ * 对收藏的他人歌单无 VL 报 403 仅自建可删——收藏歌单移出资料库走 like/removelike)。
  */
 @Serializable
 data class DeletePlaylistBody(

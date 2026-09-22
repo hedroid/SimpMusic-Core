@@ -1956,12 +1956,22 @@ class YouTube {
     }
 
     /**
-     * 删除自建歌单 / 把收藏的他人歌单移出资料库(同一 InnerTube 端点 `playlist/delete`,
-     * 语义由歌单归属决定)。与 [editPlaylist] 一样返回 HTTP 状态——响应体为空。
+     * 删除自建 YT 歌单(InnerTube 端点 `playlist/delete`;playlistId 不带 VL,带前缀 400)。
+     * 与 [editPlaylist] 一样返回 HTTP 状态——响应体为空。
      */
     suspend fun deletePlaylist(playlistId: String) =
         runCatching {
             ytMusic.deleteYouTubePlaylist(playlistId).status.value
+        }
+
+    /**
+     * 把收藏的他人歌单移出资料库(`like/removelike`;playlistId 不带 VL)。
+     * playlist/delete 对收藏歌单只有 403(权限语义:仅自建可删),移出资料库必须走这里。
+     * curl 实证:ytmusicapi rate_playlist(INDIFFERENT) 同款。
+     */
+    suspend fun removePlaylistFromLibrary(playlistId: String) =
+        runCatching {
+            ytMusic.removeYouTubePlaylistFromLibrary(playlistId).status.value
         }
 
     /**

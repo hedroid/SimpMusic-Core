@@ -133,9 +133,13 @@ interface PlaylistRepository {
         videoIds: List<String>,
     ): String?
 
-    /** 删除自建 YT 歌单,或把收藏的他人歌单移出资料库(同一端点 playlist/delete,
-     *  语义由歌单归属决定,与 Metrolist/YTM 网页一致)。返回是否成功。 */
+    /** 删除自建 YT 歌单(playlist/delete,仅自建有权限;playlistId 不带 VL)。
+     *  返回是否成功。 */
     suspend fun deleteYouTubePlaylist(playlistId: String): Boolean
+
+    /** 把收藏的他人 YT 歌单移出资料库(like/removelike,playlistId 不带 VL;
+     *  playlist/delete 对收藏歌单是 403)。返回是否成功。 */
+    suspend fun removeYouTubePlaylistFromLibrary(playlistId: String): Boolean
 
     fun getMixedForYou(): Flow<List<PlaylistsResult>?>
 

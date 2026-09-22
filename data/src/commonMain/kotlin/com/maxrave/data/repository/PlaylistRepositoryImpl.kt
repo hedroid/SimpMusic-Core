@@ -869,6 +869,11 @@ internal class PlaylistRepositoryImpl(
             youTube.deletePlaylist(playlistId).isSuccess
         }
 
+    override suspend fun removeYouTubePlaylistFromLibrary(playlistId: String): Boolean =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            youTube.removePlaylistFromLibrary(playlistId).isSuccess
+        }
+
     override fun getMixedForYou(): Flow<List<PlaylistsResult>?> =
         flow {
             youTube
