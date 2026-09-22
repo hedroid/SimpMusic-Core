@@ -135,12 +135,6 @@ internal class ArtistRepositoryImpl(
         return result
             .onFailure {
                 Logger.w("ArtistRepositoryImpl", "Channel subscription sync failed: ${it.message}")
-                // 幂等兜底:本地关注位与云端订阅列表可能不一致(云端已在别处取消)。
-                // 取消时 failedPrecondition=云端本就没有这个订阅——目标状态已达成,按成功
-                // 处理让本地镜像收敛(2026-09-22 用户实测 400 场景即此)
-                if (!subscribe && it.message?.contains("failedPrecondition") == true) {
-                    return true
-                }
             }.isSuccess
     }
 

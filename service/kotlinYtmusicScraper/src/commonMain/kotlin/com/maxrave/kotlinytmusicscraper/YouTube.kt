@@ -554,10 +554,20 @@ class YouTube {
     suspend fun artist(browseId: String): Result<ArtistPage> =
         runCatching {
             val response = ytMusic.browse(WEB_REMIX, browseId).body<BrowseResponse>()
+            // 页面一律用响应的 canonical 频道 id(订阅关系挂它身上);别名/请求 id 只在
+            // 响应缺字段时兜底——否则艺人页存行/关注/取关全拿别名,取关必 400
+            val canonicalChannelId =
+                response.header
+                    ?.musicImmersiveHeaderRenderer
+                    ?.subscriptionButton
+                    ?.subscribeButtonRenderer
+                    ?.channelId
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: browseId
             ArtistPage(
                 artist =
                     ArtistItem(
-                        id = browseId,
+                        id = canonicalChannelId,
                         title =
                             response.header
                                 ?.musicImmersiveHeaderRenderer
