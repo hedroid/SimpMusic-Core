@@ -1080,6 +1080,13 @@ internal class CrossfadeExoPlayerAdapter(
         }
     }
 
+    override fun reshuffleQueue() {
+        if (internalShuffleModeEnabled) {
+            createShuffleOrder()
+            Logger.d(TAG, "Shuffle order rebuilt after queue reload")
+        }
+    }
+
     override fun clearMediaItems() {
         coroutineScope.launch {
             playlist.clear()
@@ -1156,11 +1163,9 @@ internal class CrossfadeExoPlayerAdapter(
     override fun getMediaItemAt(index: Int): GenericMediaItem? = playlist.getOrNull(index)
 
     override fun getCurrentMediaTimeLine(): List<GenericMediaItem> =
-        if (internalShuffleModeEnabled) {
-            shuffleOrder.mapNotNull { shuffledIndex -> playlist.getOrNull(shuffledIndex) }
-        } else {
-            playlist.toList()
-        }
+        // 永远原序(用户 2026-09-22 定案):随机只影响"下一首选谁",不重排显示列表——
+        // 曾经 shuffle 开时返回打乱列表,queueData 跟着重排=播放页封面闪+队列跳动。
+        playlist.toList()
 
     override fun getUnshuffledIndex(shuffledIndex: Int): Int =
         if (internalShuffleModeEnabled) {
@@ -1324,9 +1329,9 @@ internal class CrossfadeExoPlayerAdapter(
                 clearShuffleOrder()
             }
 
-            val mediaItemList = getShuffledMediaItemList()
-            listeners.forEach { it.onShuffleModeEnabledChanged(value, mediaItemList) }
-            notifyTimelineChanged("TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED")
+            // 只通知开关,不带 timeline 通知(用户 2026-09-22 定案:随机不重排显示列表,
+            // 曾经这里 notifyTimelineChanged→queueData 重排→播放页封面闪/队列跳动)
+            listeners.forEach { it.onShuffleModeEnabledChanged(value, playlist.toList()) }
 
             Logger.d(TAG, "Shuffle mode ${if (value) "enabled" else "disabled"}")
         }

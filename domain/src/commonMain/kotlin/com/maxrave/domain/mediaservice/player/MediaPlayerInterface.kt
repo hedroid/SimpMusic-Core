@@ -65,6 +65,12 @@ interface MediaPlayerInterface {
      */
     fun reorderQueueByMediaIds(mediaIds: List<String>) = Unit
 
+    /**
+     * 随机开着时队列被整体重装(clear+add)后重建随机顺序(当前曲开路)。显示列表不变。
+     * 默认空实现。
+     */
+    fun reshuffleQueue() = Unit
+
     fun clearMediaItems()
 
     fun replaceMediaItem(
