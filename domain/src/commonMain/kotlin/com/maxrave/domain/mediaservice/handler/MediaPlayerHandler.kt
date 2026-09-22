@@ -92,6 +92,9 @@ interface MediaPlayerHandler {
 
     fun loadMore()
 
+    /** 关无尽开关:裁掉电台追加的歌、恢复原队列身份(对齐 YTM autoplay)。无快照时无操作。 */
+    fun restoreOriginalQueueAfterEndless() {}
+
     fun getRelated(videoId: String)
 
     fun setQueueData(queueData: QueueData.Data)

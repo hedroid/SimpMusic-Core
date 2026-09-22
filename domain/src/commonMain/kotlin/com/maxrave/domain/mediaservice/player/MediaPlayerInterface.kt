@@ -65,6 +65,14 @@ interface MediaPlayerInterface {
      */
     fun reorderQueueByMediaIds(mediaIds: List<String>) = Unit
 
+    /**
+     * 原子裁剪队列:保留 mediaIds(消费式多重集匹配)内的条目并保持相对顺序,其余整批移除。
+     * 当前曲必须在保留集内(调用方保证),裁剪不打断播放。给"关无尽开关恢复原队列"用:
+     * 逐个 removeMediaItem 是异步的,同步读 mediaItemCount 的自旋等待会在主线程死循环(ANR)。
+     * 默认空实现——不支持的后端忽略。
+     */
+    fun trimQueueTo(mediaIds: List<String>) = Unit
+
 
     fun clearMediaItems()
 

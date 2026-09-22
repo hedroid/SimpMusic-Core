@@ -1080,6 +1080,48 @@ internal class CrossfadeExoPlayerAdapter(
         }
     }
 
+    /**
+     * 原子裁剪队列:保留 mediaIds(消费式多重集匹配)内的条目并保持相对顺序,其余整批移除。
+     * 关无尽开关恢复原队列用——逐个 removeMediaItem 是异步的,同步读 mediaItemCount 的自旋
+     * 等待会在主线程死循环(ANR 实锤);这里单协程一次完成,当前曲保留不打断。
+     */
+    override fun trimQueueTo(mediaIds: List<String>) {
+        if (playlist.isEmpty()) return
+        coroutineScope.launch {
+            val remaining = mediaIds.toMutableList()
+            val newPlaylist = mutableListOf<GenericMediaItem>()
+            val removed = mutableListOf<GenericMediaItem>()
+            for (item in playlist) {
+                if (remaining.remove(item.mediaId)) {
+                    newPlaylist.add(item)
+                } else {
+                    removed.add(item)
+                }
+            }
+            if (removed.isEmpty()) return@launch
+            val currentId = playlist.getOrNull(localCurrentMediaItemIndex)?.mediaId
+            if (currentId == null || newPlaylist.none { it.mediaId == currentId }) {
+                Logger.w(TAG, "trimQueueTo: current track would be dropped — ignored")
+                return@launch
+            }
+            removed.forEach { item ->
+                precachedPlayers.remove(item.mediaId)?.let { cached ->
+                    cleanupPlayerInternal(cached.player)
+                }
+            }
+            playlist.clear()
+            playlist.addAll(newPlaylist)
+            localCurrentMediaItemIndex = newPlaylist.indexOfFirst { it.mediaId == currentId }
+            if (internalShuffleModeEnabled) {
+                createShuffleOrder()
+            }
+            clearPrecacheExceptCurrentInternal()
+            triggerPrecachingInternal()
+            notifyTimelineChanged("TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED")
+            Logger.d(TAG, "trimQueueTo: kept ${newPlaylist.size}, removed ${removed.size}")
+        }
+    }
+
     override fun clearMediaItems() {
         coroutineScope.launch {
             playlist.clear()

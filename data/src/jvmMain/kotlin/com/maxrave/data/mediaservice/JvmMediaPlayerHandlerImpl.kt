@@ -128,6 +128,18 @@ class JvmMediaPlayerHandlerImpl(
     MediaPlayerListener {
     private val backgroundScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    /**
+     * 无尽队列快照:普通队列首次转电台前记下原 playlistId/续页令牌/原曲目集,
+     * [restoreOriginalQueueAfterEndless](关无尽开关)据此裁回原队列。原生电台/FM 队列不快照。
+     */
+    private var endlessRestore: EndlessRestore? = null
+
+    private data class EndlessRestore(
+        val playlistId: String?,
+        val continuation: String?,
+        val originalTrackIds: List<String>,
+    )
+
     // Linux (MPRIS) and Windows (SMTC) both go through NPYC/JMTC; macOS uses the
     // dedicated MacOSMediaIntegration below. runCatching keeps a failed native
     // init from taking down the whole handler — every nypc call site is already
@@ -1695,6 +1707,16 @@ class JvmMediaPlayerHandlerImpl(
             Logger.w(TAG, "loadMore: Already in radio mode")
             return
         }
+        // 转电台前快照原队列身份+曲目集:关无尽开关时裁回原队列用(对齐 YTM autoplay
+        // 关掉即移除已追加的推荐歌)。原生电台队列在上面早退,不会进来。
+        if (endlessRestore == null) {
+            endlessRestore =
+                EndlessRestore(
+                    playlistId = queueData.value.data.playlistId,
+                    continuation = queueData.value.data.continuation,
+                    originalTrackIds = queueData.value.data.listTracks.map { it.videoId },
+                )
+        }
         if (radioId.startsWith(NETEASE_RADIO_PLAYLIST_ID_PREFIX)) {
             _queueData.update {
                 it.copy(
@@ -1714,6 +1736,38 @@ class JvmMediaPlayerHandlerImpl(
             reorderShuffledQueue(player.getCurrentMediaTimeLine())
             getRelated(lastTrack.videoId)
         }
+    }
+
+    /**
+     * 关无尽开关:裁掉电台追加的歌、恢复原队列身份(playlistId/续页令牌),对齐 YTM
+     * autoplay 关掉即移除未播的推荐歌。正在播的追加歌保留为队尾(不打断播放)。
+     * jvm 无物理随机快照,不需要收缩;无可快照(原生电台/FM/未转换)时无操作。
+     */
+    override fun restoreOriginalQueueAfterEndless() {
+        val snap = endlessRestore ?: return
+        endlessRestore = null
+        val keepIds = snap.originalTrackIds.toHashSet()
+        val currentId = player.currentMediaItem?.mediaId
+        val kept =
+            queueData.value.data.listTracks
+                .filter { it.videoId in keepIds || it.videoId == currentId }
+        if (kept.isEmpty()) return
+        _queueData.update {
+            it.copy(
+                queueState = QueueData.StateSource.STATE_INITIALIZED,
+                data =
+                    it.data.copy(
+                        playlistId = snap.playlistId,
+                        continuation = snap.continuation,
+                        listTracks = kept.toCollection(ArrayList()),
+                    ),
+            )
+        }
+        val newIds = kept.map { it.videoId }
+        // 原子裁剪(MpvPlayerAdapter 实现):同步自旋逐个 remove 会死循环,见 android 侧注释
+        player.trimQueueTo(newIds)
+        updateNextPreviousTrackAvailability()
+        Logger.w(TAG, "restoreOriginalQueueAfterEndless: ${kept.size} tracks, playlistId=${snap.playlistId}")
     }
 
     /**
@@ -1908,6 +1962,8 @@ class JvmMediaPlayerHandlerImpl(
     }
 
     override fun setQueueData(queueData: QueueData.Data) {
+        // 新队列装载=上一队列的无尽快照作废(不清理的话,之后关开关会把新队列裁成旧队列的形状)
+        endlessRestore = null
         _queueData.update {
             it.copy(
                 data = queueData,

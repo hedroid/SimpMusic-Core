@@ -132,6 +132,18 @@ internal class MediaServiceHandlerImpl(
     /** 随机播放快照:开着随机时保存队列原序(空列表=装载完成后待洗牌的哨兵),关闭后清空。 */
     private var shuffleRestoreListTracks: List<Track>? = null
 
+    /**
+     * 无尽队列快照:普通队列首次转电台前记下原 playlistId/续页令牌/原曲目集,
+     * [restoreOriginalQueueAfterEndless](关无尽开关)据此裁回原队列。原生电台/FM 队列不快照。
+     */
+    private var endlessRestore: EndlessRestore? = null
+
+    private data class EndlessRestore(
+        val playlistId: String?,
+        val continuation: String?,
+        val originalTrackIds: List<String>,
+    )
+
     @Volatile
     private var discordRPC: DiscordRPC? = null
 
@@ -1683,6 +1695,16 @@ internal class MediaServiceHandlerImpl(
             Logger.w(TAG, "loadMore: Already in radio mode")
             return
         }
+        // 转电台前快照原队列身份+曲目集:关无尽开关时裁回原队列用(对齐 YTM autoplay
+        // 关掉即移除已追加的推荐歌;随机快照同思路)。原生电台队列在上面早退,不会进来。
+        if (endlessRestore == null) {
+            endlessRestore =
+                EndlessRestore(
+                    playlistId = queueData.value.data.playlistId,
+                    continuation = queueData.value.data.continuation,
+                    originalTrackIds = queueData.value.data.listTracks.map { it.videoId },
+                )
+        }
         if (radioId.startsWith(NETEASE_RADIO_PLAYLIST_ID_PREFIX)) {
             _queueData.update {
                 it.copy(
@@ -1702,6 +1724,42 @@ internal class MediaServiceHandlerImpl(
             reorderShuffledQueue(player.getCurrentMediaTimeLine())
             getRelated(lastTrack.videoId)
         }
+    }
+
+    /**
+     * 关无尽开关:裁掉电台追加的歌、恢复原队列身份(playlistId/续页令牌),对齐 YTM
+     * autoplay 关掉即移除未播的推荐歌。正在播的追加歌保留为队尾(不打断播放);
+     * 随机快照同步收缩,防之后"关随机"把已裁的歌复活。无可快照(原生电台/FM/未转换)时无操作。
+     */
+    override fun restoreOriginalQueueAfterEndless() {
+        val snap = endlessRestore ?: return
+        endlessRestore = null
+        val keepIds = snap.originalTrackIds.toHashSet()
+        val currentId = player.currentMediaItem?.mediaId
+        val kept =
+            queueData.value.data.listTracks
+                .filter { it.videoId in keepIds || it.videoId == currentId }
+        if (kept.isEmpty()) return
+        _queueData.update {
+            it.copy(
+                queueState = QueueData.StateSource.STATE_INITIALIZED,
+                data =
+                    it.data.copy(
+                        playlistId = snap.playlistId,
+                        continuation = snap.continuation,
+                        listTracks = kept.toCollection(ArrayList()),
+                    ),
+            )
+        }
+        shuffleRestoreListTracks =
+            shuffleRestoreListTracks
+                ?.filter { it.videoId in keepIds || it.videoId == currentId }
+                ?.takeIf { it.isNotEmpty() }
+        val newIds = kept.map { it.videoId }
+        // 原子裁剪:逐个 removeMediaItem 是异步的,同步读 mediaItemCount 自旋等待会 ANR
+        player.trimQueueTo(newIds)
+        updateNextPreviousTrackAvailability()
+        Logger.w(TAG, "restoreOriginalQueueAfterEndless: ${kept.size} tracks, playlistId=${snap.playlistId}")
     }
 
     /**
@@ -1896,6 +1954,8 @@ internal class MediaServiceHandlerImpl(
     }
 
     override fun setQueueData(queueData: QueueData.Data) {
+        // 新队列装载=上一队列的无尽快照作废(不清理的话,之后关开关会把新队列裁成旧队列的形状)
+        endlessRestore = null
         _queueData.update {
             it.copy(
                 data = queueData,
