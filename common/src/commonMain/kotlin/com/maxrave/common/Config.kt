@@ -664,6 +664,10 @@ const val NETEASE_RADIO_PLAYLIST_ID_PREFIX = "NETEASE_RADIO_"
 /** 网易单曲电台每批拉取条数(simiSong limit)；返回不足此数即服务端见底，电台收尾 */
 const val NETEASE_RADIO_BATCH_SIZE = 30
 
+/** 无尽队列**追加**时每批请求上限：用户口径"一次下拉只追加几首"，别一次灌几十首；
+ *  电台显式起播(菜单"收听电台")仍用 [NETEASE_RADIO_BATCH_SIZE]。见底判定跟着本值走。 */
+const val NETEASE_RADIO_APPEND_BATCH = 10
+
 /** 单曲电台队列 ID 按源取形：网易纯数字 ID 挂网易哨兵前缀，其余一律 RDAMVM（YT 形状）。 */
 fun songRadioPlaylistId(videoId: String): String =
     if (videoId.toLongOrNull() != null) "$NETEASE_RADIO_PLAYLIST_ID_PREFIX$videoId" else "RDAMVM$videoId"

@@ -19,7 +19,7 @@ import com.maxrave.common.LOCAL_PLAYLIST_ID
 import com.maxrave.common.LOCAL_PLAYLIST_ID_SAVED_QUEUE
 import com.maxrave.common.MERGING_DATA_TYPE
 import com.maxrave.common.NETEASE_FM_PLAYLIST_ID
-import com.maxrave.common.NETEASE_RADIO_BATCH_SIZE
+import com.maxrave.common.NETEASE_RADIO_APPEND_BATCH
 import com.maxrave.common.NETEASE_RADIO_PLAYLIST_ID_PREFIX
 import com.maxrave.common.SPONSOR_BLOCK_MIN_SEGMENT_SECONDS
 import com.maxrave.common.SPONSOR_BLOCK_SKIP_MARGIN_MS
@@ -1422,7 +1422,13 @@ internal class MediaServiceHandlerImpl(
         // Separate local and remote data
         // Local Add Prefix to PlaylistID to differentiate between local and remote
         // Local: LC-PlaylistID
-        val playlistId = _queueData.value.data.playlistId ?: return
+        val playlistId = _queueData.value.data.playlistId
+        if (playlistId == null) {
+            // 无 playlistId 的队列(mix 页分区起播等):无尽开着时下拉也换尾曲种子续几首,
+            // 别在这里直接 return 把无尽钩子挡死。开关关闭时 startEndlessRadio 自己早退。
+            startEndlessRadio()
+            return
+        }
         Logger.w("Check loadMore", playlistId.toString())
         val continuation = _queueData.value.data.continuation
         Logger.w("Check loadMore", continuation.toString())
@@ -1851,7 +1857,7 @@ internal class MediaServiceHandlerImpl(
             withContext(Dispatchers.IO) {
                 batch =
                     repository
-                        .getSongRadio(songId, limit = NETEASE_RADIO_BATCH_SIZE, offset = offset)
+                        .getSongRadio(songId, limit = NETEASE_RADIO_APPEND_BATCH, offset = offset)
                         ?.songs
                         ?.map { it.toTrack() }
                         .orEmpty()
@@ -1866,7 +1872,7 @@ internal class MediaServiceHandlerImpl(
                         data =
                             it.data.copy(
                                 continuation =
-                                    if (batch.size >= NETEASE_RADIO_BATCH_SIZE) {
+                                    if (batch.size >= NETEASE_RADIO_APPEND_BATCH) {
                                         (offset + batch.size).toString()
                                     } else {
                                         null
