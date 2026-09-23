@@ -1161,6 +1161,19 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    override val hapticEnabled: Flow<String> =
+        settingsDataStore.data.map { preferences ->
+            preferences[HAPTIC_ENABLED] ?: FALSE
+        }
+
+    override suspend fun setHapticEnabled(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[HAPTIC_ENABLED] = if (enabled) TRUE else FALSE
+            }
+        }
+    }
+
     override val romanizationLanguages =
         settingsDataStore.data.map { preferences ->
             preferences[ROMANIZATION_LANGUAGES] ?: ""
@@ -2021,6 +2034,7 @@ internal class DataStoreManagerImpl(
         val NETEASE_LIKE_SYNC = stringPreferencesKey("netease_like_sync")
         val NETEASE_PLAY_REPORT = stringPreferencesKey("netease_play_report")
         val HAPTIC_FEEDBACK_LEVEL = stringPreferencesKey("haptic_feedback_level")
+        val HAPTIC_ENABLED = stringPreferencesKey("haptic_enabled")
         val SPOTIFY_LYRICS = stringPreferencesKey("spotify_lyrics")
         val SYNC_FOLLOW_TO_YOUTUBE = stringPreferencesKey("sync_follow_to_youtube")
         val EQUALIZER_AUTOEQ_PROFILE = stringPreferencesKey("equalizer_autoeq_profile")

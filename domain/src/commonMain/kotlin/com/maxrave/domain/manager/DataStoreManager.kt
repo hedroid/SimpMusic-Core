@@ -599,11 +599,16 @@ interface DataStoreManager {
     /**
      * 触感反馈强度,播放控件(播放/暂停/切歌/红心)的振动三档:
      * [HAPTIC_FEEDBACK_LEVEL_LIGHT]/[HAPTIC_FEEDBACK_LEVEL_MEDIUM]/[HAPTIC_FEEDBACK_LEVEL_STRONG]。
-     * 仅 Android 有实际振动;系统"触摸振动"关闭时静默。
+     * 仅 Android 有实际振动;系统"触摸振动"关闭时静默。由 [hapticEnabled] 总开关(默认关)门控。
      */
     val hapticFeedbackLevel: Flow<String>
 
     suspend fun setHapticFeedbackLevel(level: String)
+
+    /** 触感反馈总开关,默认关;关闭时强度设置保留但不生效 */
+    val hapticEnabled: Flow<String>
+
+    suspend fun setHapticEnabled(enabled: Boolean)
 
     /**
      * Which languages get a Latin-script reading shown for their lyrics, as a comma-separated list
