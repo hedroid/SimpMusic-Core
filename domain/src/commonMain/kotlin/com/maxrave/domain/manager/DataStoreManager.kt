@@ -224,10 +224,11 @@ interface DataStoreManager {
     suspend fun setNeteaseFollowSync(enabled: Boolean)
     suspend fun setNeteaseFavoriteSync(enabled: Boolean)
 
-    /** 无版权/VIP 试听音乐自动切另一音源 */
-    val neteaseAutoSwitch: Flow<String>
+    /** 播放遇到取不到流的网易歌(无版权/VIP 试听)时的动作:
+     *  [NETEASE_UNAVAILABLE_ACTION_SKIP]/[NETEASE_UNAVAILABLE_ACTION_PAUSE]/[NETEASE_UNAVAILABLE_ACTION_SWITCH_YT] */
+    val neteaseUnavailableAction: Flow<String>
 
-    suspend fun setNeteaseAutoSwitch(enabled: Boolean)
+    suspend fun setNeteaseUnavailableAction(action: String)
 
     /** 本地红心变化是否同步云村(默认开,仅网易歌) */
     val neteaseLikeSync: Flow<String>
@@ -685,6 +686,11 @@ interface DataStoreManager {
 
         const val TRUE = "TRUE"
         const val FALSE = "FALSE"
+
+        /** 无版权歌曲动作:自动跳过(默认,网易官方行为)/ 暂停 / 跨源回退 YouTube Music 版 */
+        const val NETEASE_UNAVAILABLE_ACTION_SKIP = "SKIP"
+        const val NETEASE_UNAVAILABLE_ACTION_PAUSE = "PAUSE"
+        const val NETEASE_UNAVAILABLE_ACTION_SWITCH_YT = "SWITCH_YT"
 
         const val THEME_MODE_SYSTEM = "SYSTEM"
         const val THEME_MODE_DARK = "DARK"

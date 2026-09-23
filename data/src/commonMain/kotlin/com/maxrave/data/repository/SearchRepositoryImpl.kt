@@ -80,6 +80,16 @@ internal class SearchRepositoryImpl(
             }
         }.flowOn(Dispatchers.IO)
 
+    /**
+     * 单次 YT 单曲搜索(只拉首页,无续页):网易灰歌跨源回退的候选源。
+     * 走具体类而非 [SearchRepository] 接口——接口实现是按 selectedSource 路由的,
+     * 回退必须固定搜 YT,与当前选中音源无关。
+     */
+    suspend fun searchYouTubeSongsOnce(query: String): List<SongsResult> =
+        youTube.search(query, YouTube.SearchFilter.FILTER_SONG).getOrNull()
+            ?.let { parseSearchSong(it) }
+            ?: emptyList()
+
     override fun getSearchDataVideo(query: String): Flow<Resource<ArrayList<VideosResult>>> =
         flow {
             runCatching {

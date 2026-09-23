@@ -209,8 +209,29 @@ suspend fun NeteaseClient.songDetail(ids: List<Long>): Result<List<NeteaseSong>>
                     "c" to ids.joinToString(",", prefix = "[", postfix = "]") { "{\"id\":$it}" },
                 ),
             )
-        body.array("songs")?.map { it.toSong() } ?: emptyList()
+        body.array("songs")?.map { it.toSong() }?.mergePrivileges(body) ?: emptyList()
     }
+
+/**
+ * songDetail/v6 playlist detail 的版权态在**顶层 privileges 数组**(与 songs 平行,按 id 对齐),
+ * 不在每首歌对象里——toSong() 读的 obj.privilege 在这些端点恒缺失,曾致 hasCopyright 恒 null
+ * → isAvailable 恒 true,歌单灰歌无从标起。st: 0=有版权(负值=无版权/下架);fee: -1=无版权。
+ */
+private fun List<NeteaseSong>.mergePrivileges(body: JsonObject): List<NeteaseSong> {
+    val privileges =
+        body.array("privileges")?.mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            val id = obj["id"].nLong() ?: return@mapNotNull null
+            // st!=0(负值,典型 -200)=无版权/下架;fee=-1 同义。fee=1(VIP 专属)不算灰:
+            // 有版权只是非会员取不到完整流,播放失败时由"无版权歌曲动作"设置接管。
+            val hasCopyright = obj["st"].nInt() == 0 && obj["fee"].nInt() != -1
+            id to hasCopyright
+        }?.toMap() ?: return this
+    if (privileges.isEmpty()) return this
+    return map { song ->
+        privileges[song.id]?.let { song.copy(hasCopyright = it) } ?: song
+    }
+}
 
 suspend fun NeteaseClient.songUrl(
     songId: Long,
@@ -462,7 +483,7 @@ suspend fun NeteaseClient.playlistTracksViaDetail(
                     "s" to 8,
                 ),
             )
-        body.obj("playlist")?.array("tracks")?.map { it.toSong() } ?: emptyList()
+        body.obj("playlist")?.array("tracks")?.map { it.toSong() }?.mergePrivileges(body) ?: emptyList()
     }
 
 suspend fun NeteaseClient.toplistPlaylists(): Result<List<NeteasePlaylist>> =

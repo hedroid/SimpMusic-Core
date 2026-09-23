@@ -22,7 +22,9 @@ import com.maxrave.common.TITLE
 import com.maxrave.common.songRadioPlaylistId
 import com.maxrave.data.db.Converters
 import com.maxrave.data.lastfm.LastfmScrobbler
+import com.maxrave.data.repository.NeteasePlayability
 import com.maxrave.data.repository.NeteaseRepositoryImpl
+import com.maxrave.data.repository.SearchRepositoryImpl
 import com.maxrave.data.mediaservice.mac.MacOSMediaIntegration
 import com.maxrave.data.mediaservice.mac.MacOSRemoteCommandListener
 import com.maxrave.data.mediaservice.mac.NowPlayingInfo
@@ -185,6 +187,13 @@ class JvmMediaPlayerHandlerImpl(
      * and all three actuals for one dependency.
      */
     private val lastfmScrobbler = LastfmScrobbler(dataStoreManager)
+
+    /** 灰歌探针/回退搜索走 Koin 懒取:构造签名保持不动(expect/actual 三端免改) */
+    private val neteaseRepository: NeteaseRepositoryImpl by lazy { getKoin().get<NeteaseRepositoryImpl>() }
+    private val searchRepository: SearchRepositoryImpl by lazy { getKoin().get<SearchRepositoryImpl>() }
+
+    /** 连续"无版权动作"计数(防整队灰歌/REPEAT_ALL 绕圈跳不停),STATE_READY 归零 */
+    private var unavailableChainCount = 0
     override var onUpdateNotification: (List<GenericCommandButton>) -> Unit = {}
     override var showToast: (ToastType) -> Unit = {}
     override var pushPlayerError: (PlayerError) -> Unit = {}
@@ -2888,6 +2897,8 @@ class JvmMediaPlayerHandlerImpl(
 
             PlayerConstants.STATE_READY -> {
                 Logger.d(TAG, "onPlaybackStateChanged: Ready")
+                // 有歌真的播起来了:灰歌连续跳过/换源的护栏计数归零
+                unavailableChainCount = 0
                 _simpleMediaState.value = SimpleMediaState.Ready(player.duration)
             }
 
@@ -3066,16 +3077,160 @@ class JvmMediaPlayerHandlerImpl(
 
             else -> {
                 Logger.e("Player Error", "onPlayerError (${error.errorCode}): ${error.message}")
-                pushPlayerError(error)
-//                if (isAppInForeground()) {
-                showToast(ToastType.PlayerError(error.errorCodeName))
-//                } else {
-//                    Logger.w("Player Error", "App is not in foreground, skipping toast")
-//                }
-                player.pause()
+                // 网易灰歌/付费墙:探针分流后按"无版权歌曲动作"设置处理(与 android handler 同构)
+                val mediaId = player.currentMediaItem?.mediaId?.removePrefix(MERGING_DATA_TYPE.VIDEO)
+                val isNeteaseSourceError =
+                    mediaId?.toLongOrNull() != null && error.errorCode in NETEASE_UNAVAILABLE_ERROR_CODES
+                if (isNeteaseSourceError && mediaId != null) {
+                    coroutineScope.launch { handleNeteaseUnavailableSong(mediaId, error) }
+                } else {
+                    legacyPlaybackError(error)
+                }
             }
         }
     }
+
+    /** 既有播放错误路径:上报 + toast + 暂停(桌面端无前台判定,toast 直发) */
+    private fun legacyPlaybackError(error: PlayerError) {
+        pushPlayerError(error)
+        showToast(ToastType.PlayerError(error.errorCodeName))
+        player.pause()
+    }
+
+    /** 视作"网易歌取不到流"的错误码(与适配器可重试集同族 + 直通的 IO_UNSPECIFIED) */
+    private val NETEASE_UNAVAILABLE_ERROR_CODES =
+        setOf(
+            2000, // ERROR_CODE_IO_UNSPECIFIED — resolver 抛 IOException(灰歌主路径)
+            2001, // ERROR_CODE_IO_NETWORK_CONNECTION_FAILED
+            2004, // ERROR_CODE_IO_BAD_HTTP_STATUS
+            2005, // ERROR_CODE_IO_FILE_NOT_FOUND
+            3001, // ERROR_CODE_PARSING_CONTAINER_MALFORMED
+        )
+
+    /**
+     * 网易灰歌/付费墙的处理(neteaseUnavailableAction 设置):自动跳过 / 暂停 /
+     * 跨源回退 YT 同名曲。探针(songDetail privilege)失败或判可播 → 走既有错误路径。
+     */
+    private suspend fun handleNeteaseUnavailableSong(
+        mediaId: String,
+        error: PlayerError,
+    ) {
+        val probe = runCatching { neteaseRepository.probeNeteasePlayable(mediaId) }.getOrNull()
+        if (probe != NeteasePlayability.NO_COPYRIGHT && probe != NeteasePlayability.PAYWALLED) {
+            Logger.w(TAG, "netease unavailable probe=$probe for $mediaId, falling back to legacy error path")
+            legacyPlaybackError(error)
+            return
+        }
+        Logger.w(TAG, "netease song unplayable ($probe): $mediaId, applying unavailable action")
+        val queueSize = maxOf(queueData.value.data.listTracks.size, player.mediaItemCount)
+        // 防循环护栏:整队连续不可播(REPEAT_ALL 会绕圈,或全是灰歌的电台队列)时停下
+        if (unavailableChainCount >= queueSize) {
+            unavailableChainCount = 0
+            Logger.w(TAG, "unavailable chain guard hit ($queueSize consecutive), pausing")
+            player.pause()
+            showToast(ToastType.UnavailableQueueExhausted)
+            return
+        }
+        unavailableChainCount++
+        when (dataStoreManager.neteaseUnavailableAction.first()) {
+            DataStoreManager.Values.NETEASE_UNAVAILABLE_ACTION_PAUSE -> {
+                player.pause()
+                showToast(ToastType.UnavailableSongPaused)
+            }
+
+            DataStoreManager.Values.NETEASE_UNAVAILABLE_ACTION_SWITCH_YT -> {
+                val index = player.currentMediaItemIndex
+                val current = queueData.value.data.listTracks.getOrNull(index)
+                val replacement = current?.let { searchYouTubeReplacement(it) }
+                if (replacement == null) {
+                    Logger.w(TAG, "no YouTube Music match for \"${current?.title}\", skipping instead")
+                    showToast(ToastType.UnavailableSongSwitchFailed)
+                    skipForwardOrPause()
+                } else {
+                    Logger.w(TAG, "switching \"${current?.title}\" to YouTube Music ${replacement.videoId}")
+                    _queueData.update { q ->
+                        q.copy(
+                            data =
+                                q.data.copy(
+                                    listTracks =
+                                        q.data.listTracks.toMutableList().apply {
+                                            set(index, replacement)
+                                        },
+                                ),
+                        )
+                    }
+                    runCatching { songRepository.insertSong(replacement.toSongEntity()).first() }
+                    player.replaceMediaItem(index, replacement.toGenericMediaItem())
+                    showToast(ToastType.UnavailableSongSwitched)
+                }
+            }
+
+            else -> {
+                showToast(ToastType.UnavailableSongSkipped)
+                skipForwardOrPause()
+            }
+        }
+    }
+
+    /** 队列里还有下一首就跳,没有(单曲/队尾+REPEAT_OFF)就停下 */
+    private fun skipForwardOrPause() {
+        if (player.hasNextMediaItem()) {
+            player.seekToNext()
+        } else {
+            player.pause()
+        }
+    }
+
+    /** 按网易云歌的 标题+艺人 搜 YT 同名曲:时长 ±4s 过滤 + 标题相似度择优 */
+    private suspend fun searchYouTubeReplacement(track: Track): Track? {
+        val query =
+            buildString {
+                append(track.title)
+                track.artists?.firstOrNull()?.name?.takeIf { it.isNotBlank() }?.let {
+                    append(" ")
+                    append(it)
+                }
+            }
+        val candidates =
+            runCatching { searchRepository.searchYouTubeSongsOnce(query) }.getOrNull()
+                ?.takeIf { it.isNotEmpty() } ?: return null
+        val wantedSeconds = track.durationSeconds ?: 0
+        val normalizedWant = normalizeTitleForMatch(track.title)
+        var best: com.maxrave.domain.data.model.searchResult.songs.SongsResult? = null
+        var bestScore = -1
+        var bestDelta = Int.MAX_VALUE
+        for (candidate in candidates) {
+            val seconds = candidate.durationSeconds ?: continue
+            val delta = kotlin.math.abs(seconds - wantedSeconds)
+            if (wantedSeconds > 0 && delta > 4) continue
+            val normalized = normalizeTitleForMatch(candidate.title ?: continue)
+            val score =
+                when {
+                    normalized == normalizedWant -> 3
+                    normalized.contains(normalizedWant) || normalizedWant.contains(normalized) -> 2
+                    else -> 1
+                }
+            // 无时长参照(=0)时只信标题精确/包含匹配,防换到 live/合集/串烧
+            if (wantedSeconds <= 0 && score < 2) continue
+            if (score > bestScore || (score == bestScore && delta < bestDelta)) {
+                best = candidate
+                bestScore = score
+                bestDelta = delta
+            }
+        }
+        return best?.toTrack()
+    }
+
+    /** 标题匹配前归一:去括号段/版本噪声词/标点空白,全小写 */
+    private fun normalizeTitleForMatch(value: String): String =
+        value
+            .lowercase()
+            .replace(Regex("""\([^)]*\)|\[[^\]]*\]"""), " ")
+            .replace(
+                Regex("""(?<![\p{L}\p{N}_])(official|audio|video|music|lyrics?|mv|visualizer|hd|hq|4k)(?![\p{L}\p{N}_])"""),
+                " ",
+            )
+            .replace(Regex("""[\p{Punct}\p{IsWhite_Space}]+"""), "")
 
     override fun onShuffleModeEnabledChanged(
         shuffleModeEnabled: Boolean,

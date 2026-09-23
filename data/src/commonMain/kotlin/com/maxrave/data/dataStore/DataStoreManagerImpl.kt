@@ -699,15 +699,15 @@ internal class DataStoreManagerImpl(
         }
     }
 
-    override val neteaseAutoSwitch =
+    override val neteaseUnavailableAction =
         settingsDataStore.data.map { preferences ->
-            preferences[NETEASE_AUTO_SWITCH] ?: TRUE
+            preferences[NETEASE_UNAVAILABLE_ACTION] ?: DataStoreManager.Values.NETEASE_UNAVAILABLE_ACTION_SKIP
         }
 
-    override suspend fun setNeteaseAutoSwitch(enabled: Boolean) {
+    override suspend fun setNeteaseUnavailableAction(action: String) {
         withContext(Dispatchers.IO) {
             settingsDataStore.edit { settings ->
-                settings[NETEASE_AUTO_SWITCH] = if (enabled) TRUE else FALSE
+                settings[NETEASE_UNAVAILABLE_ACTION] = action
             }
         }
     }
@@ -2004,7 +2004,7 @@ internal class DataStoreManagerImpl(
         val NETEASE_DOWNLOAD_QUALITY = stringPreferencesKey("netease_download_quality")
         val NETEASE_FOLLOW_SYNC = stringPreferencesKey("netease_follow_sync")
         val NETEASE_FAVORITE_SYNC = stringPreferencesKey("netease_favorite_sync")
-        val NETEASE_AUTO_SWITCH = stringPreferencesKey("netease_auto_switch")
+        val NETEASE_UNAVAILABLE_ACTION = stringPreferencesKey("netease_unavailable_action")
         val NETEASE_LIKE_SYNC = stringPreferencesKey("netease_like_sync")
         val NETEASE_PLAY_REPORT = stringPreferencesKey("netease_play_report")
         val SPOTIFY_LYRICS = stringPreferencesKey("spotify_lyrics")

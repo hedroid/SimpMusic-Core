@@ -397,7 +397,7 @@ class NeteaseRepositoryImpl(
             ).first()
         val wanted = NeteaseQuality.entries.firstOrNull { it.name == levelName } ?: NeteaseQuality.EXHIGH
         // 从所选档位向下走降级链;只剩试听(freeTrialInfo)视为不可完整播放 → null,
-        // 由调用方按 neteaseAutoSwitch 设置决定是否自动切另一音源。
+        // 由调用方按 neteaseUnavailableAction 设置决定后续动作(跳过/暂停/回退 YT)。
         val order = NeteaseQuality.FALLBACK_ORDER.dropWhile { it != wanted }
         // 请求失败(网络抖动/网易频控)≠灰歌:带增量退避重试(NeriPlayer 同款语义),别把可恢复
         // 的瞬时失败一次性判成"不可播放"。灰歌(响应成功但无 url/全试听)不进重试分支。
@@ -429,6 +429,22 @@ class NeteaseRepositoryImpl(
                 }
             }
             return Result.success(null)
+        }
+    }
+
+    /**
+     * 网易歌可播性探针(播放失败的分流判定):读 songDetail 的 privilege 版权态 + song.fee。
+     * 返回 null=请求失败(网络断/频控),调用方按普通播放错误处理,别误跳歌;
+     * NO_COPYRIGHT=灰歌;PAYWALLED=VIP 专属/需购专辑(非会员同样取不到完整流)。
+     * PLAYABLE=服务端认为可播,取流失败大概率是瞬时的,走既有错误路径。
+     */
+    suspend fun probeNeteasePlayable(songId: String): NeteasePlayability? {
+        val id = songId.toLongOrNull() ?: return null
+        val song = client.songDetail(listOf(id)).getOrNull()?.firstOrNull() ?: return null
+        return when {
+            song.hasCopyright == false -> NeteasePlayability.NO_COPYRIGHT
+            song.fee == 1 || song.fee == 4 -> NeteasePlayability.PAYWALLED
+            else -> NeteasePlayability.PLAYABLE
         }
     }
 
@@ -1709,6 +1725,18 @@ data class NeteaseStreamInfo(
     val mimeType: String?,
     val level: String?,
 )
+
+/** 网易歌可播性(songDetail privilege 判定),喂"无版权歌曲动作"的分流 */
+enum class NeteasePlayability {
+    /** 有版权且无付费墙 */
+    PLAYABLE,
+
+    /** 无版权/下架(灰歌,privilege.st!=0 或 fee=-1) */
+    NO_COPYRIGHT,
+
+    /** 有版权但付费墙(VIP 专属 fee=1/专辑购买 fee=4):非会员取不到完整流 */
+    PAYWALLED,
+}
 
 internal fun NeteaseSong.toSongEntity(): SongEntity =
     SongEntity(

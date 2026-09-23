@@ -44,8 +44,8 @@ interface MusicSourceProvider {
     ): Result<List<SongEntity>>
 
     /**
-     * 取流。返回 null 表示拿不到可完整播放的 URL(灰歌/VIP 试听),调用方负责
-     * "无版权音乐自动切"(neteaseAutoSwitch 设置)时回退到另一音源搜索同名曲。
+     * 取流。返回 null 表示拿不到可完整播放的 URL(灰歌/VIP 试听),调用方按
+     * "无版权歌曲动作"设置(neteaseUnavailableAction)决定跳过/暂停/回退另一音源。
      */
     suspend fun getStreamUrl(
         songId: String,

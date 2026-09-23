@@ -376,7 +376,18 @@ sealed class ToastType(
 
     data class PlayerError(
         val error: String,
-        /** 403/取不到流且当前歌是网易数字 id:按"灰歌不可播"说人话,而非超时模板 */
-        val unavailable: Boolean = false,
     ) : ToastType(error)
+
+    /** 网易灰歌按"无版权歌曲动作"设置自动处理后的结果提示 */
+    data object UnavailableSongPaused : ToastType()
+
+    data object UnavailableSongSkipped : ToastType()
+
+    data object UnavailableSongSwitched : ToastType()
+
+    /** 回退 YT 模式没搜到可用版本,已退回自动跳过 */
+    data object UnavailableSongSwitchFailed : ToastType()
+
+    /** 整队都不可播放,防循环护栏停住(暂停),没有可继续的歌 */
+    data object UnavailableQueueExhausted : ToastType()
 }

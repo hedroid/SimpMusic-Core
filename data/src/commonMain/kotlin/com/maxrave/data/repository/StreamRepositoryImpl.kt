@@ -93,8 +93,8 @@ internal class StreamRepositoryImpl(
         flow {
             // 网易歌曲:videoId 为纯数字(YT id 固定 11 位含字母,不会撞)。数字即网易,
             // 走网易取流 —— 音质降级链/试听判定在 NeteaseRepositoryImpl.getStreamUrl 内。
-            // TODO(NETEASE_M9): 返回 null(灰歌/仅试听)且自动切源开启时,按 title+artist
-            // 搜 YT 同名曲自动换源播放。
+            // null(灰歌/仅试听)的后续动作在 MediaServiceHandler 按设置分流:
+            // 自动跳过/暂停/按 title+artist 搜 YT 同名曲回退(NETEASE_M9,2026-09-22 落地)。
             if (videoId.toLongOrNull() != null) {
                 val stream =
                     neteaseRepository
