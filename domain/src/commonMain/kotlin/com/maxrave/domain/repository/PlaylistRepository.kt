@@ -150,6 +150,14 @@ interface PlaylistRepository {
      *  playlist/delete 对收藏歌单是 403)。返回是否成功。 */
     suspend fun removeYouTubePlaylistFromLibrary(playlistId: String): Boolean
 
+    /** 从自建 YT 歌单移除一首歌(browse/edit_playlist ACTION_REMOVE_VIDEO,仅自建有权限)。
+     *  移除需要条目级 setVideoId:先查本地缓存(set_video_id 按歌单精确匹配),miss 则
+     *  整单拉一次带 setVideoId 的曲目并回填缓存。返回是否成功。 */
+    suspend fun removeTrackFromYouTubePlaylist(
+        playlistId: String,
+        videoId: String,
+    ): Boolean
+
     fun getMixedForYou(): Flow<List<PlaylistsResult>?>
 
     fun updateYourYouTubePlaylistTitle(

@@ -740,6 +740,14 @@ interface DatabaseDao {
     @Query("SELECT * FROM set_video_id WHERE videoId = :videoId")
     suspend fun getSetVideoId(videoId: String): SetVideoIdEntity?
 
+    // setVideoId 是"歌单内条目"级 id(同一首歌在不同歌单不同值),按歌单精确取,
+    // 供从 YT 歌单移除单曲时用;上面的 getSetVideoId 不带歌单条件,多歌单命中时形状不可靠
+    @Query("SELECT * FROM set_video_id WHERE videoId = :videoId AND youtubePlaylistId = :youtubePlaylistId LIMIT 1")
+    suspend fun getSetVideoIdForPlaylist(
+        videoId: String,
+        youtubePlaylistId: String,
+    ): SetVideoIdEntity?
+
     // PairSongLocalPlaylist
     @Insert(onConflict = OnConflictStrategy.Companion.REPLACE)
     suspend fun insertPairSongLocalPlaylist(pairSongLocalPlaylist: PairSongLocalPlaylist)

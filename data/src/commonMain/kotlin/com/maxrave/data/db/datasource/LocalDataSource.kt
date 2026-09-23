@@ -469,6 +469,11 @@ internal class LocalDataSource(
 
     suspend fun getSetVideoId(videoId: String) = databaseDao.getSetVideoId(videoId)
 
+    suspend fun getSetVideoIdForPlaylist(
+        videoId: String,
+        youtubePlaylistId: String,
+    ) = databaseDao.getSetVideoIdForPlaylist(videoId, youtubePlaylistId)
+
     suspend fun insertPairSongLocalPlaylist(pairSongLocalPlaylist: PairSongLocalPlaylist) =
         databaseDao.insertPairSongLocalPlaylist(pairSongLocalPlaylist)
 
