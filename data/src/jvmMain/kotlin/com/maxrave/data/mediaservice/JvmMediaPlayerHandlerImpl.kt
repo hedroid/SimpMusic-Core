@@ -3166,7 +3166,13 @@ class JvmMediaPlayerHandlerImpl(
             }
 
             else -> {
-                showToast(ToastType.UnavailableSongSkipped)
+                // 有下一首才说"已跳过";搜索点击这类单曲队列跳无可跳(退化为暂停),
+                // 按不可播放提示,别说"跳过了"什么都没跳
+                if (player.hasNextMediaItem()) {
+                    showToast(ToastType.UnavailableSongSkipped)
+                } else {
+                    showToast(ToastType.UnavailableSongPaused)
+                }
                 skipForwardOrPause()
             }
         }

@@ -3186,7 +3186,13 @@ internal class MediaServiceHandlerImpl(
             }
 
             else -> {
-                showUnavailableToast(ToastType.UnavailableSongSkipped)
+                // 有下一首才说"已跳过";搜索点击这类单曲队列跳无可跳(退化为暂停),
+                // 按不可播放提示,别说"跳过了"什么都没跳
+                if (player.hasNextMediaItem()) {
+                    showUnavailableToast(ToastType.UnavailableSongSkipped)
+                } else {
+                    showUnavailableToast(ToastType.UnavailableSongPaused)
+                }
                 skipForwardOrPause()
             }
         }
