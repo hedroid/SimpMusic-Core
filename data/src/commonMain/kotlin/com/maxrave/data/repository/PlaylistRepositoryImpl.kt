@@ -908,23 +908,28 @@ internal class PlaylistRepositoryImpl(
         videoId: String,
     ): Boolean =
         kotlinx.coroutines.withContext(Dispatchers.IO) {
-            // scrape 端点按无 VL 形状工作(Ytmusic.removeItemYouTubePlaylist 自行剥前缀);
-            // set_video_id 缓存行也是无 VL 形状(建库管线 getYouTubePlaylistFullTracksWithSetVideoId 同源)
+            // scrape 端点按无 VL 形状工作(Ytmusic.removeItemYouTubePlaylist 自行剥前缀)
             val bareId = playlistId.removePrefix("VL")
-            val cached = localDataSource.getSetVideoIdForPlaylist(videoId, bareId)
-            val setVideoId =
-                cached?.setVideoId
-                    ?: youTube
-                        .getYouTubePlaylistFullTracksWithSetVideoId(bareId)
-                        .getOrNull()
-                        ?.firstOrNull { it.first.id == videoId }
-                        ?.second
-                        ?.also { sv -> localDataSource.insertSetVideoId(SetVideoIdEntity(videoId, sv, bareId)) }
-            if (setVideoId == null) {
+            // 快路径:缓存命中直接试删。setVideoId 在"移除+重新入单"后会换新值,缓存行
+            // 会陈旧——被服务端拒(non-200)无副作用,落慢路径整单拉当前值重试自愈
+            val cached = localDataSource.getSetVideoIdForPlaylist(videoId, bareId)?.setVideoId
+            if (cached != null &&
+                youTube.removeItemYouTubePlaylist(bareId, videoId, cached).getOrNull() == 200
+            ) {
+                return@withContext true
+            }
+            val fresh =
+                youTube
+                    .getYouTubePlaylistFullTracksWithSetVideoId(bareId)
+                    .getOrNull()
+                    ?.firstOrNull { it.first.id == videoId }
+                    ?.second
+            if (fresh == null) {
                 Logger.w("YTRemove", "no setVideoId for $videoId in $bareId")
                 return@withContext false
             }
-            youTube.removeItemYouTubePlaylist(bareId, videoId, setVideoId).getOrNull() == 200
+            localDataSource.insertSetVideoId(SetVideoIdEntity(videoId, fresh, bareId))
+            youTube.removeItemYouTubePlaylist(bareId, videoId, fresh).getOrNull() == 200
         }
 
     override fun getMixedForYou(): Flow<List<PlaylistsResult>?> =

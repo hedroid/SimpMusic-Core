@@ -295,7 +295,7 @@ internal fun parsePlaylistData(
                             ?: listOf(),
                     duration = durationText.orEmpty(),
                     durationSeconds = parseDurationSeconds(durationText),
-                    isAvailable = false,
+                    isAvailable = true,
                     // YouTube only emits this badge on explicit rows, so its absence is the normal
                     // case rather than missing data. Same shape the search and album parsers
                     // already read, and the same field ytmusicapi reads for playlist items.

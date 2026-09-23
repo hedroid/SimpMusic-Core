@@ -41,7 +41,7 @@ internal fun parseAlbumData(data: AlbumPage): AlbumBrowse {
                         ""
                     },
                 durationSeconds = songItem.duration ?: 0,
-                isAvailable = false,
+                isAvailable = true,
                 isExplicit = songItem.explicit,
                 likeStatus = "INDIFFERENT",
                 thumbnails = songItem.thumbnails?.thumbnails?.toListThumbnail() ?: listOf(),
