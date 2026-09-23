@@ -3215,7 +3215,7 @@ internal class MediaServiceHandlerImpl(
         }
     }
 
-    /** 按网易云歌的 标题+艺人 搜 YT 同名曲:时长 ±4s 过滤 + 标题相似度择优 */
+    /** 按网易云歌的 标题+艺人 搜 YT 同名曲:时长 ±4s 过滤 + 艺人/标题相似度择优 */
     private suspend fun searchYouTubeReplacement(track: Track): Track? {
         val query =
             buildString {
@@ -3230,7 +3230,10 @@ internal class MediaServiceHandlerImpl(
                 ?.takeIf { it.isNotEmpty() } ?: return null
         val wantedSeconds = track.durationSeconds ?: 0
         val normalizedWant = normalizeTitleForMatch(track.title)
+        val artistWant =
+            track.artists?.firstOrNull()?.name?.takeIf { it.isNotBlank() }?.let(::normalizeTitleForMatch)
         var best: com.maxrave.domain.data.model.searchResult.songs.SongsResult? = null
+        var bestArtistHit = false
         var bestScore = -1
         var bestDelta = Int.MAX_VALUE
         for (candidate in candidates) {
@@ -3246,8 +3249,27 @@ internal class MediaServiceHandlerImpl(
                 }
             // 无时长参照(=0)时只信标题精确/包含匹配,防换到 live/合集/串烧
             if (wantedSeconds <= 0 && score < 2) continue
-            if (score > bestScore || (score == bestScore && delta < bestDelta)) {
+            // 艺人校验:同名不同歌手是回退最常见的错配;候选艺人名与目标互相包含才算命中。
+            // 无艺人信息的结果(音乐合集频道等)不算命中——只有标题精确匹配时才容忍
+            val artistHit =
+                if (artistWant == null) {
+                    true
+                } else {
+                    candidate.artists.orEmpty().any { artist ->
+                        val a = artist.name?.takeIf { it.isNotBlank() }?.let(::normalizeTitleForMatch)
+                        a != null && (a.contains(artistWant) || artistWant.contains(a))
+                    }
+                }
+            if (!artistHit && score < 3) continue
+            // 优先级:艺人命中 > 标题相似分 > 时长差
+            val better =
+                best == null ||
+                    (artistHit && !bestArtistHit) ||
+                    (artistHit == bestArtistHit && score > bestScore) ||
+                    (artistHit == bestArtistHit && score == bestScore && delta < bestDelta)
+            if (better) {
                 best = candidate
+                bestArtistHit = artistHit
                 bestScore = score
                 bestDelta = delta
             }

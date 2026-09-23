@@ -1648,11 +1648,21 @@ internal class CrossfadeExoPlayerAdapter(
                     val cachedPlayerEntry = precachedPlayers.remove(videoId)
                     val player: ExoPlayer
                     val playerFilter: CrossfadeFilterAudioProcessor?
-                    if (cachedPlayerEntry?.player != null) {
+                    if (cachedPlayerEntry?.player != null && cachedPlayerEntry.player.playbackState != Player.STATE_IDLE) {
                         Logger.d(TAG, "Using precached player for $videoId")
                         player = cachedPlayerEntry.player
                         playerFilter = cachedPlayerEntry.filter
                     } else {
+                        // STATE_IDLE on a prepared precache = its load already errored (netease
+                        // gray song's resolver IOException etc.). That error fired with no adapter
+                        // listener attached, so promoting this player would sit dead in IDLE and
+                        // never re-raise it - the handler's unavailable-action logic would never
+                        // run (manual next-track to a gray song "did nothing"). Discard and load
+                        // fresh so the failure surfaces normally.
+                        if (cachedPlayerEntry?.player != null) {
+                            Logger.w(TAG, "Discarding errored precache for $videoId, loading fresh")
+                            cleanupPlayerInternal(cachedPlayerEntry.player)
+                        }
                         Logger.d(TAG, "Creating new player for $videoId")
                         val pwf = createExoPlayerInstance()
                         player = pwf.player
@@ -2140,10 +2150,16 @@ internal class CrossfadeExoPlayerAdapter(
                 val cachedPlayerEntry = precachedPlayers.remove(nextVideoId)
                 val nextPlayer: ExoPlayer
                 val nextFilter: CrossfadeFilterAudioProcessor?
-                if (cachedPlayerEntry?.player != null) {
+                if (cachedPlayerEntry?.player != null && cachedPlayerEntry.player.playbackState != Player.STATE_IDLE) {
                     nextPlayer = cachedPlayerEntry.player
                     nextFilter = cachedPlayerEntry.filter
                 } else {
+                    // Same guard as the primary promote path: an errored (IDLE) precache never
+                    // re-raises its failure after promotion - load fresh instead.
+                    if (cachedPlayerEntry?.player != null) {
+                        Logger.w(TAG, "Discarding errored precache for $nextVideoId (crossfade), loading fresh")
+                        cleanupPlayerInternal(cachedPlayerEntry.player)
+                    }
                     val pwf = createExoPlayerInstance()
                     nextPlayer = pwf.player
                     nextFilter = pwf.filter

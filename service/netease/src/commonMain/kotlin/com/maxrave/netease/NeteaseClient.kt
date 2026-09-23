@@ -46,8 +46,10 @@ class NeteaseClient(
         HttpClient(getEngine()) {
             expectSuccess = false
             install(io.ktor.client.plugins.HttpTimeout) {
-                requestTimeoutMillis = 15_000
-                connectTimeoutMillis = 10_000
+                // 30s(2026-09-23 调大,原 15s):灰歌探针(songDetail)超时会返回 null,
+                // 动作分流落到 legacy 路径(误弹"网络超时"toast+暂停);取流链还有内部退避,别抢跑
+                requestTimeoutMillis = 30_000
+                connectTimeoutMillis = 15_000
             }
         }
     private val json = Json { ignoreUnknownKeys = true }

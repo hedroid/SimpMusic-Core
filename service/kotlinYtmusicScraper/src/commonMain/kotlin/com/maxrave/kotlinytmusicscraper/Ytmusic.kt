@@ -157,6 +157,13 @@ class Ytmusic {
     private fun createClient() =
         HttpClient(getEngine()) {
             expectSuccess = true
+            // 显式超时(2026-09-23):Ktor 默认 request 15s 在代理/弱网下不够——
+            // 灰歌回退的 searchYouTubeSongsOnce + 换源重取流都会在这窗口里,
+            // 超时即报"网络超时"toast 并把错误落到 legacy 路径
+            install(io.ktor.client.plugins.HttpTimeout) {
+                requestTimeoutMillis = 30_000
+                connectTimeoutMillis = 15_000
+            }
             install(CurlLogger) {
                 logger = { Logger.d(TAG, it) }
             }

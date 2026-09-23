@@ -30,7 +30,8 @@ class RemotePlayerConfigStore(
         private const val REFRESH_TTL_MS = 6 * 60 * 60 * 1000L
         private const val FAILURE_RETRY_MS = 60 * 1000L
         private const val FAILURE_REFRESH_COOLDOWN_MS = 5 * 60 * 1000L
-        private const val REQUEST_TIMEOUT_MS = 5_000L
+        // 15s(2026-09-23 调大,原 5s):弱网/代理下 player 配置拉取 5s 不够,超时会级联成取流失败
+        private const val REQUEST_TIMEOUT_MS = 15_000L
         private const val MAX_LEGACY_TIMESTAMP_CACHE_ENTRIES = 16
         private const val MAX_CONFIG_RESPONSE_BYTES = 4 * 1024 * 1024
         private const val LEGACY_FARADAY_CONFIG_URL =
