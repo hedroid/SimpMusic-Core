@@ -9,6 +9,7 @@ import com.maxrave.data.parser.parseLibraryPlaylist
 import com.maxrave.data.parser.parseNextLibraryPlaylist
 import com.maxrave.data.parser.ownSavedByMenu
 import com.maxrave.data.parser.parsePlaylistData
+import com.maxrave.kotlinytmusicscraper.models.response.BrowseResponse
 import com.maxrave.domain.data.entities.ArtistEntity
 import com.maxrave.domain.data.model.searchResult.albums.AlbumsResult
 import com.maxrave.domain.data.entities.PlaylistEntity
@@ -895,26 +896,59 @@ internal class PlaylistRepositoryImpl(
 
     override suspend fun getYouTubePlaylistAsLibraryRow(playlistId: String): PlaylistsResult? =
         kotlinx.coroutines.withContext(Dispatchers.IO) {
-            // YouTube.playlist 内部自己补 VL 前缀,这里统一剥掉防止双前缀
-            youTube
-                .playlist(playlistId.removePrefix("VL"))
-                .getOrNull()
-                ?.playlist
-                ?.let { pl ->
-                    PlaylistsResult(
-                        author = pl.author?.name ?: "",
-                        browseId = pl.id,
-                        category = "",
-                        itemCount = pl.songCountText ?: "",
-                        resultType = "Playlist",
-                        thumbnails =
-                            pl.thumbnail.takeIf { it.isNotBlank() }
-                                ?.let { listOf(Thumbnail(height = 544, url = it, width = 544)) }
-                                ?: listOf(),
-                        title = pl.title,
-                    )
-                }
+            val bareId = playlistId.removePrefix("VL")
+            // 与歌单详情页同一管线(customQuery + parsePlaylistData 的 header 解析)——
+            // 空歌单没有 musicPlaylistShelf,YouTube.playlist() 的 songs 链尾 !! 会 NPE,
+            // 这条路对空歌单是详情页验证过的容错路径。整体 runCatching:回读是尽力而为,
+            // 上游解析器的 secondSubtitle?.runs?.size!! 对无副标题形状会 NPE,任何失败
+            // 都只退占位行,绝不能把调用方(建单→事件)的协程带崩(实测踩过)。
+            runCatching {
+                youTube
+                    .customQuery(browseId = "VL$bareId", setLogin = true)
+                    .getOrNull()
+                    ?.let { result -> extractPlaylistHeader(result) }
+                    ?.let { header ->
+                        parsePlaylistData(header, emptyList(), bareId, "")?.let { browse ->
+                            PlaylistsResult(
+                                author = browse.author.name,
+                                browseId = bareId,
+                                category = "",
+                                itemCount = "",
+                                resultType = "",
+                                thumbnails = browse.thumbnails,
+                                title = browse.title,
+                            )
+                        }
+                    }
+            }.onFailure { e ->
+                Logger.w("Library", "getYouTubePlaylistAsLibraryRow failed for $bareId: ${e.message}")
+            }.getOrNull()
         }
+
+    /** 歌单 browse 响应的 header 提取(getPlaylistData 同款链,自建歌单走 editable 包装) */
+    private fun extractPlaylistHeader(result: BrowseResponse): Any? =
+        result.header?.musicDetailHeaderRenderer
+            ?: result.header?.musicEditablePlaylistDetailHeaderRenderer
+            ?: result.contents
+                ?.twoColumnBrowseResultsRenderer
+                ?.tabs
+                ?.get(0)
+                ?.tabRenderer
+                ?.content
+                ?.sectionListRenderer
+                ?.contents
+                ?.get(0)?.musicResponsiveHeaderRenderer
+            ?: result.contents
+                ?.twoColumnBrowseResultsRenderer
+                ?.tabs
+                ?.get(0)
+                ?.tabRenderer
+                ?.content
+                ?.sectionListRenderer
+                ?.contents
+                ?.get(0)?.musicEditablePlaylistDetailHeaderRenderer
+                ?.header
+                ?.musicResponsiveHeaderRenderer
 
     override suspend fun deleteYouTubePlaylist(playlistId: String): Boolean =
         kotlinx.coroutines.withContext(Dispatchers.IO) {
