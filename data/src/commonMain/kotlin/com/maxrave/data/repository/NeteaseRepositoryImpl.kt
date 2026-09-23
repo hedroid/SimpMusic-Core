@@ -982,6 +982,19 @@ class NeteaseRepositoryImpl(
     suspend fun createNeteasePlaylist(name: String): Result<String> =
         client.createPlaylist(name).map { it.toString() }
 
+    /**
+     * 建单成功的单体回读:/v6/playlist/detail → 与库列表(userPlaylists)完全同一
+     * [toPlaylistEntity] 映射的权威行(封面/创建者昵称/曲目数),库页本地插入用它
+     * 保证与下次全量拉回的行同构,样式不跳变。失败返回 null,调用方退占位行。
+     * 顺带把创建者缓存补上,新歌单的"自建"判定(收藏入口/移除歌曲)即刻生效。
+     */
+    suspend fun getNeteasePlaylistAsLibraryRow(playlistId: String): PlaylistEntity? {
+        val id = playlistId.toLongOrNull() ?: return null
+        val playlist = client.playlistDetail(id).getOrNull()?.first ?: return null
+        libraryCreatorIds = libraryCreatorIds + (playlist.id to playlist.creatorId)
+        return playlist.toPlaylistEntity()
+    }
+
     /** 拉自己歌单的全部 trackIds(增量同步的差集基准);null = 拉取失败。 */
     suspend fun getNeteasePlaylistTrackIds(playlistId: String): List<Long>? {
         val id = playlistId.toLongOrNull() ?: return null

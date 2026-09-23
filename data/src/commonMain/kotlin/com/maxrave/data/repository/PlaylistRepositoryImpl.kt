@@ -893,6 +893,29 @@ internal class PlaylistRepositoryImpl(
                 ?.takeIf { it.isNotBlank() }
         }
 
+    override suspend fun getYouTubePlaylistAsLibraryRow(playlistId: String): PlaylistsResult? =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            // YouTube.playlist 内部自己补 VL 前缀,这里统一剥掉防止双前缀
+            youTube
+                .playlist(playlistId.removePrefix("VL"))
+                .getOrNull()
+                ?.playlist
+                ?.let { pl ->
+                    PlaylistsResult(
+                        author = pl.author?.name ?: "",
+                        browseId = pl.id,
+                        category = "",
+                        itemCount = pl.songCountText ?: "",
+                        resultType = "Playlist",
+                        thumbnails =
+                            pl.thumbnail.takeIf { it.isNotBlank() }
+                                ?.let { listOf(Thumbnail(height = 544, url = it, width = 544)) }
+                                ?: listOf(),
+                        title = pl.title,
+                    )
+                }
+        }
+
     override suspend fun deleteYouTubePlaylist(playlistId: String): Boolean =
         kotlinx.coroutines.withContext(Dispatchers.IO) {
             youTube.deletePlaylist(playlistId).isSuccess

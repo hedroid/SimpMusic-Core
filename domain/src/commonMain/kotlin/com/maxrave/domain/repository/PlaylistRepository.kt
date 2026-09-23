@@ -142,6 +142,11 @@ interface PlaylistRepository {
         videoIds: List<String>,
     ): String?
 
+    /** 建单成功的单体回读:playlist 页 → 与库网格行同构的 [PlaylistsResult]
+     *  (标题/创建者/服务端封面——空歌单的默认封面只有服务端知道,本地占位行与网络行
+     *  样式不一致的根治)。失败返回 null,调用方退占位行。playlistId 带不带 VL 前缀均可。 */
+    suspend fun getYouTubePlaylistAsLibraryRow(playlistId: String): PlaylistsResult?
+
     /** 删除自建 YT 歌单(playlist/delete,仅自建有权限;playlistId 不带 VL)。
      *  返回是否成功。 */
     suspend fun deleteYouTubePlaylist(playlistId: String): Boolean
