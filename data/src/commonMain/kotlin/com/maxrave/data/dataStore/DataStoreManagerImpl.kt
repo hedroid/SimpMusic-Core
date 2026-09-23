@@ -1148,6 +1148,19 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    override val hapticFeedbackLevel =
+        settingsDataStore.data.map { preferences ->
+            preferences[HAPTIC_FEEDBACK_LEVEL] ?: DataStoreManager.Values.HAPTIC_FEEDBACK_LEVEL_MEDIUM
+        }
+
+    override suspend fun setHapticFeedbackLevel(level: String) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[HAPTIC_FEEDBACK_LEVEL] = level
+            }
+        }
+    }
+
     override val romanizationLanguages =
         settingsDataStore.data.map { preferences ->
             preferences[ROMANIZATION_LANGUAGES] ?: ""
@@ -2007,6 +2020,7 @@ internal class DataStoreManagerImpl(
         val NETEASE_UNAVAILABLE_ACTION = stringPreferencesKey("netease_unavailable_action")
         val NETEASE_LIKE_SYNC = stringPreferencesKey("netease_like_sync")
         val NETEASE_PLAY_REPORT = stringPreferencesKey("netease_play_report")
+        val HAPTIC_FEEDBACK_LEVEL = stringPreferencesKey("haptic_feedback_level")
         val SPOTIFY_LYRICS = stringPreferencesKey("spotify_lyrics")
         val SYNC_FOLLOW_TO_YOUTUBE = stringPreferencesKey("sync_follow_to_youtube")
         val EQUALIZER_AUTOEQ_PROFILE = stringPreferencesKey("equalizer_autoeq_profile")

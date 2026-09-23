@@ -597,6 +597,15 @@ interface DataStoreManager {
     suspend fun setLyricsStyle(style: String)
 
     /**
+     * 触感反馈强度,播放控件(播放/暂停/切歌/红心)的振动三档:
+     * [HAPTIC_FEEDBACK_LEVEL_LIGHT]/[HAPTIC_FEEDBACK_LEVEL_MEDIUM]/[HAPTIC_FEEDBACK_LEVEL_STRONG]。
+     * 仅 Android 有实际振动;系统"触摸振动"关闭时静默。
+     */
+    val hapticFeedbackLevel: Flow<String>
+
+    suspend fun setHapticFeedbackLevel(level: String)
+
+    /**
      * Which languages get a Latin-script reading shown for their lyrics, as a comma-separated list
      * of [org.simpmusic.lyrics.romanization.RomanizationLanguage] NAMES — empty string means the
      * feature is off, which is the default.
@@ -695,6 +704,11 @@ interface DataStoreManager {
         const val THEME_MODE_SYSTEM = "SYSTEM"
         const val THEME_MODE_DARK = "DARK"
         const val THEME_MODE_LIGHT = "LIGHT"
+
+        /** 触感反馈强度:轻柔 / 标准(默认) / 强烈,名字与 UI 选项一一对应 */
+        const val HAPTIC_FEEDBACK_LEVEL_LIGHT = "LIGHT"
+        const val HAPTIC_FEEDBACK_LEVEL_MEDIUM = "MEDIUM"
+        const val HAPTIC_FEEDBACK_LEVEL_STRONG = "STRONG"
 
         const val THEME_COLOR_DEFAULT = "DEFAULT"
         const val THEME_COLOR_WALLPAPER = "WALLPAPER"
