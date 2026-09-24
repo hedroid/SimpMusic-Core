@@ -2,11 +2,13 @@ package com.maxrave.data.repository
 
 import DatabaseDao
 import com.maxrave.domain.data.entities.NeteaseAccountEntity
+import com.maxrave.domain.utils.toTrack
 import com.maxrave.domain.data.entities.NeteaseSongInfoEntity
 import com.maxrave.domain.data.entities.PlaylistEntity
 import com.maxrave.domain.data.entities.SongEntity
 import com.maxrave.common.NETEASE_PLAYLIST_PAGE_PREFIX
 import com.maxrave.common.NETEASE_PLAYLIST_PAGE_SIZE
+import com.maxrave.domain.data.model.browse.album.Track
 import com.maxrave.domain.data.model.home.Content
 import com.maxrave.domain.data.model.home.HomeItem
 import com.maxrave.domain.data.model.home.chart.Artists
@@ -1276,6 +1278,14 @@ class NeteaseRepositoryImpl(
     /** 搜歌曲 → YT SongsResult 形状(搜索页行组件直接渲染;videoId=数字 ID 原文,播放走数字路由取流) */
     suspend fun searchSongsResult(query: String): Result<ArrayList<SongsResult>> =
         client.searchSongs(query).map { r -> ArrayList(r.items.map { it.toSongsResult() }) }
+
+    /** 网易单曲直取(songDetail → Track):deeplink 分享回流(simpmusic://watch?v=<数字id>)在
+     *  本地无缓存行时的取曲路径——等价 YT getFullMetadata 的角色。失败返回 null。 */
+    suspend fun getNeteaseSongTrack(songId: String): Track? {
+        val id = songId.toLongOrNull() ?: return null
+        val song = client.songDetail(listOf(id)).getOrNull()?.firstOrNull() ?: return null
+        return song.toSongsResult().toTrack()
+    }
 
     /** 搜歌曲分页页(SONGS tab 加载更多):token="offset:<n>"(null=首页);翻完发 null。
      *  more 判定=offset+本页条数<songCount(拿不到 total 时退"满页即有下一页")。 */

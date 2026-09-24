@@ -88,8 +88,8 @@ interface MusicSourceProvider {
     ): Result<Boolean> = Result.failure(UnsupportedOperationException("$source: likeSong"))
 
     // ------------------------------------------------ C 档(下个版本),接口位预留
-    // TODO(NETEASE_C_TIER): 云盘(cloudDisk)、歌曲评论(songComments)、
-    // 歌手详情/百科/相似歌手(artistDetail) —— 实现见 core/service/netease/NeteaseEndpoints.kt 桩。
+    // TODO(NETEASE_C_TIER): 仅剩云盘(cloudDisk)与播客(dj 生态)未接;
+    // 歌曲评论/歌手详情/百科/相似歌手已在 NeteaseEndpoints.kt 实现并有消费方。
 
     // ------------------------------------------------ YTM 有而本源没有的能力(如实留空):
     // 视频MV/播客(网易MV另算)、automix 无限续播、播放行为回传(watchtime)、

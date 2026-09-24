@@ -201,6 +201,9 @@ class JvmMediaPlayerHandlerImpl(
      * 就乐观分发 READY,真失败还没发生标记就没了(实测踩坑);也不等切歌回调,纯时间窗自愈。
      */
     private var switchedReplacementMediaId: String? = null
+
+    /** PAUSE 档灰歌记录:播放键对 ERROR/IDLE 态=原曲重载,会反复重试灰歌;命中改跳下一首(android 端同款) */
+    private var pausedUnavailableMediaId: String? = null
     private var switchedReplacementAt = 0L
     override var onUpdateNotification: (List<GenericCommandButton>) -> Unit = {}
     override var showToast: (ToastType) -> Unit = {}
@@ -1087,6 +1090,18 @@ class JvmMediaPlayerHandlerImpl(
                 if (player.isPlaying) {
                     stopProgressUpdate()
                     player.pause()
+                } else if (
+                    pausedUnavailableMediaId != null &&
+                    player.currentMediaItem?.mediaId?.removePrefix("Video") == pausedUnavailableMediaId
+                ) {
+                    // PAUSE 档灰歌:重载必再失败,改跳下一首/队尾保持暂停(android 端同款)
+                    if (player.hasNextMediaItem()) {
+                        showToast(ToastType.UnavailableSongSkipped)
+                        player.seekToNext()
+                        startProgressUpdate()
+                    } else {
+                        showToast(ToastType.UnavailableSongPaused)
+                    }
                 } else {
                     player.play()
                     startProgressUpdate()
@@ -3169,6 +3184,7 @@ class JvmMediaPlayerHandlerImpl(
         when (dataStoreManager.neteaseUnavailableAction.first()) {
             DataStoreManager.Values.NETEASE_UNAVAILABLE_ACTION_PAUSE -> {
                 player.pause()
+                pausedUnavailableMediaId = mediaId
                 showToast(ToastType.UnavailableSongPaused)
             }
 

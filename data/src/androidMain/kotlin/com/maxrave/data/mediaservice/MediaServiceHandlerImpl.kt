@@ -171,6 +171,13 @@ internal class MediaServiceHandlerImpl(
     private var switchedReplacementMediaId: String? = null
     private var switchedReplacementAt = 0L
 
+    /**
+     * PAUSE 档灰歌记录:暂停后播放键(play() 对 ERROR/IDLE 态=原曲重载)会反复重试同一首
+     * 灰歌、每次都再失败再 toast——命中此标记时播放键改跳下一首。按 id 比对(换曲/重载
+     * 其它歌自然失配),无需时间窗:这首歌就是灰的,跳过永远是对的。
+     */
+    private var pausedUnavailableMediaId: String? = null
+
     override var onUpdateNotification: (List<GenericCommandButton>) -> Unit = {}
     override var showToast: (ToastType) -> Unit = {}
     override var pushPlayerError: (PlayerError) -> Unit = {}
@@ -1086,6 +1093,18 @@ internal class MediaServiceHandlerImpl(
                 if (player.isPlaying) {
                     player.pause()
                     stopProgressUpdate()
+                } else if (
+                    pausedUnavailableMediaId != null &&
+                    player.currentMediaItem?.mediaId?.removePrefix("Video") == pausedUnavailableMediaId
+                ) {
+                    // PAUSE 档灰歌:重载必再失败(播放键循环根因),改跳下一首/队尾保持暂停
+                    if (player.hasNextMediaItem()) {
+                        showUnavailableToast(ToastType.UnavailableSongSkipped)
+                        player.seekToNext()
+                        startProgressUpdate()
+                    } else {
+                        showUnavailableToast(ToastType.UnavailableSongPaused)
+                    }
                 } else {
                     player.play()
                     startProgressUpdate()
@@ -3187,6 +3206,7 @@ internal class MediaServiceHandlerImpl(
         when (dataStoreManager.neteaseUnavailableAction.first()) {
             DataStoreManager.Values.NETEASE_UNAVAILABLE_ACTION_PAUSE -> {
                 player.pause()
+                pausedUnavailableMediaId = mediaId
                 showUnavailableToast(ToastType.UnavailableSongPaused)
             }
 
