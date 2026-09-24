@@ -163,6 +163,9 @@ internal class MediaServiceHandlerImpl(
     /** 连续"无版权动作"计数(防整队灰歌/REPEAT_ALL 绕圈跳不停),STATE_READY 归零 */
     private var unavailableChainCount = 0
 
+    /** onPlayerError 置位:其后的 STATE_IDLE 发 Stopped(停转圈)而非 Initial(装载中转圈) */
+    private var sawPlaybackError = false
+
     /**
      * SWITCH_YT 换源记录(曲目 id + 时间戳):换上后 30s 内的第一声播放失败按"换源失败"处理
      * (跳过+专属提示)而非 legacy 超时文案。不能在 STATE_READY 清——adapter 在换源装载**启动**时
@@ -2917,8 +2920,16 @@ internal class MediaServiceHandlerImpl(
             }
         when (playbackState) {
             PlayerConstants.STATE_IDLE -> {
-                _simpleMediaState.value = SimpleMediaState.Initial
-                Logger.d(TAG, "onPlaybackStateChanged: Idle")
+                // 错误后的 IDLE(灰歌动作/legacy 暂停)发 Stopped:UI 停转圈保持现场;
+                // 装载起步的 IDLE 维持 Initial(转圈)。Initial 分支曾让灰歌暂停后永远转圈
+                if (sawPlaybackError) {
+                    sawPlaybackError = false
+                    _simpleMediaState.value = SimpleMediaState.Stopped
+                    Logger.d(TAG, "onPlaybackStateChanged: Idle (after error) -> Stopped")
+                } else {
+                    _simpleMediaState.value = SimpleMediaState.Initial
+                    Logger.d(TAG, "onPlaybackStateChanged: Idle")
+                }
             }
 
             PlayerConstants.STATE_ENDED -> {
@@ -2931,6 +2942,7 @@ internal class MediaServiceHandlerImpl(
                 // 有歌真的播起来了:灰歌连续跳过/换源的护栏计数归零。
                 // 换源标记不在 READY 清(装载启动时的乐观 READY 会误清),由 30s 时间窗自愈
                 unavailableChainCount = 0
+                sawPlaybackError = false
                 _simpleMediaState.value = SimpleMediaState.Ready(player.duration)
             }
 
@@ -3104,6 +3116,7 @@ internal class MediaServiceHandlerImpl(
     }
 
     override fun onPlayerError(error: PlayerError) {
+        sawPlaybackError = true
         when (error.errorCode) {
             PlayerConstants.ERROR_CODE_TIMEOUT -> {
                 Logger.e("Player Error", "onPlayerError (${error.errorCode}): ${error.message}")

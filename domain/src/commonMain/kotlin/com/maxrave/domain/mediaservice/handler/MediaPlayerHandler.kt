@@ -217,6 +217,14 @@ sealed class PlayerEvent {
 sealed class SimpleMediaState {
     data object Initial : SimpleMediaState()
 
+    /**
+     * Idle after an error (or an unavailable-song action left the player parked):
+     * unlike [Initial] this must NOT show a loading spinner — the toast already
+     * told the user why playback stopped, and the UI should freeze the timeline
+     * as-is until they act.
+     */
+    data object Stopped : SimpleMediaState()
+
     data object Ended : SimpleMediaState()
 
     data class Ready(
