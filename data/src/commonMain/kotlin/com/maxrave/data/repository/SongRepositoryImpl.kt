@@ -467,6 +467,13 @@ internal class SongRepositoryImpl(
                     } else {
                         videoId
                     }
+                // 网易歌(纯数字 id):YT next+RYD 对数字 ID 必失败(400/Unknown),
+                // 白打两个请求还刷 logcat——与 SponsorBlock/MediaServiceHandler 同款短路,
+                // 直接读本地缓存兜底(与 onFailure 分支行为一致)
+                if (id.toLongOrNull() != null) {
+                    emit(getSongInfoEntity(videoId).lastOrNull())
+                    return@flow
+                }
                 youTube
                     .getSongInfo(id)
                     .onSuccess { songInfo ->
@@ -522,17 +529,18 @@ internal class SongRepositoryImpl(
     override suspend fun setRemoteLikeStatus(
         videoId: String,
         liked: Boolean,
-    ): Boolean =
+    ): Result<Boolean> =
         if (videoId.toLongOrNull() != null) {
-            if (!neteaseRepository.isLoggedIn.first()) false
-            else neteaseRepository.setSongLiked(videoId, liked).getOrDefault(false)
+            // 网易:透传 Result,405 频控异常(NeteaseRateLimitException)一路带到 UI
+            if (!neteaseRepository.isLoggedIn.first()) Result.success(false)
+            else neteaseRepository.setSongLiked(videoId, liked)
         } else {
             if (dataStoreManager.cookie.first().isEmpty()) {
-                false
+                Result.success(false)
             } else {
                 val status =
                     if (liked) youTube.addToLiked(videoId) else youTube.removeFromLiked(videoId)
-                status.getOrNull() in 200..299
+                Result.success(status.getOrNull() in 200..299)
             }
         }
 

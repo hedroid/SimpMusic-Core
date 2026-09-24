@@ -460,10 +460,10 @@ class NeteaseRepositoryImpl(
         }
     }
 
-    /** 网易官方歌词包:原文(yrc 逐字→words 内嵌 <MM:SS.mm> 标记/lrc 行级)+官方中文翻译。
-     *  官方罗马音(romalrc)本期不接——渲染端本地罗马音引擎已覆盖日/韩。
+    /** 网易官方歌词包:原文(yrc 逐字→words 内嵌 <MM:SS.mm> 标记/lrc 行级)+官方中文翻译+官方罗马音。
+     *  罗马音(romalrc)与翻译同为行级、与原文同源时间轴;缺失时为 null,渲染端回退本地罗马音引擎。
      *  原文/翻译任一存在即成功;全空(冷门歌无歌词)返回 failure 走 LRCLIB 兜底。 */
-    suspend fun getNeteaseLyricsData(songId: String): Result<Pair<com.maxrave.domain.data.model.metadata.Lyrics, com.maxrave.domain.data.model.metadata.Lyrics?>> =
+    suspend fun getNeteaseLyricsData(songId: String): Result<Triple<com.maxrave.domain.data.model.metadata.Lyrics, com.maxrave.domain.data.model.metadata.Lyrics?, com.maxrave.domain.data.model.metadata.Lyrics?>> =
         runCatching {
             val id = songId.toLongOrNull() ?: error("netease songId 非数字: $songId")
             val raw = client.lyric(id).getOrNull() ?: error("歌词请求失败: $songId")
@@ -487,8 +487,8 @@ class NeteaseRepositoryImpl(
                     // UI 判断用大写字符串(RICH_SYNCED/LINE_SYNCED),小写会退回行级渲染
                     syncType = if (hasYrc) "RICH_SYNCED" else "LINE_SYNCED",
                 )
-            val translated =
-                raw.translated?.let { NeteaseLyricsConverter.parseAuto(it) }?.takeIf { it.isNotEmpty() }
+            fun lineLevelLyrics(raw_: String?) =
+                raw_?.let { NeteaseLyricsConverter.parseAuto(it) }?.takeIf { it.isNotEmpty() }
                     ?.let { lines ->
                         com.maxrave.domain.data.model.metadata.Lyrics(
                             lines =
@@ -502,7 +502,9 @@ class NeteaseRepositoryImpl(
                             syncType = "LINE_SYNCED",
                         )
                     }
-            lyrics to translated
+            val translated = lineLevelLyrics(raw.translated)
+            val romanized = lineLevelLyrics(raw.romanized)
+            Triple(lyrics, translated, romanized)
         }
 
     /** yrc 行 → 渲染端 rich-sync 格式:每个词前内嵌 <MM:SS.mm> 起始标记。

@@ -137,11 +137,13 @@ interface SongRepository {
     /** Reads the source account state without changing SimpMusic's local favourite. */
     suspend fun getRemoteLikeStatus(videoId: String): Boolean?
 
-    /** Writes only the source account state; local favourite remains independent. */
+    /** Writes only the source account state; local favourite remains independent.
+     *  Result carries the failure cause so the UI can tell a netease rate limit (405)
+     *  apart from a plain failure — success(false) means the source rejected the write. */
     suspend fun setRemoteLikeStatus(
         videoId: String,
         liked: Boolean,
-    ): Boolean
+    ): Result<Boolean>
 
     suspend fun addToYouTubeLiked(mediaId: String?): Flow<Int>
 

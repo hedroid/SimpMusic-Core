@@ -226,6 +226,10 @@ class NeteaseClient(
         }
         val text = response.bodyAsText()
         if (!response.status.value.let { it in 200..299 }) {
+            // 端点级频控/账号风控窗口的实测形状是 HTTP 405(记忆:重试会续期窗口)。
+            // 抛专属类型让 UI 层能给出"操作过于频繁"而非笼统"操作失败";
+            // 其余非 2xx 维持 ktor 异常原样。
+            if (response.status.value == 405) throw NeteaseRateLimitException(url)
             throw ClientRequestException(response, "HTTP ${response.status.value}: ${text.take(200)}")
         }
         if (url.contains("login") || url.contains("captcha")) {
@@ -446,3 +450,9 @@ private fun JsonElement?.primitiveContent(): String? =
 
 private fun JsonElement?.primitiveInt(): Int? =
     (this as? JsonPrimitive)?.takeIf { it !is JsonNull }?.intOrNull
+
+/** 网易写端点 HTTP 405(端点级频控/账号风控窗口):UI 层据此给"操作过于频繁"专属提示,
+ *  与笼统失败区分。窗口内反复重试会续期,提示用户静置而不是再戳。 */
+class NeteaseRateLimitException(
+    val url: String,
+) : Exception("netease rate limited: $url")

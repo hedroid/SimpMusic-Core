@@ -1224,7 +1224,7 @@ internal class MediaServiceHandlerImpl(
                     id = id.removePrefix("Video")
                 }
                 val likedNow = songRepository.getSongById(id).singleOrNull()?.liked == true
-                val ok = songRepository.setRemoteLikeStatus(id, !likedNow)
+                val ok = songRepository.setRemoteLikeStatus(id, !likedNow).getOrDefault(false)
                 if (ok) {
                     songRepository.setLikedLocal(id, if (!likedNow) 1 else 0)
                     _controlState.value = _controlState.value.copy(isLiked = !likedNow)
