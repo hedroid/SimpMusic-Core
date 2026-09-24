@@ -1526,8 +1526,17 @@ internal class CrossfadeExoPlayerAdapter(
             )
         Logger.e(TAG, "Playback error: ${error.message}")
         listeners.forEach { it.onPlayerError(genericError) }
-        transitionToState(InternalState.ERROR)
+        // 真实错误已经发过:随后的 ERROR 态转移不再合成 403 重播(见 transitionToState)
+        suppressSyntheticError = true
+        try {
+            transitionToState(InternalState.ERROR)
+        } finally {
+            suppressSyntheticError = false
+        }
     }
+
+    /** propagatePlayerError → transitionToState(ERROR) 期间置位,抑制合成 403 的双重通知 */
+    private var suppressSyntheticError = false
 
     private fun transitionToState(newState: InternalState) {
         if (internalState == newState) {
@@ -1587,14 +1596,20 @@ internal class CrossfadeExoPlayerAdapter(
             InternalState.ERROR -> {
                 listeners.forEach { it.onPlaybackStateChanged(PlayerConstants.STATE_IDLE) }
                 listeners.forEach { it.onIsPlayingChanged(false) }
-                listeners.forEach {
-                    it.onPlayerError(
-                        PlayerError(
-                            errorCode = 403,
-                            errorCodeName = "ERROR_UNKNOWN",
-                            message = "Can not extract playable URL or playback error",
-                        ),
-                    )
+                // 合成 403 只服务"loadAndPlayTrackInternal catch"这类没有真实错误的进入路径;
+                // propagatePlayerError 刚把真实错误(带真实 code)发过,这里再重播一个 403 会让
+                // handler 收到双重错误——第二个 403 不在网易灰歌错误码集,落到 legacy 分支
+                // (pause+超时 toast),把灰歌跳过/换源动作的进行时打断("先弹超时又好了"即此)。
+                if (!suppressSyntheticError) {
+                    listeners.forEach {
+                        it.onPlayerError(
+                            PlayerError(
+                                errorCode = 403,
+                                errorCodeName = "ERROR_UNKNOWN",
+                                message = "Can not extract playable URL or playback error",
+                            ),
+                        )
+                    }
                 }
             }
         }

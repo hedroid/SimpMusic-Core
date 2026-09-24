@@ -1285,18 +1285,25 @@ class MpvPlayerAdapter(
             InternalState.ERROR -> {
                 listeners.forEach { it.onPlaybackStateChanged(PlayerConstants.STATE_IDLE) }
                 listeners.forEach { it.onIsPlayingChanged(false) }
-                listeners.forEach {
-                    it.onPlayerError(
-                        PlayerError(
-                            errorCode = 403,
-                            errorCodeName = "ERROR_UNKNOWN",
-                            message = "Can not extract playable URL or playback error",
-                        ),
-                    )
+                // 合成 403 只服务没有真实错误的进入路径;真实错误刚发过就别重播,
+                // 否则 handler 收双重错误(403 落 legacy 分支 pause+超时 toast,打断灰歌动作)
+                if (!suppressSyntheticError) {
+                    listeners.forEach {
+                        it.onPlayerError(
+                            PlayerError(
+                                errorCode = 403,
+                                errorCodeName = "ERROR_UNKNOWN",
+                                message = "Can not extract playable URL or playback error",
+                            ),
+                        )
+                    }
                 }
             }
         }
     }
+
+    /** 真实错误 → transitionToState(ERROR) 期间置位,抑制合成 403 的双重通知 */
+    private var suppressSyntheticError = false
 
     /**
      * Give the C allocator's free pages back to the OS now that playback has gone quiet.
@@ -1558,7 +1565,13 @@ class MpvPlayerAdapter(
                                 message = "Playback error",
                             )
                         listeners.forEach { it.onPlayerError(error) }
-                        transitionToState(InternalState.ERROR)
+                        // 真实错误已经发过:随后的 ERROR 态转移不再合成 403 重播(见 transitionToState)
+                        suppressSyntheticError = true
+                        try {
+                            transitionToState(InternalState.ERROR)
+                        } finally {
+                            suppressSyntheticError = false
+                        }
                     }
                 }
 

@@ -163,6 +163,14 @@ internal class MediaServiceHandlerImpl(
     /** 连续"无版权动作"计数(防整队灰歌/REPEAT_ALL 绕圈跳不停),STATE_READY 归零 */
     private var unavailableChainCount = 0
 
+    /**
+     * SWITCH_YT 换源记录(曲目 id + 时间戳):换上后 30s 内的第一声播放失败按"换源失败"处理
+     * (跳过+专属提示)而非 legacy 超时文案。不能在 STATE_READY 清——adapter 在换源装载**启动**时
+     * 就乐观分发 READY,真失败还没发生标记就没了(实测踩坑);也不等切歌回调,纯时间窗自愈。
+     */
+    private var switchedReplacementMediaId: String? = null
+    private var switchedReplacementAt = 0L
+
     override var onUpdateNotification: (List<GenericCommandButton>) -> Unit = {}
     override var showToast: (ToastType) -> Unit = {}
     override var pushPlayerError: (PlayerError) -> Unit = {}
@@ -2901,7 +2909,8 @@ internal class MediaServiceHandlerImpl(
 
             PlayerConstants.STATE_READY -> {
                 Logger.d(TAG, "onPlaybackStateChanged: Ready")
-                // 有歌真的播起来了:灰歌连续跳过/换源的护栏计数归零
+                // 有歌真的播起来了:灰歌连续跳过/换源的护栏计数归零。
+                // 换源标记不在 READY 清(装载启动时的乐观 READY 会误清),由 30s 时间窗自愈
                 unavailableChainCount = 0
                 _simpleMediaState.value = SimpleMediaState.Ready(player.duration)
             }
@@ -3089,10 +3098,23 @@ internal class MediaServiceHandlerImpl(
 
             else -> {
                 Logger.e("Player Error", "onPlayerError (${error.errorCode}): ${error.message}")
+                // 换源失败短路:SWITCH_YT 刚换上的那首 YT 曲的第一声失败=换源流没起来
+                // (风控/取流抖动)。别落到 legacy 的超时文案+死暂停——按"回退失败,跳下一首"说人话
+                val currentId = player.currentMediaItem?.mediaId?.removePrefix(MERGING_DATA_TYPE.VIDEO)
+                if (currentId != null &&
+                    currentId == switchedReplacementMediaId &&
+                    android.os.SystemClock.elapsedRealtime() - switchedReplacementAt < 30_000
+                ) {
+                    switchedReplacementMediaId = null
+                    Logger.w(TAG, "switched YouTube track $currentId failed to load, skipping instead")
+                    showUnavailableToast(ToastType.UnavailableSongSwitchFailed)
+                    skipForwardOrPause()
+                    return
+                }
                 // 网易歌取不到流:resolver 对灰歌/付费墙抛 IOException(→IO_UNSPECIFIED 2000,
                 // 不进适配器重试集);其余 IO/解析错误也可能在适配器重试耗尽后到这。
                 // 探针分流后才决定按"无版权歌曲动作"设置处理(网络故障别误跳歌)。
-                val mediaId = player.currentMediaItem?.mediaId?.removePrefix(MERGING_DATA_TYPE.VIDEO)
+                val mediaId = currentId
                 val isNeteaseSourceError =
                     mediaId?.toLongOrNull() != null && error.errorCode in NETEASE_UNAVAILABLE_ERROR_CODES
                 if (isNeteaseSourceError && mediaId != null) {
@@ -3133,7 +3155,19 @@ internal class MediaServiceHandlerImpl(
         mediaId: String,
         error: PlayerError,
     ) {
-        val probe = runCatching { neteaseRepository.probeNeteasePlayable(mediaId) }.getOrNull()
+        // 队列里已标灰的歌(歌单管线 privileges 合并落下的 isAvailable,与置灰显示同源)
+        // 不再发探针请求——动作立即执行,弱网下也不会因探针超时误走"网络故障"分支
+        val queueMarkedUnavailable =
+            queueData.value.data.listTracks
+                .getOrNull(player.currentMediaItemIndex)
+                ?.let { it.videoId == mediaId && !it.isAvailable } == true
+        val probe =
+            if (queueMarkedUnavailable) {
+                Logger.w(TAG, "queue marks $mediaId unavailable, skipping probe")
+                NeteasePlayability.NO_COPYRIGHT
+            } else {
+                runCatching { neteaseRepository.probeNeteasePlayable(mediaId) }.getOrNull()
+            }
         if (probe != NeteasePlayability.NO_COPYRIGHT && probe != NeteasePlayability.PAYWALLED) {
             Logger.w(TAG, "netease unavailable probe=$probe for $mediaId, falling back to legacy error path")
             legacyPlaybackError(error)
@@ -3181,6 +3215,9 @@ internal class MediaServiceHandlerImpl(
                     runCatching { songRepository.insertSong(replacement.toSongEntity()).first() }
                     // replaceMediaItem 对当前曲自动重载续播(尊重 playWhenReady)
                     player.replaceMediaItem(index, replacement.toGenericMediaItem())
+                    // 记换源标记:换上后若第一声失败按"换源失败"处理(见 onPlayerError)
+                    switchedReplacementMediaId = replacement.videoId
+                    switchedReplacementAt = android.os.SystemClock.elapsedRealtime()
                     showUnavailableToast(ToastType.UnavailableSongSwitched)
                 }
             }
