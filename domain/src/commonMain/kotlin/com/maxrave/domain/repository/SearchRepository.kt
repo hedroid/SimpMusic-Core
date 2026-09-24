@@ -19,6 +19,14 @@ interface SearchRepository {
 
     fun getSearchDataSong(query: String): Flow<Resource<ArrayList<SongsResult>>>
 
+    /** 搜索单曲分页页(SONGS tab 加载更多):pageToken=null=首页,返回 (曲目, 下一页令牌|null=没有更多)。
+     *  YT 令牌=InnerTube continuation;网易令牌="offset:<n>"(服务端 offset 游标)。
+     *  其余 tab 与 ALL 混排仍走一次拉完的原方法。 */
+    fun getSearchDataSongPage(
+        query: String,
+        pageToken: String?,
+    ): Flow<Resource<Pair<ArrayList<SongsResult>, String?>>>
+
     fun getSearchDataVideo(query: String): Flow<Resource<ArrayList<VideosResult>>>
 
     fun getSearchDataPodcast(query: String): Flow<Resource<ArrayList<PlaylistsResult>>>

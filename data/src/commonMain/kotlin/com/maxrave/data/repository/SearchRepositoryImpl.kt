@@ -80,6 +80,36 @@ internal class SearchRepositoryImpl(
             }
         }.flowOn(Dispatchers.IO)
 
+    /** 单曲分页页(YT):首页=search(filter),续页=searchContinuation(token);
+     *  与 getSearchDataSong 的"内部连拉 2 页"不同,这里一页一 token,翻页节奏由 UI 控制。 */
+    override fun getSearchDataSongPage(
+        query: String,
+        pageToken: String?,
+    ): Flow<Resource<Pair<ArrayList<SongsResult>, String?>>> =
+        flow {
+            runCatching {
+                if (pageToken == null) {
+                    youTube
+                        .search(query, YouTube.SearchFilter.FILTER_SONG)
+                        .onSuccess { result ->
+                            emit(Resource.Success(parseSearchSong(result) to result.continuation))
+                        }.onFailure { e ->
+                            Logger.d("Search", "Error: ${e.message}")
+                            emit(Resource.Error(e.message.toString()))
+                        }
+                } else {
+                    youTube
+                        .searchContinuation(pageToken)
+                        .onSuccess { values ->
+                            emit(Resource.Success(parseSearchSong(values) to values.continuation))
+                        }.onFailure { e ->
+                            Logger.d("Search", "Error: ${e.message}")
+                            emit(Resource.Error(e.message.toString()))
+                        }
+                }
+            }
+        }.flowOn(Dispatchers.IO)
+
     /**
      * 单次 YT 单曲搜索(只拉首页,无续页):网易灰歌跨源回退的候选源。
      * 走具体类而非 [SearchRepository] 接口——接口实现是按 selectedSource 路由的,

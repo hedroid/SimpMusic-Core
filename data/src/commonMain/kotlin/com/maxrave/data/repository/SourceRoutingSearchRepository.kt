@@ -52,6 +52,21 @@ internal class SourceRoutingSearchRepository(
             }
         }
 
+    override fun getSearchDataSongPage(
+        query: String,
+        pageToken: String?,
+    ): Flow<Resource<Pair<ArrayList<SongsResult>, String?>>> =
+        flow {
+            if (isNetease()) {
+                netease.searchSongsPage(query, pageToken).fold(
+                    onSuccess = { emit(Resource.Success(it)) },
+                    onFailure = { emit(Resource.Error(it.message ?: "netease search error")) },
+                )
+            } else {
+                emitAll(youtube.getSearchDataSongPage(query, pageToken))
+            }
+        }
+
     override fun getSearchDataVideo(query: String): Flow<Resource<ArrayList<VideosResult>>> =
         flow {
             if (isNetease()) {

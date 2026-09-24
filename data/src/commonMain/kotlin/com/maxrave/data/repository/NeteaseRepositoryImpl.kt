@@ -232,6 +232,8 @@ class NeteaseRepositoryImpl(
 
     private companion object {
         const val TAG = "NeteaseRepo"
+        const val NETEASE_SEARCH_PAGE_SIZE = 30
+        const val NETEASE_SEARCH_OFFSET_PREFIX = "offset:"
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -1274,6 +1276,22 @@ class NeteaseRepositoryImpl(
     /** 搜歌曲 → YT SongsResult 形状(搜索页行组件直接渲染;videoId=数字 ID 原文,播放走数字路由取流) */
     suspend fun searchSongsResult(query: String): Result<ArrayList<SongsResult>> =
         client.searchSongs(query).map { r -> ArrayList(r.items.map { it.toSongsResult() }) }
+
+    /** 搜歌曲分页页(SONGS tab 加载更多):token="offset:<n>"(null=首页);翻完发 null。
+     *  more 判定=offset+本页条数<songCount(拿不到 total 时退"满页即有下一页")。 */
+    suspend fun searchSongsPage(
+        query: String,
+        pageToken: String?,
+    ): Result<Pair<ArrayList<SongsResult>, String?>> {
+        val offset = pageToken?.removePrefix(NETEASE_SEARCH_OFFSET_PREFIX)?.toIntOrNull() ?: 0
+        return client.searchSongs(query, limit = NETEASE_SEARCH_PAGE_SIZE, offset = offset).map { r ->
+            val items = ArrayList(r.items.map { it.toSongsResult() })
+            val hasMore =
+                r.totalCount?.let { total -> offset + r.items.size < total }
+                    ?: (r.items.size >= NETEASE_SEARCH_PAGE_SIZE)
+            items to if (hasMore) "$NETEASE_SEARCH_OFFSET_PREFIX${offset + r.items.size}" else null
+        }
+    }
 
     /** 搜歌单 → PlaylistsResult;resultType 置非 "Podcast",点击稳定走 PlaylistDestination(与主页同页) */
     suspend fun searchPlaylistsResult(query: String): Result<ArrayList<PlaylistsResult>> =
