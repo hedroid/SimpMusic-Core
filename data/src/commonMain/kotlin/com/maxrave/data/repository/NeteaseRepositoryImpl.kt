@@ -63,6 +63,8 @@ import com.maxrave.netease.NeteaseConstants
 import com.maxrave.netease.createPlaylist
 import com.maxrave.netease.dailyRecommendPlaylists
 import com.maxrave.netease.dailyRecommendSongs
+import com.maxrave.netease.heartModeList
+import com.maxrave.netease.likedPlaylistId
 import com.maxrave.netease.highQualityPlaylists
 import com.maxrave.netease.categoryPlaylists
 import com.maxrave.netease.categoryPlaylistsPaged
@@ -1348,10 +1350,23 @@ class NeteaseRepositoryImpl(
             ?.mapCatching { replacement -> replacement?.toMixContent() }
             ?: Result.failure(IllegalArgumentException("netease songId 非数字: $songId"))
 
-    /** 红心电台:红心歌单随机 30 首(本地洗牌)。/playmode/intelligence/list 心动模式端点
-     *  对第三方已全面 500(weapi/eapi/明文,见 PITFALLS),此为本地替代:红心随机起播,
-     *  队列挂 FM 哨兵播完自动接私人FM 续批。 */
+    /** 红心电台:官方心动模式(/playmode/intelligence/list,PITFALLS 2026-09-25 翻案后接入)。
+     *  随机一首红心歌当种子 + 红心歌单 pid,一次拉 ~150 首个性化推荐(每次调用重掷一版,
+     *  与旧方案"每次随机"的心智一致);队列挂 FM 哨兵播完自动接私人FM 续批。 */
     suspend fun getHeartRadioContents(): Result<List<Content>> =
+        runCatching {
+            val account = client.getAccountStatus().getOrNull()?.takeIf { it.userId != 0L }
+                ?: error("未登录网易云")
+            val likedPlaylistId = client.likedPlaylistId(account.userId).getOrNull()
+            check(likedPlaylistId != null && likedPlaylistId > 0L) { "红心歌单缺失" }
+            val seed =
+                client.userLikedSongIds(account.userId).getOrNull().orEmpty().randomOrNull()
+                    ?: error("红心歌单为空")
+            client.heartModeList(seed, likedPlaylistId).getOrThrow().map { it.toMixContent() }
+        }
+
+    /** 红心电台旧方案(红心随机 30 首本地洗牌):心动模式端点不可用时的回退备胎,暂不使用。 */
+    suspend fun getHeartRadioContentsLegacyShuffle(): Result<List<Content>> =
         runCatching {
             val account = client.getAccountStatus().getOrNull()?.takeIf { it.userId != 0L }
                 ?: error("未登录网易云")

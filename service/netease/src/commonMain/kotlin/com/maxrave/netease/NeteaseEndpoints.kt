@@ -1205,6 +1205,35 @@ suspend fun NeteaseClient.similarSongs(
         body.array("songs")?.map { it.toSong() } ?: emptyList()
     }
 
+/**
+ * 心动模式(官方智能播放,weapi /playmode/intelligence/list):以种子歌为锚的个性化推荐,
+ * 一次 ~150 首,每次调用服务端重掷一版。**五参数缺一不可——缺 count 即 500 空 message**
+ * (PITFALLS 生死簿:首轮判死正是缺 startMusicId/count 的误判,2026-09 复探翻案)。
+ * 响应 data[] 每条 {id,alg,recommended,songInfo{标准歌曲对象}};songInfo **内联 privilege**,
+ * toSong() 直读版权态、无需 mergePrivileges;alg 带推荐理由(sameTag-RH/simArtist-RH)。
+ * playlistId 须为包含种子歌的歌单(红心歌单即可)。
+ */
+suspend fun NeteaseClient.heartModeList(
+    songId: Long,
+    playlistId: Long,
+): Result<List<NeteaseSong>> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/playmode/intelligence/list",
+                mapOf(
+                    "songId" to songId.toString(),
+                    "type" to "fromPlayOne",
+                    "playlistId" to playlistId.toString(),
+                    "startMusicId" to songId.toString(),
+                    "count" to "1",
+                ),
+            )
+        body.array("data")?.mapNotNull { element ->
+            (element as? JsonObject)?.get("songInfo")?.let { it.toSong() }
+        } ?: emptyList()
+    }
+
 /** 播放上报(NCA scrobble 同款:weapi /feedback/weblog 的 play/playend 日志)。
  *  喂网易推荐引擎/播放量/年度报告;time 为收听毫秒,sourceId 可空。 */
 suspend fun NeteaseClient.scrobble(
