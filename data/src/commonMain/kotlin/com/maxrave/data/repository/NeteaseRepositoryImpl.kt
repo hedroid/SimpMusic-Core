@@ -1585,6 +1585,23 @@ class NeteaseRepositoryImpl(
             ?.let { client.subscribeArtist(it, subscribe) }
             ?: Result.failure(IllegalArgumentException("netease artistId 非数字: $artistId"))
 
+    /** 网易艺人"全部歌曲"分页页(MoreSongsScreen):/v1/artist/songs 原生 order(hot/time)
+     *  +limit/offset。返回 (曲目, hasMore);艺人页人气区只展示热门 50,这里给全量+按时间排序。 */
+    suspend fun getArtistSongsPage(
+        artistId: String,
+        order: String,
+        offset: Int,
+        limit: Int = 50,
+    ): Result<Pair<List<ResultSong>, Boolean>> =
+        runCatching {
+            val id = artistId.toLongOrNull() ?: error("netease artistId 非数字: $artistId")
+            val page = client.artistSongs(id, order = order, limit = limit, offset = offset).getOrThrow()
+            val more =
+                page.totalCount?.let { total -> offset + page.items.size < total }
+                    ?: (page.items.size >= limit)
+            page.items.map { it.toResultSong() } to more
+        }
+
     // ---------------------------------------------------------------- 主页 M6 行:热门歌手 + 新碟上架
 
     /** 热门歌手榜 → ArtistsResult(主页行;点击进艺人页)。行缓存 10min。 */
