@@ -2105,6 +2105,10 @@ class JvmMediaPlayerHandlerImpl(
                 data = queueData,
             )
         }
+        // 播种会话级"已知不可播"注册表(getStreamInfo 单档优化的依据)。异步播种与首曲装载
+        // 有一拍竞态,两个方向的误命中都无害:漏播=走完整降级链(旧行为);上一队列残留=
+        // 可播的歌单档也能拿到 url(服务端按权益回落),失败再走探针分流,结论不变。
+        coroutineScope.launch { neteaseRepository.resetKnownUnavailableNeteaseIds(queueData.listTracks) }
         // Snapshot which tracks came from the album, for the crossfade rule. Taken at load time
         // because endless queue appends to this same queue afterwards, and those additions are not
         // album tracks — that boundary is exactly where crossfade should resume.
@@ -3056,6 +3060,7 @@ class JvmMediaPlayerHandlerImpl(
                 // 换源标记不在 READY 清(装载启动时的乐观 READY 会误清),由 30s 时间窗自愈
                 unavailableChainCount = 0
                 sawPlaybackError = false
+                markNeteaseTrackPlayableIfGray()
                 _simpleMediaState.value = SimpleMediaState.Ready(player.duration)
             }
 
@@ -3279,6 +3284,60 @@ class JvmMediaPlayerHandlerImpl(
             3001, // ERROR_CODE_PARSING_CONTAINER_MALFORMED
         )
 
+    /** STATE_READY:网易歌真播起来了(版权恢复/队列快照过期)——播放实证优先于旧快照,
+     *  队列行+song 行回写 isAvailable=true,注册表摘除(该歌恢复完整降级链待遇) */
+    private fun markNeteaseTrackPlayableIfGray() {
+        val index = player.currentMediaItemIndex
+        val track = queueData.value.data.listTracks.getOrNull(index) ?: return
+        val id = track.videoId.toLongOrNull() ?: return
+        if (!track.isAvailable) {
+            Logger.w(TAG, "queue-marked unavailable song ${track.videoId} actually plays, writing back isAvailable=true")
+        }
+        coroutineScope.launch {
+            neteaseRepository.markNeteaseSongPlayable(id)
+            if (!track.isAvailable) patchQueueTrackIsAvailable(index, track, available = true)
+        }
+    }
+
+    /** 探针实证不可播:注册表追加(PAYWALLED 也在内——本会话取流单档,全链不会有别的结果);
+     *  仅 NO_COPYRIGHT 回写行级 isAvailable=false(与列表置灰同语义;PAYWALLED 是账号
+     *  权益问题,不改显示),后续命中免探针+取流单档 */
+    private suspend fun markNeteaseTrackUnavailableAfterProbe(
+        index: Int,
+        mediaId: String,
+        probe: NeteasePlayability,
+    ) {
+        mediaId.toLongOrNull()?.let { neteaseRepository.markNeteaseSongUnavailable(it) }
+        if (probe != NeteasePlayability.NO_COPYRIGHT) return
+        val track = queueData.value.data.listTracks.getOrNull(index) ?: return
+        if (track.videoId == mediaId && track.isAvailable) {
+            Logger.w(TAG, "probe confirmed NO_COPYRIGHT for ${track.videoId}, writing back isAvailable=false")
+            patchQueueTrackIsAvailable(index, track, available = false)
+        }
+    }
+
+    /** 队列内存行+song 行回写 isAvailable。song 行:媒体项切换时已用旧值落过一行,
+     *  这里补正确值(重启恢复当前曲走 getSongById 读的就是它);saved queue 由暂停/
+     *  停止时的 mayBeSaveRecentSong 用已补丁的 queueData 落盘,无需在此重写 */
+    private suspend fun patchQueueTrackIsAvailable(
+        index: Int,
+        track: Track,
+        available: Boolean,
+    ) {
+        val patched = track.copy(isAvailable = available)
+        _queueData.update { qd ->
+            val list = ArrayList(qd.data.listTracks)
+            if (list.getOrNull(index)?.videoId == track.videoId) {
+                list[index] = patched
+                qd.copy(data = qd.data.copy(listTracks = list))
+            } else {
+                qd
+            }
+        }
+        runCatching { songRepository.insertSong(patched.toSongEntity()).first() }
+    }
+
+
     /**
      * 网易灰歌/付费墙的处理(neteaseUnavailableAction 设置):自动跳过 / 暂停 /
      * 跨源回退 YT 同名曲。探针(songDetail privilege)失败或判可播 → 走既有错误路径。
@@ -3306,6 +3365,8 @@ class JvmMediaPlayerHandlerImpl(
             return
         }
         Logger.w(TAG, "netease song unplayable ($probe): $mediaId, applying unavailable action")
+        // 实证不可播:回写注册表+行级状态,后续同一首命中免探针+取流单档(自愈收敛)
+        markNeteaseTrackUnavailableAfterProbe(player.currentMediaItemIndex, mediaId, probe)
         val queueSize = maxOf(queueData.value.data.listTracks.size, player.mediaItemCount)
         // 防循环护栏:整队连续不可播(REPEAT_ALL 会绕圈,或全是灰歌的电台队列)时停下
         if (unavailableChainCount >= queueSize) {

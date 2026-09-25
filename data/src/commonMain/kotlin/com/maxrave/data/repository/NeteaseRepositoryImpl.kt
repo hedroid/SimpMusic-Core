@@ -159,6 +159,38 @@ class NeteaseRepositoryImpl(
     ): Flow<Resource<BrowsePage>> = flow { emit(Resource.Error<BrowsePage>("Browse pages are not available on NetEase")) }
 
     override val source: MusicSource = MusicSource.NETEASE
+
+    /**
+     * 会话级"已知不可播"网易歌曲 id:建队列时从行的 isAvailable=false 快照播种,
+     * 播放失败被探针/队列旁证实证后追加,STATE_READY 播放成功则摘除。
+     * [getStreamInfo] 对这些歌只试所选档位一档——灰歌每档都"成功但无 url",
+     * 逐档走完降级链是 3-5 次串行往返的纯浪费;单档仍保留"服务端实时确认"语义,
+     * 版权恢复的歌这一档就能拿到 url 正常播,不会被旧快照冤枉。
+     * 误命中的代价有限:可播的歌单档也能拿到 url(服务端按权益回落),失败再走
+     * 错误路径的探针分流,结论不因此变错。
+     */
+    private val knownUnavailableMutex = Mutex()
+    private val knownUnavailableNeteaseIds = mutableSetOf<Long>()
+
+    /** 建队列(setQueueData)时整体重播种;会话内实证死亡的 id 由 mark* 维护 */
+    suspend fun resetKnownUnavailableNeteaseIds(tracks: List<Track>) {
+        knownUnavailableMutex.withLock {
+            knownUnavailableNeteaseIds.clear()
+            tracks.forEach { track ->
+                val id = track.videoId.toLongOrNull()
+                if (id != null && !track.isAvailable) knownUnavailableNeteaseIds.add(id)
+            }
+        }
+    }
+
+    suspend fun markNeteaseSongUnavailable(songId: Long) {
+        knownUnavailableMutex.withLock { knownUnavailableNeteaseIds.add(songId) }
+    }
+
+    suspend fun markNeteaseSongPlayable(songId: Long) {
+        knownUnavailableMutex.withLock { knownUnavailableNeteaseIds.remove(songId) }
+    }
+
     /**
      * 排行榜去重缓存:feed 的"排行榜"行与图表区块共用同一份榜单数据
      * (原本两个槽各打一次接口)。Mutex 保证并发下的第一对请求只发一次网络;
@@ -410,9 +442,18 @@ class NeteaseRepositoryImpl(
                 }
             ).first()
         val wanted = NeteaseQuality.entries.firstOrNull { it.name == levelName } ?: NeteaseQuality.EXHIGH
+        // 会话内已知不可播(队列标灰快照/探针实证)只试所选档位一档,保住"问过服务端"的
+        // 实时性:版权恢复的歌这一档就返回 url 正常播,过期快照不会冤枉跳歌
+        val knownUnavailable =
+            knownUnavailableMutex.withLock { id in knownUnavailableNeteaseIds }
         // 从所选档位向下走降级链;只剩试听(freeTrialInfo)视为不可完整播放 → null,
         // 由调用方按 neteaseUnavailableAction 设置决定后续动作(跳过/暂停/回退 YT)。
-        val order = NeteaseQuality.FALLBACK_ORDER.dropWhile { it != wanted }
+        val order =
+            if (knownUnavailable) {
+                listOf(wanted)
+            } else {
+                NeteaseQuality.FALLBACK_ORDER.dropWhile { it != wanted }
+            }
         // 请求失败(网络抖动/网易频控)≠灰歌:带增量退避重试(NeriPlayer 同款语义),别把可恢复
         // 的瞬时失败一次性判成"不可播放"。灰歌(响应成功但无 url/全试听)不进重试分支。
         var retriesLeft = 2
