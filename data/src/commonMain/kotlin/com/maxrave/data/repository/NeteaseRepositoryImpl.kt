@@ -52,6 +52,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlin.time.ExperimentalTime
 import kotlin.time.TimeSource
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.Mutex
 import com.maxrave.domain.source.MusicSource
@@ -1728,23 +1729,45 @@ class NeteaseRepositoryImpl(
      * 回归就是重复通知。按 type 拆不相交的两组(单曲=Single,专辑/EP/未知归专辑组)。不相交是
      * 硬约束——NotifyWork 对 ALBUM/SINGLE 两个参数各调一次,同一张发行若同时落两组会发两条重复通知。
      * 返回 null=请求失败(调用方跳过快照写入),空列表=成功但该艺人无此类型发行。
+     *
+     * 调用方几乎总是 ALBUM/SINGLE 成对并发请求(NotifyWork 的 combine):若各自翻页,同一艺人
+     * 的全量列表要拉两遍(CR-18,最多 2×10 页,纯浪费且双倍风控暴露)。故分页结果按艺人做
+     * 单飞+短窗复用——先到者在锁内翻页,后来者等锁后直接拿同一份,再按各自 type 拆分。
+     * 失败不缓存(后来者会重试);窗口 30s,跨扫描轮次(12h)必然重新拉取。
      */
+    private val artistAlbumsFetchMutex = Mutex()
+    private var artistAlbumsFetchCache: Pair<Long, Pair<List<NeteaseAlbum>, kotlin.time.TimeMark>>? = null
+
     suspend fun getArtistMoreAlbums(
         artistId: Long,
         singles: Boolean = false,
     ): ArrayList<AlbumsResult>? {
+        val all = artistAlbumsFetchMutex.withLock {
+            val cached = artistAlbumsFetchCache
+            if (cached != null && cached.first == artistId && cached.second.second.elapsedNow() < 30.seconds) {
+                cached.second.first
+            } else {
+                val fetched = fetchArtistAlbumsPaginated(artistId) ?: return null
+                artistAlbumsFetchCache = artistId to (fetched to TimeSource.Monotonic.markNow())
+                fetched
+            }
+        }
+        return splitByType(singles, all)
+    }
+
+    private suspend fun fetchArtistAlbumsPaginated(artistId: Long): List<NeteaseAlbum>? {
         val all = ArrayList<NeteaseAlbum>()
         var offset = 0
         repeat(NETEASE_ARTIST_ALBUMS_MAX_PAGES) {
             val page = client.artistAlbums(artistId, limit = NETEASE_ARTIST_ALBUMS_PAGE, offset = offset).getOrNull() ?: return null
             val (items, more) = page
             all += items
-            if (!more || items.isEmpty()) return splitByType(singles, all)
+            if (!more || items.isEmpty()) return all
             offset += items.size
             // 同艺人连续翻页留间隔防风控(与 NotifyWork NETEASE_POLL_GAP_MS 同理由)
             delay(NETEASE_ARTIST_ALBUMS_PAGE_GAP_MS)
         }
-        return splitByType(singles, all)
+        return all
     }
 
     private fun splitByType(
