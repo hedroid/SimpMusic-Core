@@ -147,6 +147,7 @@ internal class MediaServiceHandlerImpl(
 
     private data class EndlessRestore(
         val playlistId: String?,
+        val playlistType: PlaylistType?,
         val continuation: String?,
         val originalTrackIds: List<String>,
     )
@@ -1816,6 +1817,7 @@ internal class MediaServiceHandlerImpl(
             endlessRestore =
                 EndlessRestore(
                     playlistId = queueData.value.data.playlistId,
+                    playlistType = queueData.value.data.playlistType,
                     continuation = queueData.value.data.continuation,
                     originalTrackIds = queueData.value.data.listTracks.map { it.videoId },
                 )
@@ -1824,7 +1826,14 @@ internal class MediaServiceHandlerImpl(
             _queueData.update {
                 it.copy(
                     queueState = QueueData.StateSource.STATE_INITIALIZED,
-                    data = it.data.copy(playlistId = radioId, continuation = "0"),
+                    data =
+                        it.data.copy(
+                            playlistId = radioId,
+                            continuation = "0",
+                            // 与 YT 分支同款语义:跑过用户选的列表后,这队列就由电台续批
+                            // 无限增长——标 RADIO 让历史裁剪(RadioQueueTrim)也覆盖网易。
+                            playlistType = PlaylistType.RADIO,
+                        ),
                 )
             }
             reorderShuffledQueue(player.getCurrentMediaTimeLine())
@@ -1869,11 +1878,15 @@ internal class MediaServiceHandlerImpl(
                 data =
                     it.data.copy(
                         playlistId = snap.playlistId,
+                        playlistType = snap.playlistType,
                         continuation = snap.continuation,
                         listTracks = kept.toCollection(ArrayList()),
                     ),
             )
         }
+        // 无尽期间的历史裁剪若还有未落地请求,作废之:恢复后的队列是用户选的原列表,
+        // applyPendingRadioTrim 的 size 校验也会兜底挡住它,这里显式清更直白。
+        pendingRadioTrimTo = null
         shuffleRestoreListTracks =
             shuffleRestoreListTracks
                 ?.filter { it.videoId in keepIds || it.videoId == currentId }
