@@ -1631,6 +1631,19 @@ class NeteaseRepositoryImpl(
             ?.let { client.subscribeArtist(it, subscribe) }
             ?: Result.failure(IllegalArgumentException("netease artistId 非数字: $artistId"))
 
+    /** 相似歌曲分页页(SimilarSongsScreen):/v1/discovery/simiSong 原生 offset 分页。
+     *  响应无 total,hasMore=本页满批近似(不足一整批即见底)。 */
+    suspend fun getSimilarSongsPage(
+        songId: String,
+        offset: Int,
+        limit: Int = 30,
+    ): Result<Pair<List<ResultSong>, Boolean>> =
+        runCatching {
+            val id = songId.toLongOrNull() ?: error("netease songId 非数字: $songId")
+            val page = client.similarSongs(id, limit = limit, offset = offset).getOrThrow()
+            page.map { it.toResultSong() } to (page.size >= limit)
+        }
+
     /** 网易艺人"全部歌曲"分页页(MoreSongsScreen):/v1/artist/songs 原生 order(hot/time)
      *  +limit/offset。返回 (曲目, hasMore);艺人页人气区只展示热门 50,这里给全量+按时间排序。 */
     suspend fun getArtistSongsPage(
