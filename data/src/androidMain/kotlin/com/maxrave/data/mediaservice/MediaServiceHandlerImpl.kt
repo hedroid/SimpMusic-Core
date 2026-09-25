@@ -1982,7 +1982,8 @@ internal class MediaServiceHandlerImpl(
             // SERVICE_SCOPE 是 Dispatchers.Main:YT 各路径靠仓库内部 flowOn(IO) 兜底,
             // personalRadio 是裸 suspend,必须自己切 IO,否则网络卡主线程。
             withContext(Dispatchers.IO) {
-                repeat(3) {
+                // 拿到非空批即停——return@repeat 只结束当次迭代,会让首批成功后仍固定多打两次请求
+                for (attempt in 0 until 3) {
                     val existingIds = _queueData.value.data.listTracks.map { track -> track.videoId }.toSet()
                     val batch =
                         repository.getPersonalRadio()
@@ -1992,7 +1993,7 @@ internal class MediaServiceHandlerImpl(
                             .filter { track -> track.videoId !in existingIds }
                     if (batch.isNotEmpty()) {
                         fresh = batch
-                        return@repeat
+                        break
                     }
                 }
             }
