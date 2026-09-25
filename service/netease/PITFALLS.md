@@ -70,6 +70,14 @@
 - **流地址**：CDN 签发的是 `http://`，Android 禁明文 → ExoPlayer 报 Source error，
   必须升级 `https://`（music.126.net 的 CDN 支持）。
 
+- **`/v1/album/{id}` 的 `description` 在 weapi 通道窗口性为空（2026-09-25）**：同端点同专辑
+  一阵一阵返回空串（一轮采样 5 次中 3 空、隔几分钟又 15 次全满），明文 `/api/album/{id}` 同病；
+  **eapi 通道（`interface.music.163.com/eapi/v1/album/{id}`，id 在路径、body 带 n/s 或空皆可）
+  稳定返回全文**——官方移动端走的就是这条。两通道响应结构一致，`toAlbum()` 零改动。
+  `albumDetail` 已切 eapi（"官方有专辑简介我们没有"即此病，撞上降级窗口的那次就空）。
+  另：eapi `/eapi/album/v3/detail` 是 400 参数错误，别用；官方 H5 分享页
+  `y.music.163.com/m/album?id=` 的 meta description 可当官方数据对照源。
+
 ### KMP 语法坑（commonMain）
 
 - `String.format` 不存在 → 手写补零（`appendPad`）。
