@@ -395,7 +395,7 @@ suspend fun NeteaseClient.categoryPlaylists(
         )
     }
 
-/** 便捷封装:分类歌单一次拉 [pages] 页(标签/分类页用) */
+/** 便捷封装:分类歌单一次拉 [pages] 页(标签/分类页用);失败或没有更多页立即停止 */
 suspend fun NeteaseClient.categoryPlaylistsPaged(
     cat: String,
     pages: Int = 2,
@@ -403,12 +403,12 @@ suspend fun NeteaseClient.categoryPlaylistsPaged(
 ): Result<List<NeteasePlaylist>> =
     runCatching {
         val all = mutableListOf<NeteasePlaylist>()
-        repeat(pages) { page ->
-            val result = categoryPlaylists(cat = cat, offset = page * 50, order = order).getOrNull() ?: return@repeat
+        for (page in 0 until pages) {
+            val result = categoryPlaylists(cat = cat, offset = page * 50, order = order).getOrNull() ?: break
             all += result.playlists
-            if (!result.hasMore) return@repeat
+            if (!result.hasMore) break
         }
-        all
+        all.distinctBy { it.id }
     }
 
 /**
@@ -448,7 +448,7 @@ suspend fun NeteaseClient.highQualityPlaylists(
         )
     }
 
-/** 便捷封装:一次性拉 [pages] 页(标签/分类页用,内容量对标网易 App) */
+/** 便捷封装:一次性拉 [pages] 页(标签/分类页用,内容量对标网易 App);失败或游标耗尽立即停止 */
 suspend fun NeteaseClient.highQualityPlaylistsPaged(
     cat: String? = "全部",
     pages: Int = 2,
@@ -456,12 +456,13 @@ suspend fun NeteaseClient.highQualityPlaylistsPaged(
     runCatching {
         val all = mutableListOf<NeteasePlaylist>()
         var cursor = 0L
-        repeat(pages) {
-            val page = highQualityPlaylists(cat = cat, before = cursor).getOrNull() ?: return@repeat
+        for (i in 0 until pages) {
+            val page = highQualityPlaylists(cat = cat, before = cursor).getOrNull() ?: break
             all += page.playlists
-            cursor = page.nextBefore ?: return@repeat
+            // 游标不前进(nextBefore=null)就是服务端见底——继续循环会用旧游标把同一页再拉一遍
+            cursor = page.nextBefore ?: break
         }
-        all
+        all.distinctBy { it.id }
     }
 
 /**
