@@ -170,26 +170,31 @@ class NeteaseRepositoryImpl(
      * 错误路径的探针分流,结论不因此变错。
      */
     private val knownUnavailableMutex = Mutex()
-    private val knownUnavailableNeteaseIds = mutableSetOf<Long>()
+    private val knownUnavailableState = kotlinx.coroutines.flow.MutableStateFlow<Set<Long>>(emptySet())
 
     /** 建队列(setQueueData)时整体重播种;会话内实证死亡的 id 由 mark* 维护 */
     suspend fun resetKnownUnavailableNeteaseIds(tracks: List<Track>) {
         knownUnavailableMutex.withLock {
-            knownUnavailableNeteaseIds.clear()
-            tracks.forEach { track ->
-                val id = track.videoId.toLongOrNull()
-                if (id != null && !track.isAvailable) knownUnavailableNeteaseIds.add(id)
-            }
+            knownUnavailableState.value =
+                buildSet {
+                    tracks.forEach { track ->
+                        val id = track.videoId.toLongOrNull()
+                        if (id != null && !track.isAvailable) add(id)
+                    }
+                }
         }
     }
 
     suspend fun markNeteaseSongUnavailable(songId: Long) {
-        knownUnavailableMutex.withLock { knownUnavailableNeteaseIds.add(songId) }
+        knownUnavailableMutex.withLock { knownUnavailableState.value = knownUnavailableState.value + songId }
     }
 
     suspend fun markNeteaseSongPlayable(songId: Long) {
-        knownUnavailableMutex.withLock { knownUnavailableNeteaseIds.remove(songId) }
+        knownUnavailableMutex.withLock { knownUnavailableState.value = knownUnavailableState.value - songId }
     }
+
+    /** 非阻塞快照读(StateFlow.value 线程安全),供 resolver 装载线程判定确定性失败 */
+    fun isKnownUnavailableNetease(songId: Long): Boolean = songId in knownUnavailableState.value
 
     /**
      * 排行榜去重缓存:feed 的"排行榜"行与图表区块共用同一份榜单数据
@@ -444,8 +449,7 @@ class NeteaseRepositoryImpl(
         val wanted = NeteaseQuality.entries.firstOrNull { it.name == levelName } ?: NeteaseQuality.EXHIGH
         // 会话内已知不可播(队列标灰快照/探针实证)只试所选档位一档,保住"问过服务端"的
         // 实时性:版权恢复的歌这一档就返回 url 正常播,过期快照不会冤枉跳歌
-        val knownUnavailable =
-            knownUnavailableMutex.withLock { id in knownUnavailableNeteaseIds }
+        val knownUnavailable = id in knownUnavailableState.value
         // 从所选档位向下走降级链;只剩试听(freeTrialInfo)视为不可完整播放 → null,
         // 由调用方按 neteaseUnavailableAction 设置决定后续动作(跳过/暂停/回退 YT)。
         val order =

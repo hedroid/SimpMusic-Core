@@ -324,10 +324,29 @@ private fun provideResolvingDataSourceFactory(
                 return@Factory dataSpec
             }
             Logger.e("Stream", "Failed to resolve stream URL for $mediaId")
-            throw java.io.IOException("Failed to resolve stream URL for $mediaId")
+            // 会话内已实证取不到流的歌抛专属异常,装载错误策略对它不重试——确定性失败走
+            // 默认重试梯(0/1/2s 三连,每轮都重新 resolve)纯属浪费,占灰歌跳过前转圈的大头
+            throw if (streamRepository.isKnownUnresolvable(mediaId.removePrefix(MERGING_DATA_TYPE.VIDEO))) {
+                UnresolvableTrackException(mediaId)
+            } else {
+                java.io.IOException("Failed to resolve stream URL for $mediaId")
+            }
         }
         return@Factory dataSpecReturn
     }
+}
+
+/** 会话内已实证取不到流的歌(网易灰歌/付费墙)。语义=确定性失败,装载层不该重试 */
+private class UnresolvableTrackException(
+    mediaId: String,
+) : java.io.IOException("Track $mediaId is confirmed unresolvable this session")
+
+/** 已实证不可解的歌不重试;其余 IO 错误沿用默认策略(网络抖动的退避重试仍是有效语义) */
+@OptIn(UnstableApi::class)
+private class KnownUnresolvableNoRetryPolicy : androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy() {
+    override fun getRetryDelayMsFor(
+        loadErrorInfo: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo,
+    ): Long = if (loadErrorInfo.exception is UnresolvableTrackException) C.TIME_UNSET else super.getRetryDelayMsFor(loadErrorInfo)
 }
 
 @UnstableApi
@@ -383,7 +402,8 @@ private fun provideMediaSourceFactory(
             coroutineScope,
         ),
         provideExtractorFactory(),
-    )
+        // 灰歌等已实证不可解的装载失败立刻上报,别吃三连重试梯(灰歌跳过前转圈的大头)
+    ).setLoadErrorHandlingPolicy(KnownUnresolvableNoRetryPolicy())
 
 @OptIn(UnstableApi::class)
 private fun provideMergingMediaSource(

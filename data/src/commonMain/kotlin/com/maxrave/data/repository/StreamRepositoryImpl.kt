@@ -44,6 +44,9 @@ internal class StreamRepositoryImpl(
 
     override fun getExtractSource(videoId: String): String? = youTube.getExtractSource(videoId)
 
+    override fun isKnownUnresolvable(videoId: String): Boolean =
+        videoId.toLongOrNull()?.let { neteaseRepository.isKnownUnavailableNetease(it) } == true
+
     override suspend fun updateFormat(videoId: String) {
         localDataSource.getNewFormat(videoId)?.let { oldFormat ->
             Logger.w("Stream", "oldFormatExpired: ${oldFormat.expiredTime}")

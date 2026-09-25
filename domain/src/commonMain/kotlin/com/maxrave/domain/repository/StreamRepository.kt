@@ -60,4 +60,10 @@ interface StreamRepository {
      * describes one extraction rather than the format row, which outlives it in the cache.
      */
     fun getExtractSource(videoId: String): String?
+
+    /**
+     * 会话内已实证取不到流的歌(网易灰歌/付费墙:队列标灰快照播种+播放失败探针实证)。
+     * 非阻塞快照读(StateFlow.value),供 resolver 装载路径判定确定性失败。
+     */
+    fun isKnownUnresolvable(videoId: String): Boolean
 }
