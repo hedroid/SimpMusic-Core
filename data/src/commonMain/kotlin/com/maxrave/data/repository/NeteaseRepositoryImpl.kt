@@ -712,11 +712,14 @@ class NeteaseRepositoryImpl(
                     NeteaseTagOrder.HQ -> client.highQualityPlaylistsPaged(cat = tag, pages = 2)
                 }
             fetched.mapCatching { list ->
-                if (list.isNotEmpty()) {
-                    tagCache[key] = list to TimeSource.Monotonic.markNow()
-                    rememberTagArtwork(tag, list.first().coverUrl)
+                // 分页游标异常(服务端 lasttime 回退/重复)会让两页内容重复——重复 id 进
+                // LazyGrid 会 duplicate-key 崩溃,入口处按 id 去重
+                val deduped = list.distinctBy { it.id }
+                if (deduped.isNotEmpty()) {
+                    tagCache[key] = deduped to TimeSource.Monotonic.markNow()
+                    rememberTagArtwork(tag, deduped.first().coverUrl)
                 }
-                list.toMoodsMomentObject(tag)
+                deduped.toMoodsMomentObject(tag)
             }
         }
 
