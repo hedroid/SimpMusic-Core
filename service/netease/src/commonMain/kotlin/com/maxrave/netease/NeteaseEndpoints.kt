@@ -459,8 +459,11 @@ suspend fun NeteaseClient.highQualityPlaylistsPaged(
         for (i in 0 until pages) {
             val page = highQualityPlaylists(cat = cat, before = cursor).getOrNull() ?: break
             all += page.playlists
-            // 游标不前进(nextBefore=null)就是服务端见底——继续循环会用旧游标把同一页再拉一遍
-            cursor = page.nextBefore ?: break
+            // 游标不前进就停:null=服务端明示见底;非空但与当前相同=游标原地踏步(服务端
+            // 确有此形状),再拉就是同一页——连同 distinctBy 双保险。
+            val next = page.nextBefore ?: break
+            if (next == cursor) break
+            cursor = next
         }
         all.distinctBy { it.id }
     }

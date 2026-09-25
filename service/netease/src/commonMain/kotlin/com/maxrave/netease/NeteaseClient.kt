@@ -82,8 +82,12 @@ class NeteaseClient(
     suspend fun currentCookies(): Map<String, String> = cookieMutex.withLock { sessionCookies }
 
     suspend fun replaceCookies(cookies: Map<String, String>) {
-        cookieMutex.withLock { sessionCookies = cookies }
-        cookieSaver(cookies)
+        // 与 mergeSetCookies 同序:内存替换和持久化都在锁内,防在途响应的 DataStore 写入
+        // 与本路径乱序完成时旧快照覆盖新快照(logout/登录替换与响应并发正是这个场景)
+        cookieMutex.withLock {
+            sessionCookies = cookies
+            cookieSaver(cookies)
+        }
     }
 
     suspend fun logout() = replaceCookies(emptyMap())
