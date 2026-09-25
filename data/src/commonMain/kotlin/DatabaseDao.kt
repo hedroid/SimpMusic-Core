@@ -1001,6 +1001,10 @@ interface DatabaseDao {
     @Query("SELECT COUNT(*) FROM notification WHERE link = :link")
     suspend fun countNotificationByLink(link: String): Int
 
+    /** 某艺人已通知过的全部行：NotifyWork 用它们携带的 browseId 并集做重发去重。 */
+    @Query("SELECT * FROM notification WHERE channelId = :channelId")
+    suspend fun getNotificationsByChannelId(channelId: String): List<NotificationEntity>
+
     @Query("DELETE FROM notification WHERE id = :id")
     suspend fun deleteNotification(id: Long)
 

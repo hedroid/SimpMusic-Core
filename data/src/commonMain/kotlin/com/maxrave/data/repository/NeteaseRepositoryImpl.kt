@@ -1721,19 +1721,34 @@ class NeteaseRepositoryImpl(
     }
 
     /**
-     * 艺人页"更多专辑/单曲"(AlbumRepository.getAlbumMore 的 MPAD{数字} 路由):一次 50 张无分页,
-     * 按 type 拆不相交的两组(单曲=Single,专辑/EP/未知归专辑组)。不相交是硬约束——
-     * NotifyWork 对 ALBUM/SINGLE 两个参数各调一次,同一张发行若同时落两组会发两条重复通知。
+     * 艺人页"更多专辑/单曲"(AlbumRepository.getAlbumMore 的 MPAD{数字} 路由):按 more 翻页拉全——
+     * NotifyWork 的快照 diff 只对全集才有意义,首页截断会让边缘专辑随服务端排序抖动进出窗口,
+     * 回归就是重复通知。按 type 拆不相交的两组(单曲=Single,专辑/EP/未知归专辑组)。不相交是
+     * 硬约束——NotifyWork 对 ALBUM/SINGLE 两个参数各调一次,同一张发行若同时落两组会发两条重复通知。
+     * 返回 null=请求失败(调用方跳过快照写入),空列表=成功但该艺人无此类型发行。
      */
     suspend fun getArtistMoreAlbums(
         artistId: Long,
         singles: Boolean = false,
-    ): ArrayList<AlbumsResult> =
-        ArrayList(
-            client.artistAlbums(artistId, limit = 50).getOrNull()?.first.orEmpty()
-                .filter { (it.type == "Single") == singles }
-                .map { it.toAlbumsResult() },
-        )
+    ): ArrayList<AlbumsResult>? {
+        val all = ArrayList<NeteaseAlbum>()
+        var offset = 0
+        repeat(NETEASE_ARTIST_ALBUMS_MAX_PAGES) {
+            val page = client.artistAlbums(artistId, limit = NETEASE_ARTIST_ALBUMS_PAGE, offset = offset).getOrNull() ?: return null
+            val (items, more) = page
+            all += items
+            if (!more || items.isEmpty()) return splitByType(singles, all)
+            offset += items.size
+            // 同艺人连续翻页留间隔防风控(与 NotifyWork NETEASE_POLL_GAP_MS 同理由)
+            delay(NETEASE_ARTIST_ALBUMS_PAGE_GAP_MS)
+        }
+        return splitByType(singles, all)
+    }
+
+    private fun splitByType(
+        singles: Boolean,
+        all: List<NeteaseAlbum>,
+    ): ArrayList<AlbumsResult> = ArrayList(all.filter { (it.type == "Single") == singles }.map { it.toAlbumsResult() })
 
     /** 搜专辑 → AlbumsResult(搜索 tab;netease 数字 browseId → AlbumScreen 同页路由)。 */
     suspend fun searchAlbumsResult(query: String): Result<ArrayList<AlbumsResult>> =
@@ -1754,6 +1769,13 @@ private data class NeteaseMoodArtwork(
 }
 
 private const val NETEASE_ARTWORK_TTL_MILLIS = 7L * 24 * 60 * 60 * 1000
+
+/** 艺人专辑翻页(getArtistMoreAlbums):页大小/页间防风控间隔/页数上限(500 张封顶,防极端艺人打爆请求) */
+private const val NETEASE_ARTIST_ALBUMS_PAGE = 50
+
+private const val NETEASE_ARTIST_ALBUMS_PAGE_GAP_MS = 500L
+
+private const val NETEASE_ARTIST_ALBUMS_MAX_PAGES = 10
 
 /** 每日推荐 30 首的持久缓存形状(混合页;epochDay 用本地日,跨日即失效重拉) */
 @Serializable

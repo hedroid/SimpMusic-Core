@@ -26,6 +26,9 @@ interface CommonRepository {
 
     suspend fun isNotificationExists(link: String): Boolean
 
+    /** 某艺人已通知过的行，browseId 去重用。 */
+    suspend fun getNotificationsByChannelId(channelId: String): List<NotificationEntity>
+
     suspend fun deleteNotification(id: Long)
 
     suspend fun writeTextToFile(text: String, filePath: String): Boolean

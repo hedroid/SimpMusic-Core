@@ -631,6 +631,8 @@ internal class LocalDataSource(
 
     suspend fun countNotificationByLink(link: String) = databaseDao.countNotificationByLink(link)
 
+    suspend fun getNotificationsByChannelId(channelId: String) = databaseDao.getNotificationsByChannelId(channelId)
+
     suspend fun deleteNotification(id: Long) = databaseDao.deleteNotification(id)
 
     suspend fun deleteNotificationsByChannelId(channelId: String) = databaseDao.deleteNotificationsByChannelId(channelId)

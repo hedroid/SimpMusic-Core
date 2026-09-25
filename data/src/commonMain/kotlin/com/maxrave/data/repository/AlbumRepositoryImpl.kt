@@ -184,13 +184,15 @@ internal class AlbumRepositoryImpl(
         flow {
             runCatching {
                 // 网易艺人"更多专辑/单曲":ArtistScreen/NotifyWork 拼的是 MPAD{数字id} → artistAlbums
-                // 一次给全再按 type 拆两组。params 值与 MoreAlbumsViewModel 的常量同源
+                // 按 more 翻页拉全再按 type 拆两组。params 值与 MoreAlbumsViewModel 的常量同源
                 // (core 不依赖 composeApp,只能复制这两个不透明 YTM 参数串)。
+                // 返回 null=请求失败(NotifyWork 凭此跳过快照写入);空列表同样折叠成 null,
+                // 维持 MoreAlbums UI 对 null="无更多"的既有语义。
                 if (browseId.startsWith("MPAD")) {
                     browseId.removePrefix("MPAD").toLongOrNull()?.let { artistId ->
                         val singles = params == NETEASE_SINGLE_PARAM
                         val albums = neteaseRepository.getArtistMoreAlbums(artistId, singles)
-                        emit(if (albums.isEmpty()) null else (if (singles) "单曲" else "专辑") to albums)
+                        emit(albums?.takeIf { it.isNotEmpty() }?.let { (if (singles) "单曲" else "专辑") to it })
                         return@flow
                     }
                 }

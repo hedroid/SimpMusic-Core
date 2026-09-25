@@ -326,6 +326,11 @@ internal class CommonRepositoryImpl(
             localDataSource.countNotificationByLink(link) > 0
         }
 
+    override suspend fun getNotificationsByChannelId(channelId: String): List<NotificationEntity> =
+        withContext(Dispatchers.IO) {
+            localDataSource.getNotificationsByChannelId(channelId)
+        }
+
     override suspend fun deleteNotification(id: Long) =
         withContext(Dispatchers.IO) {
             localDataSource.deleteNotification(id)
