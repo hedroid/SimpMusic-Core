@@ -1876,8 +1876,10 @@ internal fun NeteaseSong.toSongEntity(): SongEntity =
         isAvailable = hasCopyright ?: true,
         isExplicit = false,
         likeStatus = "INDIFFERENT",
-        // 播放页大图/通知栏/FM 卡都吃这里:统一 1080(服务端图片处理链同歌单封面,见 toNeteaseCoverUrl)
-        thumbnails = coverUrl.toNeteaseCoverUrl(1080),
+        // 双档(与 YT 队列 544 同哲学):数据侧给 500 档喂通知栏/迷你条/列表行等小槽位;
+        // 播放页大图走 PlayerPageArtwork.toHiResArtworkUrl 请求侧升 1080,导出封面用
+        // 播放页已解码的 1080 位图——不再全量 1080(小槽位每张多下 ~200KB 纯浪费)。
+        thumbnails = coverUrl.toNeteaseCoverUrl(),
         title = name,
         videoType = VIDEO_TYPE_SONG,
         category = null,
