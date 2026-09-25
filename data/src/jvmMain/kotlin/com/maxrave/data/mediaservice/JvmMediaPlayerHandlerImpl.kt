@@ -3285,34 +3285,36 @@ class JvmMediaPlayerHandlerImpl(
         )
 
     /** STATE_READY:网易歌真播起来了(版权恢复/队列快照过期)——播放实证优先于旧快照,
-     *  队列行+song 行回写 isAvailable=true,注册表摘除(该歌恢复完整降级链待遇) */
+     *  队列行+song 行回写 isAvailable=true,注册表摘除(该歌恢复完整降级链待遇)。
+     *  按 videoId 查行而非 index:装载早期的 READY 可能落在队列重建窗口,
+     *  index 与 listTracks 错位会取错行 */
     private fun markNeteaseTrackPlayableIfGray() {
-        val index = player.currentMediaItemIndex
-        val track = queueData.value.data.listTracks.getOrNull(index) ?: return
+        val mediaId =
+            player.currentMediaItem?.mediaId?.removePrefix(MERGING_DATA_TYPE.VIDEO) ?: return
+        val track = queueData.value.data.listTracks.firstOrNull { it.videoId == mediaId } ?: return
         val id = track.videoId.toLongOrNull() ?: return
         if (!track.isAvailable) {
             Logger.w(TAG, "queue-marked unavailable song ${track.videoId} actually plays, writing back isAvailable=true")
         }
         coroutineScope.launch {
             neteaseRepository.markNeteaseSongPlayable(id)
-            if (!track.isAvailable) patchQueueTrackIsAvailable(index, track, available = true)
+            if (!track.isAvailable) patchQueueTrackIsAvailable(track, available = true)
         }
     }
 
     /** 探针实证不可播:注册表追加(PAYWALLED 也在内——本会话取流单档,全链不会有别的结果);
      *  仅 NO_COPYRIGHT 回写行级 isAvailable=false(与列表置灰同语义;PAYWALLED 是账号
-     *  权益问题,不改显示),后续命中免探针+取流单档 */
+     *  权益问题,不改显示),后续命中免探针+取流单档。按 videoId 查行,理由同上 */
     private suspend fun markNeteaseTrackUnavailableAfterProbe(
-        index: Int,
         mediaId: String,
         probe: NeteasePlayability,
     ) {
         mediaId.toLongOrNull()?.let { neteaseRepository.markNeteaseSongUnavailable(it) }
         if (probe != NeteasePlayability.NO_COPYRIGHT) return
-        val track = queueData.value.data.listTracks.getOrNull(index) ?: return
-        if (track.videoId == mediaId && track.isAvailable) {
+        val track = queueData.value.data.listTracks.firstOrNull { it.videoId == mediaId } ?: return
+        if (track.isAvailable) {
             Logger.w(TAG, "probe confirmed NO_COPYRIGHT for ${track.videoId}, writing back isAvailable=false")
-            patchQueueTrackIsAvailable(index, track, available = false)
+            patchQueueTrackIsAvailable(track, available = false)
         }
     }
 
@@ -3320,18 +3322,18 @@ class JvmMediaPlayerHandlerImpl(
      *  这里补正确值(重启恢复当前曲走 getSongById 读的就是它);saved queue 由暂停/
      *  停止时的 mayBeSaveRecentSong 用已补丁的 queueData 落盘,无需在此重写 */
     private suspend fun patchQueueTrackIsAvailable(
-        index: Int,
         track: Track,
         available: Boolean,
     ) {
         val patched = track.copy(isAvailable = available)
         _queueData.update { qd ->
-            val list = ArrayList(qd.data.listTracks)
-            if (list.getOrNull(index)?.videoId == track.videoId) {
+            val index = qd.data.listTracks.indexOfFirst { it.videoId == track.videoId }
+            if (index == -1) {
+                qd
+            } else {
+                val list = ArrayList(qd.data.listTracks)
                 list[index] = patched
                 qd.copy(data = qd.data.copy(listTracks = list))
-            } else {
-                qd
             }
         }
         runCatching { songRepository.insertSong(patched.toSongEntity()).first() }
@@ -3347,11 +3349,12 @@ class JvmMediaPlayerHandlerImpl(
         error: PlayerError,
     ) {
         // 队列里已标灰的歌(歌单管线 privileges 合并落下的 isAvailable,与置灰显示同源)
-        // 不再发探针请求——动作立即执行,弱网下也不会因探针超时误走"网络故障"分支
+        // 不再发探针请求——动作立即执行,弱网下也不会因探针超时误走"网络故障"分支。
+        // 按 videoId 查行而非 currentMediaItemIndex:错误早到常落在队列重建窗口,错位取错行
         val queueMarkedUnavailable =
             queueData.value.data.listTracks
-                .getOrNull(player.currentMediaItemIndex)
-                ?.let { it.videoId == mediaId && !it.isAvailable } == true
+                .firstOrNull { it.videoId == mediaId }
+                ?.let { !it.isAvailable } == true
         val probe =
             if (queueMarkedUnavailable) {
                 Logger.w(TAG, "queue marks $mediaId unavailable, skipping probe")
@@ -3366,7 +3369,7 @@ class JvmMediaPlayerHandlerImpl(
         }
         Logger.w(TAG, "netease song unplayable ($probe): $mediaId, applying unavailable action")
         // 实证不可播:回写注册表+行级状态,后续同一首命中免探针+取流单档(自愈收敛)
-        markNeteaseTrackUnavailableAfterProbe(player.currentMediaItemIndex, mediaId, probe)
+        markNeteaseTrackUnavailableAfterProbe(mediaId, probe)
         val queueSize = maxOf(queueData.value.data.listTracks.size, player.mediaItemCount)
         // 防循环护栏:整队连续不可播(REPEAT_ALL 会绕圈,或全是灰歌的电台队列)时停下
         if (unavailableChainCount >= queueSize) {
