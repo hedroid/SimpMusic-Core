@@ -9,6 +9,7 @@ import com.maxrave.domain.data.entities.SongEntity
 import com.maxrave.common.NETEASE_PLAYLIST_PAGE_PREFIX
 import com.maxrave.common.NETEASE_PLAYLIST_PAGE_SIZE
 import com.maxrave.domain.data.model.browse.album.Track
+import com.maxrave.domain.data.model.home.BrowsePage
 import com.maxrave.domain.data.model.home.Content
 import com.maxrave.domain.data.model.home.HomeItem
 import com.maxrave.domain.data.model.home.chart.Artists
@@ -150,6 +151,12 @@ class NeteaseRepositoryImpl(
     private val dao: DatabaseDao,
 ) : MusicSourceProvider,
     HomeRepository {
+    /** Browse pages are a YTM-only concept (generic browse endpoints); NetEase has no equivalent. */
+    override fun getBrowsePage(
+        browseId: String,
+        params: String?,
+    ): Flow<Resource<BrowsePage>> = flow { emit(Resource.Error<BrowsePage>("Browse pages are not available on NetEase")) }
+
     override val source: MusicSource = MusicSource.NETEASE
     /**
      * 排行榜去重缓存:feed 的"排行榜"行与图表区块共用同一份榜单数据

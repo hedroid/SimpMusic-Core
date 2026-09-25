@@ -5,6 +5,7 @@
  */
 package com.maxrave.data.repository
 
+import com.maxrave.domain.data.model.home.BrowsePage
 import com.maxrave.domain.data.model.home.HomeItem
 import com.maxrave.domain.data.model.home.chart.Chart
 import com.maxrave.domain.data.model.mood.Mood
@@ -25,6 +26,11 @@ internal class SourceRoutingHomeRepository(
     private val dataStoreManager: DataStoreManager,
 ) : HomeRepository {
     private suspend fun isNetease(): Boolean = dataStoreManager.selectedSource.first() == MusicSource.NETEASE.name
+
+    override fun getBrowsePage(
+        browseId: String,
+        params: String?,
+    ): Flow<Resource<BrowsePage>> = youtube.getBrowsePage(browseId, params)
 
     override fun getHomeData(
         params: String?,

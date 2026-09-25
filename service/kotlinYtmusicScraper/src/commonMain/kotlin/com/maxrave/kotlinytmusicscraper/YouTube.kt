@@ -5,6 +5,8 @@ import com.maxrave.common.ITAG
 import com.maxrave.kotlinytmusicscraper.YouTube.Companion.DEFAULT_VISITOR_DATA
 import com.maxrave.kotlinytmusicscraper.extension.toListFormat
 import com.maxrave.kotlinytmusicscraper.extractor.ExtractSource
+import com.maxrave.kotlinytmusicscraper.extractor.contentLengthOf
+import com.maxrave.kotlinytmusicscraper.extractor.orderByAudioTrack
 import com.maxrave.kotlinytmusicscraper.models.AccountInfo
 import com.maxrave.kotlinytmusicscraper.models.AlbumItem
 import com.maxrave.kotlinytmusicscraper.models.Artist
@@ -54,6 +56,7 @@ import com.maxrave.kotlinytmusicscraper.models.response.TidalOAuthResponse
 import com.maxrave.kotlinytmusicscraper.models.response.RemoteConfig
 import com.maxrave.kotlinytmusicscraper.models.response.toLikeStatus
 import com.maxrave.kotlinytmusicscraper.models.response.toListAccountInfo
+import com.maxrave.kotlinytmusicscraper.models.simpmusic.FdroidResponse
 import com.maxrave.kotlinytmusicscraper.models.simpmusic.GithubResponse
 import com.maxrave.kotlinytmusicscraper.models.sponsorblock.SkipSegments
 import com.maxrave.kotlinytmusicscraper.models.youtube.GhostResponse
@@ -180,6 +183,12 @@ class YouTube {
         get() = ytMusic.pageId
         set(value) {
             ytMusic.pageId = value
+        }
+
+    var authUser: Int
+        get() = ytMusic.authUser
+        set(value) {
+            ytMusic.authUser = value
         }
 
     /**
@@ -892,6 +901,22 @@ class YouTube {
             ytMusic.checkForGithubReleaseUpdate().body<GithubResponse>()
         }
 
+    suspend fun checkForFdroidUpdate(): Result<FdroidResponse> =
+        runCatching {
+            ytMusic.checkForFdroidUpdate().body<FdroidResponse>()
+        }
+
+    /**
+     * SHA-256 of our release signing certificates: F-Droid ships the APK we sign, so it pins our keys.
+     * The field is either one inline value or a YAML list (`- <hex>` per line), e.g. after a key rotation.
+     */
+    suspend fun getFdroidSigningKeys(): Result<List<String>> =
+        runCatching {
+            val metadata = ytMusic.fdroidMetadata().bodyAsText()
+            val field = checkNotNull(Regex("""AllowedAPKSigningKeys:((?:\s*-?\s*[0-9a-f]{64})+)""").find(metadata)).groupValues[1]
+            Regex("[0-9a-f]{64}").findAll(field).map { it.value }.toList()
+        }
+
     suspend fun newRelease(): Result<ExplorePage> =
         runCatching {
             val response =
@@ -1197,6 +1222,7 @@ class YouTube {
     suspend fun newPipePlayer(
         videoId: String,
         tempRes: PlayerResponse,
+        preferredAudioLanguage: String? = null,
     ): PlayerResponse? {
         val listUrlSig = mutableListOf<String>()
         var decodedSigResponse: PlayerResponse?
@@ -1207,7 +1233,7 @@ class YouTube {
         } else {
             sigResponse = tempRes
         }
-        val streamsList = ytMusic.getNewPipePlayer(videoId)
+        val streamsList = ytMusic.getNewPipePlayer(videoId).orderByAudioTrack(preferredAudioLanguage)
         if (streamsList.isEmpty()) return null
 
         decodedSigResponse =
@@ -1216,14 +1242,18 @@ class YouTube {
                     sigResponse.streamingData?.copy(
                         formats =
                             sigResponse.streamingData.formats?.map { format ->
+                                val url = streamsList.find { it.first == format.itag }?.second
                                 format.copy(
-                                    url = streamsList.find { it.first == format.itag }?.second,
+                                    url = url,
+                                    contentLength = url?.let(::contentLengthOf) ?: format.contentLength,
                                 )
                             },
                         adaptiveFormats =
                             sigResponse.streamingData.adaptiveFormats.map { adaptiveFormats ->
+                                val url = streamsList.find { it.first == adaptiveFormats.itag }?.second
                                 adaptiveFormats.copy(
-                                    url = streamsList.find { it.first == adaptiveFormats.itag }?.second,
+                                    url = url,
+                                    contentLength = url?.let(::contentLengthOf) ?: adaptiveFormats.contentLength,
                                 )
                             },
                         hlsManifestUrl = streamsList.firstOrNull { it.first == 96 }?.second,
@@ -1303,6 +1333,7 @@ class YouTube {
         videoId: String,
         playlistId: String? = null,
         noLogIn: Boolean = false,
+        preferredAudioLanguage: String? = null,
     ): Result<Triple<String?, PlayerResponse, MediaType>> =
         runCatching {
             val cpn =
@@ -1388,7 +1419,7 @@ class YouTube {
                         )
                     }
 
-            val response = newPipePlayer(videoId, tempRes)
+            val response = newPipePlayer(videoId, tempRes, preferredAudioLanguage)
             if (response != null) {
                 decodedSigResponse = response
                 Logger.d(TAG, "YouTube Player found URL")

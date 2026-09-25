@@ -63,10 +63,12 @@ interface DataStoreManager {
     val loggedIn: Flow<String>
     val cookie: Flow<String>
     val pageId: Flow<String>
+    val authUser: Flow<Int>
 
     suspend fun setCookie(
         cookie: String,
         pageId: String?,
+        authUser: Int = 0,
     )
 
     suspend fun setLoggedIn(logged: Boolean)
@@ -272,6 +274,14 @@ interface DataStoreManager {
     suspend fun setEqualizerPreamp(preampDb: Float)
 
     /**
+     * One of [EQUALIZER_TYPE_BUILT_IN], [EQUALIZER_TYPE_SYSTEM]. Android only — Desktop has no system
+     * equalizer and always runs the built-in one. The two never run together.
+     */
+    val equalizerType: Flow<String>
+
+    suspend fun setEqualizerType(type: String)
+
+    /**
      * The AutoEq profile last imported, as `"<label>\n<comma-separated gains>"`.
      *
      * Label and curve share one key on purpose. The label is only shown while the equalizer still
@@ -395,10 +405,6 @@ interface DataStoreManager {
 
     suspend fun setChartKey(key: String)
 
-    val translucentBottomBar: Flow<String>
-
-    suspend fun setTranslucentBottomBar(translucent: Boolean)
-
     val usingProxy: Flow<String>
 
     suspend fun setUsingProxy(usingProxy: Boolean)
@@ -502,10 +508,6 @@ interface DataStoreManager {
 
     suspend fun setKillServiceOnExit(kill: Boolean)
 
-    val keepServiceAlive: Flow<String>
-
-    suspend fun setKeepServiceAlive(keep: Boolean)
-
     val crossfadeEnabled: Flow<String>
 
     suspend fun setCrossfadeEnabled(enabled: Boolean)
@@ -549,6 +551,16 @@ interface DataStoreManager {
     val rawYoutubeSubtitleLanguage: Flow<String>
 
     suspend fun setYoutubeSubtitleLanguage(language: String)
+
+    /**
+     * Language code (e.g. "vi") of the audio track to prefer on videos that ship several — dubbed
+     * podcasts, mostly. Empty means the original track. Deliberately NOT defaulted to the app
+     * language the way [youtubeSubtitleLanguage] is: that would swap the speaker's own voice for an
+     * AI dub for every user whose app language has one.
+     */
+    val preferredAudioLanguage: Flow<String>
+
+    suspend fun setPreferredAudioLanguage(language: String)
 
     val helpBuildLyricsDatabase: Flow<String>
 
@@ -623,6 +635,23 @@ interface DataStoreManager {
     val romanizationLanguages: Flow<String>
 
     suspend fun setRomanizationLanguages(languages: String)
+
+    /**
+     * How far the audio a listener actually HEARS lags the player's own position, in milliseconds.
+     * Bluetooth is the reason this exists: the sink buffers, so at player position P the ear is
+     * hearing P - offset, and every lyric display was lighting its line that much too early.
+     *
+     * Applied at READ time — a display picks its line from `position - offset` — so nothing is
+     * written back into the cached [com.maxrave.domain.data.model.metadata.Line] rows, the
+     * community lyrics database never sees a local correction, and a change lands on the next
+     * frame instead of the next track.
+     *
+     * Signed and deliberately unbounded: positive pushes lyrics later (the Bluetooth case),
+     * negative pulls them earlier, and how far is the listener's call. 0 by default.
+     */
+    val lyricsOffsetMs: Flow<Int>
+
+    suspend fun setLyricsOffsetMs(offsetMs: Int)
 
     val explicitContentEnabled: Flow<String>
 
@@ -730,6 +759,9 @@ interface DataStoreManager {
 
         const val NOTIFICATION_LYRICS_MODE_ORIGINAL = "ORIGINAL"
         const val NOTIFICATION_LYRICS_MODE_ORIGINAL_AND_TRANSLATION = "ORIGINAL_AND_TRANSLATION"
+
+        const val EQUALIZER_TYPE_BUILT_IN = "BUILT_IN"
+        const val EQUALIZER_TYPE_SYSTEM = "SYSTEM"
 
         const val CROSSFADE_DURATION_AUTO = 0
 

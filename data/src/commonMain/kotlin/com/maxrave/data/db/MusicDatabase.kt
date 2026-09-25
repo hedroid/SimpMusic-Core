@@ -42,7 +42,7 @@ import com.maxrave.domain.data.entities.analytics.PlaybackEventEntity
         YourYouTubePlaylistList::class, PlaybackEventEntity::class, EventArtistEntity::class,
         AutoEqEntryEntity::class, AutoEqIndexMetaEntity::class, AutoEqCurveEntity::class
     ],
-    version = 29,
+    version = 30,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 2, to = 3), AutoMigration(
@@ -104,6 +104,10 @@ import com.maxrave.domain.data.entities.analytics.PlaybackEventEntity
         AutoMigration(28, 29),
         AutoMigration(27, 29),
         AutoMigration(26, 29),
+        // 30 adds GoogleAccountEntity.authUser (NOT NULL, SQL default 0), nothing else.
+        // Upstream shipped this as their v26 — same number, different schema — so it is
+        // renumbered to 30 here; our v26 history must stay frozen for fork users.
+        AutoMigration(29, 30),
     ],
 )
 @TypeConverters(Converters::class)

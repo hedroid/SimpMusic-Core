@@ -60,6 +60,7 @@ import com.maxrave.domain.mediaservice.handler.NowPlayingTrackState
 import com.maxrave.domain.mediaservice.handler.PlayerEvent
 import com.maxrave.domain.mediaservice.handler.PlaylistType
 import com.maxrave.domain.mediaservice.handler.QueueData
+import com.maxrave.domain.mediaservice.handler.RadioQueueTrim
 import com.maxrave.domain.mediaservice.handler.RepeatState
 import com.maxrave.domain.mediaservice.handler.SimpleMediaState
 import com.maxrave.domain.mediaservice.handler.SleepTimerState
@@ -105,6 +106,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import org.koin.mp.KoinPlatform.getKoin
@@ -118,6 +121,15 @@ import kotlin.math.pow
 import com.maxrave.domain.data.model.metadata.Line
 
 private val TAG = "JvmMediaPlayerHandler"
+
+// Ceiling on how far the published position may run ahead of the last real reading from mpv.
+// Sized just above the largest staircase step measured on this machine (~520 ms), so an ordinary
+// gap is bridged while a genuine stall stops the number rather than letting it drift.
+private const val SMOOTH_MAX_LEAD_MS = 600L
+
+// A jump wider than this is a seek or a track change, not the staircase — take the real value
+// immediately instead of easing towards it.
+private const val SMOOTH_SNAP_MS = 1_000L
 
 class JvmMediaPlayerHandlerImpl(
     private val dataStoreManager: DataStoreManager,
@@ -141,6 +153,60 @@ class JvmMediaPlayerHandlerImpl(
         val continuation: String?,
         val originalTrackIds: List<String>,
     )
+
+    // Smoothing state for the position this handler PUBLISHES. Measured on 2026-09-12: mpv moves
+    // `time-pos` only three to four times a second, in steps of 250-500 ms, so the raw number is a
+    // staircase and every progress bar and clock in the app inherits it. Upstream cannot do better
+    // — mpv#13695 asks for a finer property and is still open, and mpv#4195 shows property
+    // observation is coarser still — so the client has to fill the gaps in itself, which is exactly
+    // what mpv#15253 tells client authors to do.
+    //
+    // Only what is PUBLISHED is smoothed. Everything that reads the player to decide something —
+    // the crossfade trigger, the sleep timer, the position persist, the scrobbler — still sees
+    // mpv's own number.
+    private var smoothAnchorMs = -1L
+    private var smoothAnchorAtNanos = 0L
+    private var smoothLastPublishedMs = -1L
+
+    /**
+     * Drops the smoothing so the very next tick publishes mpv's own number.
+     *
+     * Called wherever the position is MOVED rather than allowed to advance. The numeric guard in
+     * [smoothedPosition] cannot stand in for this: the most the published value can ever run ahead
+     * is [SMOOTH_MAX_LEAD_MS], so a backwards seek shorter than that is arithmetically
+     * indistinguishable from having simply extrapolated too far — and treated as the latter, the
+     * bar would sit still instead of following the drag.
+     */
+    private fun resetPositionSmoothing() {
+        smoothAnchorMs = -1L
+        smoothLastPublishedMs = -1L
+    }
+
+    private fun smoothedPosition(rawMs: Long): Long {
+        val playing = _controlState.value.isPlaying
+        val nowNanos = System.nanoTime()
+        val resync =
+            !playing ||
+                smoothAnchorMs < 0L ||
+                rawMs < 0L ||
+                kotlin.math.abs(rawMs - smoothLastPublishedMs) > SMOOTH_SNAP_MS
+        if (resync) {
+            smoothAnchorMs = rawMs
+            smoothAnchorAtNanos = nowNanos
+            smoothLastPublishedMs = rawMs
+            return rawMs
+        }
+        if (rawMs != smoothAnchorMs) {
+            smoothAnchorMs = rawMs
+            smoothAnchorAtNanos = nowNanos
+        }
+        val speed = player.playbackParameters.speed.takeIf { it > 0f } ?: 1f
+        val elapsedMs = ((nowNanos - smoothAnchorAtNanos) / 1_000_000L * speed).toLong()
+        val predictedMs = smoothAnchorMs + elapsedMs.coerceAtMost(SMOOTH_MAX_LEAD_MS)
+        val publishedMs = maxOf(smoothLastPublishedMs, predictedMs)
+        smoothLastPublishedMs = publishedMs
+        return publishedMs
+    }
 
     // Linux (MPRIS) and Windows (SMTC) both go through NPYC/JMTC; macOS uses the
     // dedicated MacOSMediaIntegration below. runCatching keeps a failed native
@@ -322,6 +388,7 @@ class JvmMediaPlayerHandlerImpl(
     private var toggleLikeJob: Job? = null
 
     private var loadJob: Job? = null
+    private val restoreQueueMutex = Mutex()
 
     private var songEntityJob: Job? = null
 
@@ -954,6 +1021,7 @@ class JvmMediaPlayerHandlerImpl(
     }
 
     private fun skipSegment(position: Long) {
+        resetPositionSmoothing()
         if (position in 0..player.duration) {
             player.seekTo(position)
         } else if (position > player.duration) {
@@ -1006,12 +1074,23 @@ class JvmMediaPlayerHandlerImpl(
                 // position is otherwise only saved on pause / track change / release, which
                 // misses uninterrupted playback.
                 val positionPersistIntervalMs = 5_000L
+                // 50 ms, which is only safe BECAUSE the published position is smoothed below.
+                //
+                // _simpleMediaState is a StateFlow of a data class, so a tick carrying the same
+                // value as the previous one is swallowed and the UI gets nothing that round. While
+                // this loop published mpv's raw number — a staircase changing three or four times a
+                // second — most ticks were duplicates, and which ones survived depended on where
+                // the tick happened to land: the clock visibly sped up and slowed down, and ticking
+                // faster made it worse. The smoothed value is derived from the wall clock, so it
+                // differs on every tick and nothing is swallowed. Rate is now free to choose, and
+                // twice as many even steps reads better than half as many.
+                val tickIntervalMs = 50L
                 var sinceLastPositionSaveMs = 0L
                 while (true) {
-                    delay(100)
-                    _simpleMediaState.value = SimpleMediaState.Progress(player.currentPosition)
+                    delay(tickIntervalMs)
+                    _simpleMediaState.value = SimpleMediaState.Progress(smoothedPosition(player.currentPosition))
                     updateMacOSElapsedTime()
-                    sinceLastPositionSaveMs += 100
+                    sinceLastPositionSaveMs += tickIntervalMs
                     if (sinceLastPositionSaveMs >= positionPersistIntervalMs) {
                         sinceLastPositionSaveMs = 0
                         mayBeSaveRecentPosition()
@@ -1133,6 +1212,7 @@ class JvmMediaPlayerHandlerImpl(
             }
 
             is PlayerEvent.UpdateProgress -> {
+                resetPositionSmoothing()
                 player.seekTo((player.duration * playerEvent.newProgress / 100).toLong())
                 if (player.isPlaying) {
                     nowPlayingState.value.songEntity?.let { updateDiscordRpc(it) }
@@ -1765,7 +1845,15 @@ class JvmMediaPlayerHandlerImpl(
             _queueData.update {
                 it.copy(
                     queueState = QueueData.StateSource.STATE_INITIALIZED,
-                    data = it.data.copy(playlistId = radioId),
+                    data =
+                        it.data.copy(
+                            playlistId = "RDAMVM${lastTrack.videoId}",
+                            // Past the end of what the user picked, this queue IS a radio: from here
+                            // on it is extended by the radio of its last track and grows without end.
+                            // Saying so keeps the type honest and lets the history trim apply, while
+                            // the album snapshot for the crossfade rule was already taken at load.
+                            playlistType = PlaylistType.RADIO,
+                        ),
                 )
             }
             reorderShuffledQueue(player.getCurrentMediaTimeLine())
@@ -2204,6 +2292,9 @@ class JvmMediaPlayerHandlerImpl(
                     queueState = QueueData.StateSource.STATE_INITIALIZED,
                 ).addTrackList(catalogMetadata)
         }
+        // Right after a batch is the only moment the queue grows, and the moment both lists are
+        // known to be aligned again.
+        trimRadioHistoryIfNeeded()
         reorderShuffledQueue(player.getCurrentMediaTimeLine())
     }
 
@@ -2606,31 +2697,29 @@ class JvmMediaPlayerHandlerImpl(
     override fun mayBeSaveRecentSong(runBlocking: Boolean) {
         val unit =
             suspend {
-                if (dataStoreManager.saveRecentSongAndQueue.first() == TRUE) {
-                    // Skip while the playing song is unknown or the queue is mid-rebuild:
-                    // updateCatalog clears listTracks and re-inserts the current track only at
-                    // the end, so saving in that window persists a queue missing the current
-                    // track (plus a blank media id), which desyncs the next restore.
-                    val videoId = nowPlayingState.value.songEntity?.videoId
-                    if (videoId != null && queueData.value.queueState == QueueData.StateSource.STATE_INITIALIZED) {
-                        dataStoreManager.saveRecentSong(
-                            videoId,
-                            player.contentPosition,
-                        )
-                        dataStoreManager.setPlaylistFromSaved(queueData.value.data.playlistName ?: "")
-                        Logger.d(
-                            "Check saved",
-                            player.currentMediaItem
-                                ?.metadata
-                                ?.title
-                                .toString(),
-                        )
-                        val temp: ArrayList<Track> = ArrayList()
-                        temp.clear()
-                        temp.addAll(_queueData.value.data.listTracks)
-                        Logger.w("Check recover queue", temp.toString())
-                        songRepository.recoverQueue(temp)
-                    }
+                // Skip while the playing song is unknown or the queue is mid-rebuild:
+                // updateCatalog clears listTracks and re-inserts the current track only at
+                // the end, so saving in that window persists a queue missing the current
+                // track (plus a blank media id), which desyncs the next restore.
+                val videoId = nowPlayingState.value.songEntity?.videoId
+                if (videoId != null && queueData.value.queueState == QueueData.StateSource.STATE_INITIALIZED) {
+                    dataStoreManager.saveRecentSong(
+                        videoId,
+                        player.contentPosition,
+                    )
+                    dataStoreManager.setPlaylistFromSaved(queueData.value.data.playlistName ?: "")
+                    Logger.d(
+                        "Check saved",
+                        player.currentMediaItem
+                            ?.metadata
+                            ?.title
+                            .toString(),
+                    )
+                    val temp: ArrayList<Track> = ArrayList()
+                    temp.clear()
+                    temp.addAll(_queueData.value.data.listTracks)
+                    Logger.w("Check recover queue", temp.toString())
+                    songRepository.recoverQueue(temp)
                 }
             }
         if (runBlocking) {
@@ -2648,10 +2737,8 @@ class JvmMediaPlayerHandlerImpl(
      */
     private fun mayBeSaveRecentPosition() {
         coroutineScope.launch {
-            if (dataStoreManager.saveRecentSongAndQueue.first() == TRUE) {
-                val videoId = nowPlayingState.value.songEntity?.videoId ?: return@launch
-                dataStoreManager.saveRecentSong(videoId, player.contentPosition)
-            }
+            val videoId = nowPlayingState.value.songEntity?.videoId ?: return@launch
+            dataStoreManager.saveRecentSong(videoId, player.contentPosition)
         }
     }
 
@@ -2748,67 +2835,89 @@ class JvmMediaPlayerHandlerImpl(
     }
 
     override fun mayBeRestoreQueue() {
-        coroutineScope.launch {
-            if (dataStoreManager.saveRecentSongAndQueue.first() == TRUE) {
-                val currentPlayingTrack = songRepository.getSongById(dataStoreManager.recentMediaId.first()).lastOrNull()?.toTrack()
-                if (currentPlayingTrack != null) {
-                    // Cross-source backstop: the saved playback state must belong to the
-                    // currently selected source. Source switches no longer clear the saved
-                    // queue (they keep playing), so this guard is what skips restoring a
-                    // queue left over from the other source.
-                    val savedIsNetease = currentPlayingTrack.videoId.toLongOrNull() != null
-                    if (savedIsNetease != (dataStoreManager.selectedSource.first() == MusicSource.NETEASE.name)) {
-                        Logger.w(TAG, "Skip queue restore: saved track ${currentPlayingTrack.videoId} is from the other music source")
-                        return@launch
-                    }
-                    // Snapshot the position before touching the player: loading the queue fires
-                    // onMediaItemTransition -> mayBeSaveRecentSong, which rewrites the stored
-                    // position before the seek below would otherwise read it.
-                    val savedPosition = dataStoreManager.recentPosition.first().toLongOrNull() ?: 0L
-                    val savedTracks =
-                        songRepository
-                            .getSavedQueue()
-                            .singleOrNull()
-                            ?.firstOrNull()
-                            ?.listTrack
-                            .orEmpty()
-                    // The saved queue may not contain the saved track (e.g. persisted while the
-                    // queue was being rebuilt). Put the track at the front then: updateCatalog
-                    // skips listTracks[index] as "already in the player", so index must point at
-                    // the playing track or the UI queue and the player playlist end up shifted
-                    // against each other.
-                    var index = savedTracks.indexOfFirst { it.videoId == currentPlayingTrack.videoId }
-                    val listTracks =
-                        if (index == -1) {
-                            index = 0
-                            (listOf(currentPlayingTrack) + savedTracks).toCollection(arrayListOf())
-                        } else {
-                            savedTracks.toCollection(arrayListOf())
-                        }
-                    setQueueData(
-                        QueueData.Data(
-                            listTracks = listTracks,
-                            firstPlayedTrack = currentPlayingTrack,
-                            playlistId = LOCAL_PLAYLIST_ID_SAVED_QUEUE,
-                            playlistName = dataStoreManager.playlistFromSaved.first(),
-                            playlistType = PlaylistType.PLAYLIST,
-                            continuation = null,
-                        ),
-                    )
-                    addMediaItem(currentPlayingTrack.toGenericMediaItem(), playWhenReady = false)
-                    loadPlaylistOrAlbum(index = index)
-                    loadJob?.join()
-                    resetCrossfade()
-                    player.seekTo(index, savedPosition)
-                    // Announce the restored position once. Nothing plays after a restore
-                    // (playWhenReady = false above), and startProgressUpdate only runs while
-                    // isPlaying — so no state is ever published and the UI sits at 0:00 on a
-                    // queue the user left half-finished, until they press play.
-                    _simpleMediaState.value = SimpleMediaState.Progress(savedPosition)
-                }
-            }
-        }
+        coroutineScope.launch { restoreSavedQueue(playWhenReady = false) }
     }
+
+    override suspend fun restoreQueueAndPlay(): Boolean = restoreSavedQueue(playWhenReady = true)
+
+    /**
+     * Loads the persisted queue back into the player.
+     *
+     * [playWhenReady] separates startup restore (prime the player only) from playback
+     * resumption - a `play` from MPRIS, SMTC or NowPlayingCenter while nothing is loaded -
+     * which has to end up playing. Serialized so the two callers cannot load the queue twice;
+     * see the Android handler for why resumption starts the track before the queue behind it.
+     */
+    private suspend fun restoreSavedQueue(playWhenReady: Boolean): Boolean =
+        restoreQueueMutex.withLock {
+            if (player.mediaItemCount > 0) {
+                // Already restored, or the app was running all along.
+                if (playWhenReady) player.play()
+                return@withLock true
+            }
+            val currentPlayingTrack =
+                songRepository
+                    .getSongById(dataStoreManager.recentMediaId.first())
+                    .lastOrNull()
+                    ?.toTrack() ?: return@withLock false
+            // Cross-source backstop: the saved playback state must belong to the
+            // currently selected source. Source switches no longer clear the saved
+            // queue (they keep playing), so this guard is what skips restoring a
+            // queue left over from the other music source.
+            val savedIsNetease = currentPlayingTrack.videoId.toLongOrNull() != null
+            if (savedIsNetease != (dataStoreManager.selectedSource.first() == MusicSource.NETEASE.name)) {
+                Logger.w(TAG, "Skip queue restore: saved track ${currentPlayingTrack.videoId} is from the other music source")
+                return@withLock false
+            }
+            // Snapshot the position before touching the player: loading the queue fires
+            // onMediaItemTransition -> mayBeSaveRecentSong, which rewrites the stored
+            // position before the seek below would otherwise read it.
+            val savedPosition = dataStoreManager.recentPosition.first().toLongOrNull() ?: 0L
+            val savedTracks =
+                songRepository
+                    .getSavedQueue()
+                    .singleOrNull()
+                    ?.firstOrNull()
+                    ?.listTrack
+                    .orEmpty()
+            // The saved queue may not contain the saved track (e.g. persisted while the
+            // queue was being rebuilt). Put the track at the front then: updateCatalog
+            // skips listTracks[index] as "already in the player", so index must point at
+            // the playing track or the UI queue and the player playlist end up shifted
+            // against each other.
+            var index = savedTracks.indexOfFirst { it.videoId == currentPlayingTrack.videoId }
+            val listTracks =
+                if (index == -1) {
+                    index = 0
+                    (listOf(currentPlayingTrack) + savedTracks).toCollection(arrayListOf())
+                } else {
+                    savedTracks.toCollection(arrayListOf())
+                }
+            setQueueData(
+                QueueData.Data(
+                    listTracks = listTracks,
+                    firstPlayedTrack = currentPlayingTrack,
+                    playlistId = LOCAL_PLAYLIST_ID_SAVED_QUEUE,
+                    playlistName = dataStoreManager.playlistFromSaved.first(),
+                    playlistType = PlaylistType.PLAYLIST,
+                    continuation = null,
+                ),
+            )
+            // playWhenReady is the whole difference: the track starts loading (and so reaches
+            // BUFFERING) right here, before the queue behind it, and the seek below then lands
+            // it on the saved index and position.
+            addMediaItem(currentPlayingTrack.toGenericMediaItem(), playWhenReady = playWhenReady)
+            loadPlaylistOrAlbum(index = index)
+            loadJob?.join()
+            resetCrossfade()
+            player.seekTo(index, savedPosition)
+            // Announce the restored position once. Nothing plays after a restore
+            // (playWhenReady = false above), and startProgressUpdate only runs while
+            // isPlaying — so no state is ever published and the UI sits at 0:00 on a
+            // queue the user left half-finished, until they press play.
+            _simpleMediaState.value = SimpleMediaState.Progress(savedPosition)
+            true
+        }
 
     override fun shouldReleaseOnTaskRemoved() =
         runBlocking {
@@ -2967,6 +3076,7 @@ class JvmMediaPlayerHandlerImpl(
         mediaItem: GenericMediaItem?,
         reason: Int,
     ) {
+        resetPositionSmoothing()
         Logger.w(TAG, "Checking current state before transition ${simpleMediaState.value}")
         val lastPlayed = nowPlayingState.value.songEntity
         val currentState = simpleMediaState.value
@@ -3354,6 +3464,7 @@ class JvmMediaPlayerHandlerImpl(
     ) {
         super.onTimelineChanged(list, reason)
         Logger.d(TAG, "onTimelineChanged: $reason, items: ${list.size}")
+        applyPendingRadioTrim(list)
         reorderShuffledQueue(list)
     }
 
@@ -3415,23 +3526,95 @@ class JvmMediaPlayerHandlerImpl(
 
     private fun reorderShuffledQueue(list: List<GenericMediaItem>) {
         val listTrack = queueData.value.data.listTracks
-        Logger.d(TAG, "Reordering shuffled queue: SIZE ${list.size}, TITLE ${list.map { it.mediaId }}")
-        list
-            .mapNotNull {
-                listTrack.firstOrNull { track -> track.videoId == it.mediaId }
-            }.let { sorted ->
-                Logger.d(TAG, "Reordered shuffled queue: SIZE ${sorted.size}, TITLE ${sorted.map { it.title }}")
-                Logger.d(TAG, "Original queue: SIZE ${listTrack.size}, TITLE ${listTrack.map { it.title }}")
-                if (sorted.size != listTrack.size) return
-                _queueData.update {
-                    it.copy(
-                        data =
-                            it.data.copy(
-                                listTracks = sorted,
-                            ),
-                    )
-                }
-            }
+        // Runs once per appended track — about 50 times per radio batch — so it is written to stay
+        // cheap as the queue grows (#2504): a map lookup instead of a nested search, and sizes in
+        // the log instead of every title. Building those three title strings cost more than the
+        // matching did, and the result is thrown away whenever the sizes disagree anyway.
+        val byId = HashMap<String, Track>(listTrack.size)
+        listTrack.forEach { track ->
+            if (!byId.containsKey(track.videoId)) byId[track.videoId] = track
+        }
+        val sorted = list.mapNotNull { byId[it.mediaId] }
+        Logger.d(TAG, "Reordering shuffled queue: player ${list.size}, queue ${listTrack.size}, matched ${sorted.size}")
+        if (sorted.size != listTrack.size) return
+        _queueData.update {
+            it.copy(
+                data =
+                    it.data.copy(
+                        listTracks = sorted,
+                    ),
+            )
+        }
+    }
+
+    /** Set by [trimRadioHistoryIfNeeded]: the queue size to expect once the player applies a trim. */
+    private var pendingRadioTrimTo: Int? = null
+
+    /**
+     * Asks the player to drop the oldest played tracks of a RADIO queue.
+     *
+     * A radio grows without end and everything that walks the queue gets more expensive with it
+     * (#2504). A playlist or album is only trimmed once endless queue has carried it past the list
+     * the user picked, at which point it is re-typed as radio.
+     *
+     * Nothing is cut here unless the player's list and [queueData] are already aligned and the ids
+     * at the front match: trimming lists that are out of step is exactly the bug this must never
+     * cause. [queueData] is then cut by [applyPendingRadioTrim], after the player proves it removed
+     * them.
+     */
+    private fun trimRadioHistoryIfNeeded() {
+        if (queueData.value.data.playlistType != PlaylistType.RADIO) return
+        // Shuffle splits the two index spaces: `currentMediaItemIndex` and the indices
+        // `removeMediaItems` takes both count the player's UNSHUFFLED playlist, while the timeline
+        // and `listTracks` are in shuffled order. The oldest-played tracks are then not a range in
+        // the playlist at all, so trimming by index there would delete upcoming tracks. Radio with
+        // shuffle on simply keeps its full history.
+        if (player.shuffleModeEnabled) return
+        val listTracks = queueData.value.data.listTracks
+        val playerItems = player.getCurrentMediaTimeLine()
+        if (playerItems.size != listTracks.size) return
+        val drop = RadioQueueTrim.countToDropFromFront(player.currentMediaItemIndex, listTracks.size)
+        if (drop <= 0) return
+        if (playerItems.take(drop).map { it.mediaId } != listTracks.take(drop).map { it.videoId }) return
+        // queueData FOLLOWS the player here, it does not lead it. The adapters apply the removal on
+        // their own thread and re-check their guards there, so they may refuse (a crossfade started,
+        // the playlist moved). Cutting queueData now would then leave the two lists permanently
+        // offset — the "tap a queue row, play the wrong song" bug this feature must not cause.
+        pendingRadioTrimTo = listTracks.size - drop
+        player.removeMediaItems(0, drop)
+        Logger.d(TAG, "Radio trim requested: dropping $drop, expecting queue ${listTracks.size - drop}")
+    }
+
+    /**
+     * Applies a requested radio trim to [queueData] once the player's own timeline proves it
+     * happened: same size, and the player's ids are exactly the tail of the tracks we hold.
+     *
+     * Anything else clears the request instead of cutting, so a refused or superseded trim leaves
+     * both lists untouched and aligned rather than silently offset.
+     */
+    private fun applyPendingRadioTrim(list: List<GenericMediaItem>) {
+        val expected = pendingRadioTrimTo ?: return
+        val listTracks = queueData.value.data.listTracks
+        if (list.size >= listTracks.size) {
+            pendingRadioTrimTo = null
+            return
+        }
+        if (list.size != expected) return
+        val drop = listTracks.size - list.size
+        if (list.map { it.mediaId } != listTracks.drop(drop).map { it.videoId }) {
+            pendingRadioTrimTo = null
+            return
+        }
+        _queueData.update {
+            it.copy(
+                data =
+                    it.data.copy(
+                        listTracks = listTracks.drop(drop),
+                    ),
+            )
+        }
+        pendingRadioTrimTo = null
+        Logger.d(TAG, "Trimmed radio history: dropped $drop, queue now ${list.size}")
     }
 
     /**

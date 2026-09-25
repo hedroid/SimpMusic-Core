@@ -639,6 +639,53 @@ class MpvPlayerAdapter(
         }
     }
 
+    /**
+     * Drops `[fromIndex, toIndex)` in one pass: one shuffle rebuild, one precache pass, one timeline
+     * notification — the per-item versions of those are what the queue trim must not repeat 50 times.
+     *
+     * Indices count the UNSHUFFLED playlist, like [removeMediaItem] and [currentMediaItemIndex] —
+     * NOT the shuffled timeline the listeners see. A caller working from timeline positions must
+     * map them first, or skip this while shuffle is on.
+     *
+     * Only the range strictly BELOW the current track is supported, which is all the trim needs.
+     * Anything else (an empty or inverted range, a range reaching the playing track) is refused
+     * outright rather than guessed at, because getting it wrong would stop playback.
+     */
+    override fun removeMediaItems(
+        fromIndex: Int,
+        toIndex: Int,
+    ) {
+        coroutineScope.launch {
+            // Bounds re-checked inside the launch, on the player thread, for the reason in
+            // removeMediaItem above (issue #2156).
+            if (fromIndex < 0 || toIndex <= fromIndex) return@launch
+            if (toIndex > playlist.size || toIndex > localCurrentMediaItemIndex) return@launch
+            // crossfadeFromIndex is an index into this same playlist and is NOT shifted here; a
+            // cancelled fade would revert to a track ~toIndex positions away. Trims can wait.
+            if (isCrossfading) return@launch
+
+            val removed = playlist.subList(fromIndex, toIndex).toList()
+            playlist.subList(fromIndex, toIndex).clear()
+            removed.forEach { track ->
+                precachedPlayers.remove(track.mediaId)?.let { cached ->
+                    cleanupPlayerInternal(cached.player)
+                }
+            }
+            localCurrentMediaItemIndex -= removed.size
+
+            if (internalShuffleModeEnabled) {
+                createShuffleOrder()
+            }
+            // The removed tracks are all behind the current one and precache is keyed by mediaId,
+            // so the window ahead needs no rebuild — clearing it here would throw away the handle
+            // the next crossfade is about to use. This only tops it back up, which also restores
+            // any handle an id repeated in the dropped history took with it.
+            triggerPrecachingInternal()
+
+            notifyTimelineChanged("TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED")
+        }
+    }
+
     override fun moveMediaItem(
         fromIndex: Int,
         toIndex: Int,
@@ -830,14 +877,28 @@ class MpvPlayerAdapter(
         when (internalRepeatMode) {
             PlayerConstants.REPEAT_MODE_ONE -> true
             PlayerConstants.REPEAT_MODE_ALL -> true
-            else -> localCurrentMediaItemIndex < playlist.size - 1
+            else ->
+                if (internalShuffleModeEnabled && shuffleOrder.isNotEmpty()) {
+                    val currentShufflePos =
+                        shuffleIndices.getOrNull(localCurrentMediaItemIndex) ?: -1
+                    currentShufflePos >= 0 && currentShufflePos < shuffleOrder.lastIndex
+                } else {
+                    localCurrentMediaItemIndex < playlist.size - 1
+                }
         }
 
     override fun hasPreviousMediaItem(): Boolean =
         when (internalRepeatMode) {
             PlayerConstants.REPEAT_MODE_ONE -> true
             PlayerConstants.REPEAT_MODE_ALL -> true
-            else -> localCurrentMediaItemIndex > 0
+            else ->
+                if (internalShuffleModeEnabled && shuffleOrder.isNotEmpty()) {
+                    val currentShufflePos =
+                        shuffleIndices.getOrNull(localCurrentMediaItemIndex) ?: -1
+                    currentShufflePos > 0
+                } else {
+                    localCurrentMediaItemIndex > 0
+                }
         }
 
     private fun getNextMediaItemIndex(): Int =
@@ -1782,7 +1843,7 @@ class MpvPlayerAdapter(
                 }
 
                 else -> {
-                    if (localCurrentMediaItemIndex < playlist.size - 1) {
+                    if (hasNextMediaItem()) {
                         seekToNext()
                     }
                 }
@@ -2679,7 +2740,7 @@ class MpvPlayerAdapter(
                         // Ignore query errors
                     }
 
-                    delay(200) // Update every 200ms
+                    delay(50) // Update every 50ms
                 }
             }
     }
