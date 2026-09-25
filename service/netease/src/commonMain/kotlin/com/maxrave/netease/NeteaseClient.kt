@@ -271,7 +271,7 @@ class NeteaseClient(
     private suspend fun sessionCsrf(): String = (cookieProvider() + sessionCookies)["__csrf"] ?: ""
 
     private suspend fun mergeSetCookies(setCookies: List<String>) {
-        val merged = cookieMutex.withLock {
+        cookieMutex.withLock {
             val m = sessionCookies.toMutableMap()
             setCookies.forEach { raw ->
                 val nameValue = raw.substringBefore(';').trim()
@@ -280,9 +280,10 @@ class NeteaseClient(
                 if (name.isNotEmpty()) m[name] = value
             }
             sessionCookies = m
-            m
+            // 持久化必须也在锁内:两个并发响应的合并顺序是串行的,锁外写 DataStore
+            // 乱序完成时旧快照会覆盖新快照。
+            cookieSaver(m)
         }
-        cookieSaver(merged)
     }
 
     // ------------------------------------------------------------------ login flows
