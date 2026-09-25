@@ -1175,7 +1175,9 @@ class NeteaseRepositoryImpl(
     ): Result<Boolean> {
         val result = likeSong(songId, like)
         val id = songId.toLongOrNull()
-        if (result.isSuccess && id != null) {
+        // 业务 code!=200 会返回 success(false)(服务端拒了),isSuccess 判不出——那样会把
+        // 被拒的状态写进缓存。只有业务结果为 true 才动缓存。
+        if (result.getOrDefault(false) && id != null) {
             likedIdsMutex.withLock {
                 // 只改集合保留时间戳:刚拉过的缓存继续按原 TTL 过期
                 likedSongIds?.let { (ids, at) ->
