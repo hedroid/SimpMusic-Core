@@ -800,11 +800,15 @@ suspend fun NeteaseClient.subscribeArtist(
 // 专辑 / 红心 / 歌单写操作 —— YTM 有对应入口的走共享形状,红心数据用于库页识别
 // ----------------------------------------------------------------------------
 
-/** 专辑详情(weapi /v1/album/{id}),返回专辑元数据+曲目 */
+/**
+ * 专辑详情(eapi /v1/album/{id}),返回专辑元数据+曲目。
+ * weapi 同端点的 description 字段会窗口性返回空串(2026-09-25 实测一轮 5 次中 3 次,
+ * 下一轮又全满),官方移动端走 eapi 通道稳定返回全文;两通道响应结构一致,toAlbum 零改动。
+ */
 suspend fun NeteaseClient.albumDetail(albumId: Long): Result<Pair<NeteaseAlbum, List<NeteaseSong>>> =
     runCatching {
         val body =
-            callWeApi(
+            callEApi(
                 "/v1/album/$albumId",
                 mapOf(
                     "n" to 100000,
