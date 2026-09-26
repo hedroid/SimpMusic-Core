@@ -901,6 +901,9 @@ class YouTube {
             ytMusic.checkForGithubReleaseUpdate().body<GithubResponse>()
         }
 
+    /** HTML 重定向兜底:返回最新 release 的 tag 名,null=形状意外或无 release */
+    suspend fun checkForGithubReleaseUpdateViaRedirect(): String? = ytMusic.checkForGithubReleaseUpdateViaRedirect()
+
     suspend fun checkForFdroidUpdate(): Result<FdroidResponse> =
         runCatching {
             ytMusic.checkForFdroidUpdate().body<FdroidResponse>()

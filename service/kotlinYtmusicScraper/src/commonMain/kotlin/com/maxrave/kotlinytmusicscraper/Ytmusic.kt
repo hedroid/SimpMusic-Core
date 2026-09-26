@@ -700,6 +700,24 @@ class Ytmusic {
             contentType(ContentType.Application.Json)
         }
 
+    /**
+     * 更新检查的 HTML 兜底(不消耗 api.github.com 匿名 60 次/小时限额):releases 页面的
+     * /releases/latest 是 302 到 /releases/tag/<tag>,主客户端已装 HttpRedirect 会自动跟随,
+     * 302 目标页是正常 HTML(网页路径限额宽松,用户量级打不满)。跟随成功后从最终 URL
+     * 提取 tag 名;返回 null=形状意外(页面结构变化/无 release),调用方走错误路径。
+     */
+    suspend fun checkForGithubReleaseUpdateViaRedirect(): String? {
+        val response =
+            httpClient.get("https://github.com/hedroid/SimpMusic/releases/latest") {
+                accept(ContentType.Application.Json)
+            }
+        val target = response.call.request.url.toString()
+        return "releases/tag/([^/?#]+)".toRegex()
+            .find(target)
+            ?.groupValues
+            ?.get(1)
+    }
+
     suspend fun checkForFdroidUpdate() =
         httpClient.get("https://f-droid.org/api/v1/packages/com.maxrave.simpmusic") {
             contentType(ContentType.Application.Json)

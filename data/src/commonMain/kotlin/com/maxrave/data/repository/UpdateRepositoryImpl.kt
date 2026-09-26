@@ -31,6 +31,19 @@ internal class UpdateRepositoryImpl(
                 }
         }.flowOn(Dispatchers.IO)
 
+    /**
+     * HTML 重定向兜底:GET github.com/.../releases/latest(302→/releases/tag/<tag>),
+     * 从最终 URL 提取 tag。不消耗 api.github.com 匿名限额,API 被限流时的后备路径。
+     */
+    override fun checkForGithubReleaseUpdateViaRedirect(): Flow<Resource<UpdateData>> =
+        flow {
+            youTube
+                .checkForGithubReleaseUpdateViaRedirect()
+                ?.let { tag ->
+                    emit(Resource.Success(UpdateData(tagName = tag, releaseTime = null, body = "")))
+                } ?: emit(Resource.Error<UpdateData>("redirect fallback: no tag in final URL"))
+        }.flowOn(Dispatchers.IO)
+
     override fun checkForFdroidUpdate(): Flow<Resource<UpdateData>> =
         flow {
             youTube
