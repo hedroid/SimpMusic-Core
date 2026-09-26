@@ -651,6 +651,7 @@ internal class DataStoreManagerImpl(
                 settings[SELECTED_SOURCE] = source
             }
         }
+        Logger.w("SRCPROBE", "setSelectedSource written: $source")
     }
 
     override val neteaseQuality =
