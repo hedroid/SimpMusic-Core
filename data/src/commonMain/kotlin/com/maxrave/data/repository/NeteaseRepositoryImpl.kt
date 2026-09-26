@@ -1257,6 +1257,7 @@ class NeteaseRepositoryImpl(
         songId: String,
         sortType: Int,
         cursor: String,
+        pageNo: Int = 1,
         pageSize: Int = 20,
     ): NeteaseCommentListPage? {
         val id = songId.toLongOrNull() ?: run {
@@ -1264,18 +1265,20 @@ class NeteaseRepositoryImpl(
             return null
         }
         val page =
-            client.songCommentsV2(id, sortType = sortType, cursor = cursor, pageSize = pageSize).getOrNull() ?: run {
+            client.songCommentsV2(id, sortType = sortType, cursor = cursor, pageNo = pageNo, pageSize = pageSize).getOrNull() ?: run {
                 com.maxrave.logger.Logger.w("NeteaseComments", "page fetch failed")
                 return null
             }
         val items = page.comments.map { it.toHotComment() }
         com.maxrave.logger.Logger.w(
             "NeteaseComments",
-            "page ok: sort=$sortType n=${items.size} hasMore=${page.hasMore} cursor=${page.cursor} replySum=${items.sumOf { it.replyCount }}",
+            "page ok: sort=$sortType pageNo=$pageNo n=${items.size} hasMore=${page.hasMore} cursor=${page.cursor} replySum=${items.sumOf { it.replyCount }}",
         )
         return NeteaseCommentListPage(
             items = items,
             hasMore = page.hasMore,
+            // 游标三档统一用服务端回传值(最热=normalHot#N 排名偏移;最新/推荐=末条 time;
+            // 探针实证 pageNo>1 时两者都能推进,pageNo 恒 1 则原样返回第一页)
             nextCursor = if (page.hasMore) page.cursor else null,
         )
     }

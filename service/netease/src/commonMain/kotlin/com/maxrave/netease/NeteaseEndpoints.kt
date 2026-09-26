@@ -1459,14 +1459,16 @@ private suspend fun NeteaseClient.commentWrite(
 ): Result<Long?> = runCatching { commentWriteResult(callXeApi(path, data)) }
 
 /**
- * 评论列表 v2 端点(weapi /v2/resource/comments):服务端排序(2=最热,3=最新)+cursor 分页,
- * 评论条目带 showFloorComment.replyCount(v1 列表响应已不吐楼层计数,楼层入口必须走 v2)。
- * cursor:最热档首页 "normalHot#0"、最新档首页 "0",后续页透传上一页响应的 cursor。
+ * 评论列表 v2 端点(weapi /v2/resource/comments):服务端排序(99=推荐/2=最热/3=最新)。
+ * **翻页 = pageNo 递增 + cursor 透传上一页回传游标,两者缺一不可**——pageNo 恒 1 时
+ * 服务端无视 cursor 原样返回第一页(探针实证);cursor:最热 normalHot#N、最新/推荐
+ * 为最后一条评论的 time(服务端回传值即它)。条目带 showFloorComment.replyCount。
  */
 suspend fun NeteaseClient.songCommentsV2(
     songId: Long,
     sortType: Int,
     cursor: String,
+    pageNo: Int = 1,
     pageSize: Int = 20,
 ): Result<NeteaseCommentPageV2> =
     runCatching {
@@ -1475,6 +1477,7 @@ suspend fun NeteaseClient.songCommentsV2(
                 "/v2/resource/comments",
                 mapOf(
                     "threadId" to "R_SO_4_$songId",
+                    "pageNo" to pageNo,
                     "pageSize" to pageSize,
                     "cursor" to cursor,
                     "sortType" to sortType,
