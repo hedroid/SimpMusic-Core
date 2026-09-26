@@ -1386,6 +1386,78 @@ suspend fun NeteaseClient.commentLike(
         }
     }
 
+/** 发表歌曲评论(xeapi 写通道);返回新评论 id,拿不到为 null。失败透传服务端 msg。 */
+suspend fun NeteaseClient.commentAdd(
+    songId: Long,
+    content: String,
+): Result<Long?> =
+    commentWrite(
+        "/resource/comments/add",
+        linkedMapOf(
+            "threadId" to "R_SO_4_$songId",
+            "content" to content,
+            "resourceType" to "0",
+            "expressionPicId" to "-1",
+            "bubbleId" to "-1",
+        ),
+    )
+
+/** 回复歌曲评论(xeapi /v1/resource/comments/reply);返回新回复 id */
+suspend fun NeteaseClient.commentReply(
+    songId: Long,
+    parentCommentId: Long,
+    content: String,
+): Result<Long?> =
+    commentWrite(
+        "/v1/resource/comments/reply",
+        linkedMapOf(
+            "threadId" to "R_SO_4_$songId",
+            "commentId" to parentCommentId.toString(),
+            "content" to content,
+            "resourceType" to "0",
+        ),
+    )
+
+/** 删除自己发表的评论(xeapi /resource/comments/delete) */
+suspend fun NeteaseClient.commentDelete(
+    songId: Long,
+    commentId: Long,
+): Result<Unit> =
+    runCatching {
+        val body =
+            callXeApi(
+                "/resource/comments/delete",
+                linkedMapOf("threadId" to "R_SO_4_$songId", "commentId" to commentId.toString()),
+            )
+        val code = (body["code"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0
+        if (code != 200) {
+            error(
+                (body["msg"] as? JsonPrimitive)?.content
+                    ?: (body["message"] as? JsonPrimitive)?.content
+                    ?: "code=$code",
+            )
+        }
+    }
+
+/** 走 callXeApi 的评论写操作公共壳:code!=200 抛服务端 msg;成功提取新评论 id(可空) */
+private fun commentWriteResult(body: JsonObject): Long? {
+    val code = (body["code"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0
+    if (code != 200) {
+        error(
+            (body["msg"] as? JsonPrimitive)?.content
+                ?: (body["message"] as? JsonPrimitive)?.content
+                ?: "code=$code",
+        )
+    }
+    return body["data"]?.jsonObject?.get("comment")?.jsonObject?.get("commentId")?.nLong()
+        ?: body["comment"]?.jsonObject?.get("commentId")?.nLong()
+}
+
+private suspend fun NeteaseClient.commentWrite(
+    path: String,
+    data: LinkedHashMap<String, String>,
+): Result<Long?> = runCatching { commentWriteResult(callXeApi(path, data)) }
+
 /**
  * 评论列表 v2 端点(weapi /v2/resource/comments):服务端排序(2=最热,3=最新)+cursor 分页,
  * 评论条目带 showFloorComment.replyCount(v1 列表响应已不吐楼层计数,楼层入口必须走 v2)。

@@ -5,6 +5,8 @@
  */
 package com.maxrave.netease
 
+import com.maxrave.netease.crypto.XeapiCipher
+import com.maxrave.netease.crypto.XeapiCrypto
 import com.maxrave.netease.model.NeteaseAccount
 import com.maxrave.netease.model.NeteaseQrSession
 import com.maxrave.netease.model.NeteaseQrStatus
@@ -18,6 +20,7 @@ import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
+import io.ktor.client.statement.readBytes
 import io.ktor.client.statement.request
 import io.ktor.http.HttpHeaders
 import io.ktor.http.Parameters
@@ -31,6 +34,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 
 /**
@@ -148,6 +152,111 @@ class NeteaseClient(
             url = "https://music.163.com/api$path",
             form = params.mapValues { (_, v) -> v?.toString() ?: "" },
         )
+
+    // ===== xeapi(官方 App 9.5.x 的写操作通道:发评论/回复/删除) =====
+
+    private val xeapiMutex = Mutex()
+    private var xeapiKeyState: XeapiCrypto.PublicKeyState? = null
+    private var xeapiUa: String? = null
+
+    /**
+     * 设备注册取公钥(明文表单,签名=HMAC-SHA256(静态密钥,timestamp+nonce)):
+     * /api/gorilla/anti/crawler/security/key/get。公钥状态只做内存缓存——
+     * 同 deviceId 冷启动重注册即可,服务端会返回(或沿用)长期设备密钥 sk。
+     */
+    private suspend fun getOrRegisterXeapiKey(): XeapiCrypto.PublicKeyState {
+        xeapiKeyState?.let { return it }
+        val deviceId = XeapiCipher.deviceId()
+        val nonce = (1..16).map { kotlin.random.Random.nextInt(10) }.joinToString("")
+        val timestamp = (kotlin.time.Clock.System.now().toEpochMilliseconds()).toString()
+        val response =
+            post(
+                url = "https://interface.music.163.com/api/gorilla/anti/crawler/security/key/get",
+                form =
+                    linkedMapOf(
+                        "appVersion" to XeapiCrypto.APP_VERSION,
+                        "currentKeyVersion" to "",
+                        "deviceId" to deviceId,
+                        "nonce" to nonce,
+                        "os" to "android",
+                        "requestType" to "active",
+                        "signature" to XeapiCrypto.sign(timestamp, nonce),
+                        "t1" to "",
+                        "t2" to "",
+                        "timestamp" to timestamp,
+                        "uid" to "",
+                    ),
+                extraHeaders =
+                    mapOf(
+                        "User-Agent" to "NeteaseMusic/${XeapiCrypto.APP_VERSION}.260802021928(9005061);Dalvik/2.1.0 (Linux; U; Android ${XeapiCipher.osVersion()}; ${XeapiCipher.deviceModel()})",
+                        "Cookie" to "deviceId=$deviceId",
+                    ),
+            )
+        val code = response["code"]?.jsonPrimitive?.intOrNull ?: 0
+        if (code != 200) {
+            error("xeapi key fetch code=$code")
+        }
+        val encryptedData =
+            response["data"]?.jsonObject?.get("encryptedData")?.jsonPrimitive?.content
+                ?: error("xeapi key fetch missing encryptedData")
+        val state = XeapiCrypto.decryptPublicKeyResponse(encryptedData)
+        if (state.publicKey.isEmpty()) {
+            error("xeapi key fetch empty publicKey")
+        }
+        xeapiKeyState = state
+        return state
+    }
+
+    /**
+     * xeapi 写通道:发评论/回复/删除。响应体是 AES-ECB 加密二进制(可能 gzip),
+     * 解密后才是明文 JSON;密钥版本过期等失败原样抛给调用方。
+     */
+    suspend fun callXeApi(
+        path: String,
+        data: LinkedHashMap<String, String>,
+    ): JsonObject =
+        xeapiMutex.withLock {
+            val state = getOrRegisterXeapiKey()
+            val deviceId = XeapiCipher.deviceId()
+            val osVer = XeapiCipher.osVersion()
+            val appVer = XeapiCrypto.APP_VERSION
+            val buildVer = (kotlin.time.Clock.System.now().toEpochMilliseconds() / 1000).toString()
+            if (xeapiUa == null) {
+                xeapiUa =
+                    "NeteaseMusic/$appVer.260802021928(9005061);Dalvik/2.1.0 (Linux; U; Android $osVer; ${XeapiCipher.deviceModel()})"
+            }
+            val form = XeapiCrypto.assembleRequest("/api$path", data, state, deviceId, osVer)
+            val userCookie = buildCookieHeader()
+            val musicU = Regex("MUSIC_U=([^;]+)").find(userCookie)?.groupValues?.get(1)
+            val cookie =
+                "os=android; osver=$osVer; appver=$appVer; deviceId=$deviceId; sDeviceId=$deviceId; buildver=$buildVer" +
+                    if (userCookie.isNotEmpty()) "; $userCookie" else ""
+            val response =
+                http.post("https://interface3.music.163.com/xeapi$path") {
+                    header(HttpHeaders.Cookie, cookie)
+                    header(HttpHeaders.UserAgent, xeapiUa!!)
+                    header("X-Client-Enc-State", "ENCRYPTED")
+                    header("x-aeapi", "true")
+                    header("x-deviceid", deviceId)
+                    header("x-sdeviceid", deviceId)
+                    header("x-os", "android")
+                    header("x-osver", osVer)
+                    header("x-appver", appVer)
+                    header("x-buildver", buildVer)
+                    musicU?.let { header("x-music-u", it) }
+                    setBody(
+                        FormDataContent(
+                            Parameters.build {
+                                append("B", form.b)
+                                append("S", form.s)
+                                append("R", form.r)
+                            },
+                        ),
+                    )
+                }
+            val text = XeapiCrypto.decryptResponseBody(response.readBytes())
+            json.parseToJsonElement(text).jsonObject
+        }
 
     /** 明文 API GET,返回 JSON */
     suspend fun callApiGet(

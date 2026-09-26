@@ -62,8 +62,11 @@ import com.maxrave.domain.source.ProviderLyrics
 import com.maxrave.domain.source.ProviderRadioSession
 import com.maxrave.netease.NeteaseClient
 import com.maxrave.netease.NeteaseConstants
+import com.maxrave.netease.commentDelete
 import com.maxrave.netease.commentFloor
 import com.maxrave.netease.commentLike
+import com.maxrave.netease.commentReply
+import com.maxrave.netease.commentAdd
 import com.maxrave.netease.createPlaylist
 import com.maxrave.netease.songCommentsV2
 import com.maxrave.netease.dailyRecommendPlaylists
@@ -1324,6 +1327,20 @@ class NeteaseRepositoryImpl(
         (songId.toLongOrNull()
             ?.let { client.commentLike(it, commentId, like) }
             ?: Result.failure(IllegalArgumentException("songId not numeric: $songId")))
+
+    /**
+     * 发表/回复歌曲评论(xeapi 写通道,官方 App 9.5.x 起唯一通路)。replyTo 非空=回复。
+     * 服务端可能按账号/设备风控拒绝,失败透传服务端 msg。
+     */
+    suspend fun postSongComment(
+        songId: String,
+        content: String,
+        replyTo: Long? = null,
+    ): Result<Unit> {
+        val id = songId.toLongOrNull() ?: return Result.failure(IllegalArgumentException("songId not numeric: $songId"))
+        return (if (replyTo != null) client.commentReply(id, replyTo, content) else client.commentAdd(id, content))
+            .map { }
+    }
 
     /**
      * 播放页网易详情卡:艺人(头像/粉丝)、专辑(发行日/简介)、互动(红心/评论)五路数据
