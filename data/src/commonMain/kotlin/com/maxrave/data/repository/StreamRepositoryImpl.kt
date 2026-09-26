@@ -17,15 +17,19 @@ import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.repository.StreamRepository
 import com.maxrave.domain.utils.Resource
 import com.maxrave.kotlinytmusicscraper.YouTube
+import com.maxrave.kotlinytmusicscraper.extractor.ExtractSource
 import com.maxrave.kotlinytmusicscraper.models.MediaType
 import com.maxrave.kotlinytmusicscraper.models.response.PlayerResponse
 import com.maxrave.logger.Logger
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 internal class StreamRepositoryImpl(
@@ -43,6 +47,49 @@ internal class StreamRepositoryImpl(
     override suspend fun getFormatFlow(videoId: String) = localDataSource.getNewFormatAsFlow(videoId)
 
     override fun getExtractSource(videoId: String): String? = youTube.getExtractSource(videoId)
+
+    /** Tidal 检索词清洗:剥 feat/连接词/标点,YT 分支与网易富化共享同一规则 */
+    private fun tidalSearchQuery(title: String, author: String): String =
+        "$title $author"
+            .replace(
+                Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
+                " ",
+            ).replace(
+                Regex("( và | & | и | e | und |, |和| dan)"),
+                " ",
+            ).replace("  ", " ")
+            .replace(Regex("([()])"), "")
+            .replace(".", " ")
+            .replace("  ", " ")
+
+    /** 网易歌 BPM/调性/调式富化:与 YT 歌同一套 Tidal 搜索(标题+艺人+时长±1s 匹配)。
+     *  必须走旁路 scope——播放 resolver 用 lastOrNull() 等整条流收完,内联会把起播
+     *  拖住 Tidal 往返(凭证在但网络不通时最长 30s);回写 new_format 行后 Room 流
+     *  活通知 Info 面板。Tidal 凭证未装载(大陆无代理拉不到 GitHub raw 的常态)直接
+     *  短路,不白烧请求。命中不了(中文歌 Tidal 曲库没有/时长不匹配)静默保持未知。 */
+    private val tidalEnrichmentScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private fun enrichNeteaseTidalMetadata(videoId: String) {
+        if (youTube.tidalClientId.isBlank()) return
+        tidalEnrichmentScope.launch {
+            runCatching {
+                val song = localDataSource.getSong(videoId) ?: return@launch
+                if (song.durationSeconds <= 0) return@launch
+                val metadata =
+                    youTube
+                        .searchTidalMetadata(
+                            tidalSearchQuery(song.title, song.artistName?.joinToString(" ") ?: ""),
+                            song.durationSeconds,
+                        ).getOrNull() ?: return@launch
+                localDataSource.getNewFormat(videoId)?.let { row ->
+                    localDataSource.updateNewFormat(
+                        row.copy(bpm = metadata.bpm, musicKey = metadata.musicKey, keyScale = metadata.keyScale),
+                    )
+                    Logger.w("Stream", "netease tidal enriched $videoId: bpm=${metadata.bpm} key=${metadata.musicKey} scale=${metadata.keyScale}")
+                }
+            }.onFailure { Logger.e("Stream", "netease tidal enrichment failed: ${it.message}") }
+        }
+    }
 
     override fun isKnownUnresolvable(videoId: String): Boolean =
         videoId.toLongOrNull()?.let { neteaseRepository.isKnownUnavailableNetease(it) } == true
@@ -107,8 +154,9 @@ internal class StreamRepositoryImpl(
                     emit(null)
                 } else {
                     // 落一条网易版 NewFormat:codecs 喂播放页 codec 徽章 + Info 面板,
-                    // audioUrl 让下载解析器在链接有效期内复用本次取流(省一次接口);
-                    // tracking 三字段留 null,watchtime 采集端全非空才发,网易天然不回传
+                    // bitrate(br 字段)喂 Info 面板比特率;audioUrl 让下载解析器在
+                    // 链接有效期内复用本次取流(省一次接口);tracking 三字段留 null,
+                    // watchtime 采集端全非空才发,网易天然不回传
                     runCatching {
                         localDataSource.insertNewFormat(
                             NewFormatEntity(
@@ -120,7 +168,7 @@ internal class StreamRepositoryImpl(
                                         stream.mimeType?.contains("flac", ignoreCase = true) == true -> "flac"
                                         else -> "mp3"
                                     },
-                                bitrate = null,
+                                bitrate = stream.bitrate?.toInt(),
                                 sampleRate = null,
                                 contentLength = null,
                                 loudnessDb = null,
@@ -134,7 +182,11 @@ internal class StreamRepositoryImpl(
                             ),
                         )
                     }
+                    // 提取来源:网易不走 YT extractor 管线,记 CDN 语义,Info 面板不再恒"未知"
+                    ExtractSource.record(videoId, "NetEase CDN")
                     emit(stream.url)
+                    // BPM/调性/调式富化走旁路(见 enrichNeteaseTidalMetadata),不阻塞 emit
+                    enrichNeteaseTidalMetadata(videoId)
                 }
                 return@flow
             }
@@ -236,18 +288,7 @@ internal class StreamRepositoryImpl(
                     if (!isVideo && durationSecond != null && data.third == MediaType.Song) {
                         val title = response.videoDetails?.title ?: ""
                         val author = response.videoDetails?.author ?: ""
-                        val q =
-                            "$title $author"
-                                .replace(
-                                    Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
-                                    " ",
-                                ).replace(
-                                    Regex("( và | & | и | e | und |, |和| dan)"),
-                                    " ",
-                                ).replace("  ", " ")
-                                .replace(Regex("([()])"), "")
-                                .replace(".", " ")
-                                .replace("  ", " ")
+                        val q = tidalSearchQuery(title, author)
                         Logger.d("Stream", "Search Tidal metadata for: $q")
                         youTube
                             .searchTidalMetadata(q, durationSecond)

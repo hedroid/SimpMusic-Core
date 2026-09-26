@@ -254,6 +254,7 @@ suspend fun NeteaseClient.songUrl(
             sizeBytes = first.jsonObject["size"].nLong(),
             mimeType = first.jsonObject.str("type"),
             level = first.jsonObject.str("level"),
+            bitrate = first.jsonObject["br"].nLong(),
             freeTrialInfo =
                 trial?.let {
                     NeteaseStreamUrl.FreeTrial(

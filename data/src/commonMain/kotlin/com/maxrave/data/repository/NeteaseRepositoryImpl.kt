@@ -483,6 +483,7 @@ class NeteaseRepositoryImpl(
                             url = url.replaceFirst("http://", "https://"),
                             mimeType = result.mimeType,
                             level = level.key,
+                            bitrate = result.bitrate,
                         ),
                     )
                 }
@@ -1914,6 +1915,7 @@ data class NeteaseStreamInfo(
     val url: String,
     val mimeType: String?,
     val level: String?,
+    val bitrate: Long? = null,
 )
 
 /** 网易歌可播性(songDetail privilege 判定),喂"无版权歌曲动作"的分流 */

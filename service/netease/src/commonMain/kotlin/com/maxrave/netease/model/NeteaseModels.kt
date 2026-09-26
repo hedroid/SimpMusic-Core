@@ -49,6 +49,8 @@ data class NeteaseStreamUrl(
     val sizeBytes: Long?,
     val mimeType: String?,
     val level: String?,
+    /** 码率 bps(999000≈无损/320000=320k),喂 Info 面板比特率 */
+    val bitrate: Long?,
     /** 非空表示 VIP 试听:只能播 [startTimeMs, endTimeMs] 区间 */
     val freeTrialInfo: FreeTrial?,
 ) {
