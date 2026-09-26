@@ -6,6 +6,59 @@
 
 ## 一、协议层（core/service/netease）
 
+### 加密通道总览（2026-09-27 定稿；全部自研，无第三方网易库）
+
+> 实现位置：`NeteaseClient.kt`（通道入口）+ `crypto/`（NeteaseCrypto=weapi/eapi/linuxapi、
+> Sha256/X25519/XeapiCrypto/XeapiCipher=xeapi）。加密全部手写（MD5/RSA modPow/AES expect-actual/
+> 纯 Kotlin SHA-256+HMAC+X25519 Montgomery 阶梯），RFC 7748/4231 官方向量单测在
+> `jvmTest/XeapiCryptoTest.kt`。Melodia/NeriPlayer 只是协议形状参考，不是依赖。
+
+| 通道 | 入口函数 | 加密 | 主机 | 生产用途 |
+|---|---|---|---|---|
+| **weapi**（网页端） | `callWeApi(path, params)` | 两层 AES-CBC（一层固定密钥一层随机密钥）+ RSA 包裹随机密钥，`NeteaseCrypto.weApiEncrypt` | `music.163.com/weapi/...` | **大头**：歌单详情/曲目分片、songDetail、歌手/专辑/搜索/cloudsearch、评论列表 v1+v2、红心/关注/收藏/建单删单等一般写操作 |
+| **eapi**（官方 App 主通道） | `callEApi(path, params)` | AES-128-ECB 固定密钥 `e82ckenh8dichen8` + 摘要（`/eapi/...`→`/api/...` 路径+参数+md5），`NeteaseCrypto.eApiEncrypt` | `interface.music.163.com/eapi/...` | 专辑详情（weapi 简介窗口性为空的修复通道）、电台详情 `/djradio/get`；UA 用 eapiUa 模拟官方客户端 |
+| **明文 api** | `callApi` / `callApiGet` / `getText` | 无加密，浏览器头（Origin/Referer/desktopUa） | `music.163.com/api/...` | 红心总数 `/song/red/count`、二维码登录轮询、艺人头像探针、相似歌单 HTML 抓取（getText）、JVM 探针 |
+| **xeapi**（官方 App 9.5.x 写操作通道） | `callXeApi(path, data)` | X25519 密钥协商 + AES-GCM + HMAC-SHA256 + 自定义混淆 + 设备注册（详见下节） | `interface3.music.163.com/xeapi/...` | **评论类写操作：发评/回复/删评/点赞** |
+| linuxapi | `linuxApiEncrypt`（无 call 入口） | AES-ECB 固定密钥包 `/api/linux/forward` 转发 | — | 仅探针实验用，生产未用 |
+
+**xeapi 通道细节**（`crypto/XeapiCrypto.kt` + `NeteaseClient.callXeApi`）：
+- **设备注册**（首次调用自动做，内存缓存 `xeapiKeyState`）：明文表单 POST
+  `interface.music.163.com/api/gorilla/anti/crawler/security/key/get`，签名=HMAC-SHA256(静态密钥,
+  timestamp+nonce)，UA 模拟 `NeteaseMusic/9.5.61...`；响应 `encryptedData` 用 AES-256-ECB 静态密钥
+  解出 `{version, publicKey, sk}`（服务端注册设备身份）。
+- **请求体** B/S/R 三段（form-urlencoded，均 base64）：
+  B = ECB(dynamicKey, midTransform(ECB(staticKey, `{"body":"<b64(urlencoded data)>","queryString":"e_r=true"}`)))；
+  S = 临时公钥(32B)‖IV(12B)‖AES-GCM(派生密钥, `"dynamicKeyB64|android|sk"`)，派生密钥=零盐
+  HMAC-Extract(X25519(临时私钥, 服务端公钥)) → HMAC-Expand(临时公钥‖0x01) 前 16 字节；
+  R = ECB(staticKey, `"version|"`)。midTransform=随机掩码 XOR→base64→按掩码首字节循环移位。
+- **响应体**：AES-128-ECB(`e82ckenh8dichen8`) 加密二进制，解密后按 gzip 魔数(1f 8b)判断解压，
+  得明文 JSON（`queryString` 固定 `e_r=true` 故响应必加密）。
+- **头域**：官方 9.5.61 UA + `x-deviceid/x-sdeviceid/x-os/x-osver/x-appver/x-buildver/
+  x-music-u`（MUSIC_U 提取）+ `X-Client-Enc-State: ENCRYPTED` + `x-aeapi: true`；Cookie 拼
+  `os=android; osver=...; appver=...; deviceId=...; sDeviceId=...; buildver=...` + 用户 cookie。
+- **平台**：X25519/HMAC/SHA-256 纯 Kotlin 全平台共用；ECB/GCM/gzip/deviceId 走
+  `XeapiCipher` expect/actual（android/jvm 完整实现；ios ECB 可用、GCM/gzip 为存根——
+  发评论 iOS 侧不可用，接 CryptoKit 时补）。
+
+**风控矩阵（探针实证，2026-09-26/27）**：
+- **评论类写操作（发评/回复/点赞）**：weapi/eapi 都会被拒——`code=250`"系统检测到您的设备
+  存在安全风险"（老端点 `/resource/comments/add` 在 weapi/eapi/linuxapi 更是直接 404
+  "找不到被评论的资源"，官方已迁 xeapi）。**xeapi 可用**：设备注册给了全新受信身份，
+  同一账号同一时刻 weapi like=250 而 xeapi like=200。铁律：评论写操作一律 xeapi。
+- **一般写操作（建单/收藏/关注/红心）**：端点活着，weapi 正常；被 405/250 拒是**账号级
+  风控窗口**（重试疑似续期），静置即解——换通道无用（风控认账号+行为，eapi 点赞同样 250
+  即证），别为绕它移植新通道。
+- X-Real-IP / os=pc 等头域伪装**绕不开**设备风控（实测）。
+
+**评论端点速查**：
+- 列表（读）：weapi `/v2/resource/comments`——sortType 99=推荐/2=最热/3=最新；
+  **翻页=pageNo 递增 + cursor 透传上一页回传值，缺一不可**（pageNo 恒 1 时服务端无视
+  cursor 原样返回第一页；最热 cursor=normalHot#N、推荐/最新=末条 time）。条目
+  showFloorComment.replyCount（楼层数）**只有 v2 有**，v1 列表恒 null。v1
+  `/v1/resource/comments/R_SO_4_{id}` 仍可用于详情卡热评（hotComments/total）。
+- 楼中楼（读）：weapi `/resource/comment/floor/get`，`time` 游标（首页 -1，后续=响应 time）。
+- 写（发评/回复/删评/点赞）：见上，全 xeapi。
+
 ### 端点生死簿（2026-09 实测）
 
 | 端点 | 状态 | 备注 |
