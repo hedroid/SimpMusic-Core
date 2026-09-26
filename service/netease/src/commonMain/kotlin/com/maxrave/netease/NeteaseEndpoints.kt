@@ -1352,10 +1352,39 @@ internal fun parseNeteaseComment(obj: JsonObject): NeteaseComment? {
         likedCount = obj["likedCount"].nLong(),
         location = obj.obj("ipLocation")?.str("location") ?: obj.str("ipLocation"),
         replyCount = obj.obj("showFloorComment")?.get("replyCount")?.nInt() ?: 0,
+        liked = (obj["liked"] as? JsonPrimitive)?.content == "true",
         beRepliedNickname = beReplied?.obj("user")?.str("nickname"),
         beRepliedContent = beReplied?.str("content"),
     )
 }
+
+/**
+ * 评论点赞/取消点赞(weapi /v1/comment/{like,unlike})。code!=200 视为失败(常见 250=
+ * 设备风控"存在安全风险",透传服务端 msg 给 UI)。
+ */
+suspend fun NeteaseClient.commentLike(
+    songId: Long,
+    commentId: Long,
+    like: Boolean,
+): Result<Unit> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/v1/comment/${if (like) "like" else "unlike"}",
+                mapOf(
+                    "threadId" to "R_SO_4_$songId",
+                    "commentId" to commentId,
+                ),
+            )
+        val code = (body["code"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0
+        if (code != 200) {
+            error(
+                (body["msg"] as? JsonPrimitive)?.content
+                    ?: (body["message"] as? JsonPrimitive)?.content
+                    ?: "code=$code",
+            )
+        }
+    }
 
 /**
  * 评论列表 v2 端点(weapi /v2/resource/comments):服务端排序(2=最热,3=最新)+cursor 分页,

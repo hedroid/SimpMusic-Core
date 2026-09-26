@@ -63,6 +63,7 @@ import com.maxrave.domain.source.ProviderRadioSession
 import com.maxrave.netease.NeteaseClient
 import com.maxrave.netease.NeteaseConstants
 import com.maxrave.netease.commentFloor
+import com.maxrave.netease.commentLike
 import com.maxrave.netease.createPlaylist
 import com.maxrave.netease.songCommentsV2
 import com.maxrave.netease.dailyRecommendPlaylists
@@ -1306,9 +1307,23 @@ class NeteaseRepositoryImpl(
             timeMs = timeMs,
             timeStr = timeStr,
             replyCount = replyCount,
+            liked = liked,
             beRepliedNickname = beRepliedNickname,
             beRepliedContent = beRepliedContent,
         )
+
+    /**
+     * 评论点赞/取消点赞(播放页评论弹窗)。服务端可能按账号/设备风控拒绝(250"存在
+     * 安全风险"等),失败时 Result.failure 带服务端 msg,UI 乐观更新需回退。
+     */
+    suspend fun setCommentLiked(
+        songId: String,
+        commentId: Long,
+        like: Boolean,
+    ): Result<Unit> =
+        (songId.toLongOrNull()
+            ?.let { client.commentLike(it, commentId, like) }
+            ?: Result.failure(IllegalArgumentException("songId not numeric: $songId")))
 
     /**
      * 播放页网易详情卡:艺人(头像/粉丝)、专辑(发行日/简介)、互动(红心/评论)五路数据

@@ -187,12 +187,12 @@ class NeteaseClient(
     }
 
     /** NeriPlayer buildRequest 的两种头模式:eapi 模拟官方客户端,不吃浏览器头 */
-    private enum class HeaderProfile {
+    internal enum class HeaderProfile {
         WEAPI,
         EAPI,
     }
 
-    private suspend fun post(
+    internal suspend fun post(
         url: String,
         form: Map<String, String>,
         extraHeaders: Map<String, String> = emptyMap(),

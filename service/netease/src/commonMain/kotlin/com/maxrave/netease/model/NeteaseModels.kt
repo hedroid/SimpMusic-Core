@@ -293,6 +293,8 @@ data class NeteaseComment(
     val location: String?,
     /** 楼中楼回复总数(showFloorComment.replyCount),0=无回复不显示展开入口 */
     val replyCount: Int,
+    /** 当前登录用户是否已点赞该评论(登录视角) */
+    val liked: Boolean,
     /** 本条是回复时引用的父评论摘要(昵称+内容),官方 app 显示为"回复 @xx: ..." */
     val beRepliedNickname: String?,
     val beRepliedContent: String?,

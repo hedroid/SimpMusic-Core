@@ -41,6 +41,8 @@ data class NeteaseSongInfoEntity(
         val timeStr: String? = null,
         /** 楼中楼回复总数,0=无展开入口 */
         val replyCount: Int = 0,
+        /** 当前登录用户是否已点赞该评论 */
+        val liked: Boolean = false,
         /** 本条是回复时引用的父评论摘要("回复 @xx: ..." 展示) */
         val beRepliedNickname: String? = null,
         val beRepliedContent: String? = null,
