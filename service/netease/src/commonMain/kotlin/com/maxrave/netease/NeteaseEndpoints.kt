@@ -1359,8 +1359,9 @@ internal fun parseNeteaseComment(obj: JsonObject): NeteaseComment? {
 }
 
 /**
- * 评论点赞/取消点赞(weapi /v1/comment/{like,unlike})。code!=200 视为失败(常见 250=
- * 设备风控"存在安全风险",透传服务端 msg 给 UI)。
+ * 评论点赞/取消点赞。走 xeapi 写通道——探针实证 weapi/eapi 都被账号风控拒
+ * (250"存在安全风险",换通道不换身份绕不开),xeapi 的注册设备身份可用(like/unlike
+ * 均 200,与发评论同因)。code!=200 透传服务端 msg 给 UI。
  */
 suspend fun NeteaseClient.commentLike(
     songId: Long,
@@ -1369,11 +1370,11 @@ suspend fun NeteaseClient.commentLike(
 ): Result<Unit> =
     runCatching {
         val body =
-            callWeApi(
+            callXeApi(
                 "/v1/comment/${if (like) "like" else "unlike"}",
-                mapOf(
+                linkedMapOf(
                     "threadId" to "R_SO_4_$songId",
-                    "commentId" to commentId,
+                    "commentId" to commentId.toString(),
                 ),
             )
         val code = (body["code"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0
