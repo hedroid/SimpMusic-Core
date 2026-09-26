@@ -62,7 +62,9 @@ import com.maxrave.domain.source.ProviderLyrics
 import com.maxrave.domain.source.ProviderRadioSession
 import com.maxrave.netease.NeteaseClient
 import com.maxrave.netease.NeteaseConstants
+import com.maxrave.netease.commentFloor
 import com.maxrave.netease.createPlaylist
+import com.maxrave.netease.songCommentsV2
 import com.maxrave.netease.dailyRecommendPlaylists
 import com.maxrave.netease.dailyRecommendSongs
 import com.maxrave.netease.heartModeList
@@ -139,6 +141,13 @@ import kotlin.time.Clock
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+
+/** 评论列表页(播放页评论弹窗):items + hasMore + 下一页 cursor(v2 服务端算好,直接透传) */
+data class NeteaseCommentListPage(
+    val items: List<NeteaseSongInfoEntity.HotComment>,
+    val hasMore: Boolean,
+    val nextCursor: String?,
+)
 
 /**
  * 网易云音源适配层:把 NeteaseClient 的 DTO "整形成 YTM 形状"的 domain 实体,实现统一
@@ -1236,39 +1245,70 @@ class NeteaseRepositoryImpl(
     }
 
     /**
-     * 评论分页页(播放页评论列表弹窗):首页优先热评,后续页走最新评论;
-     * 返回 (条目, hasMore)。
+     * 评论列表 v2 分页页(播放页评论列表弹窗):sortType 2=最热/3=最新,cursor 服务端算好
+     * 直接透传(最热首页 "normalHot#0"、最新首页 "0");返回 null=请求失败。
+     * 楼层入口计数(replyCount)只在 v2 响应里有,v1 列表已不吐 showFloorComment。
      */
     suspend fun getSongCommentsPage(
         songId: String,
-        limit: Int,
-        offset: Int,
-    ): Pair<List<NeteaseSongInfoEntity.HotComment>, Boolean>? {
+        sortType: Int,
+        cursor: String,
+        pageSize: Int = 20,
+    ): NeteaseCommentListPage? {
         val id = songId.toLongOrNull() ?: run {
             com.maxrave.logger.Logger.w("NeteaseComments", "page: songId not numeric: '$songId'")
             return null
         }
-        val result = client.songComments(id, limit = limit, offset = offset)
         val page =
-            result.getOrNull() ?: run {
-                com.maxrave.logger.Logger.w("NeteaseComments", "page fetch failed: ${result.exceptionOrNull()?.message}")
+            client.songCommentsV2(id, sortType = sortType, cursor = cursor, pageSize = pageSize).getOrNull() ?: run {
+                com.maxrave.logger.Logger.w("NeteaseComments", "page fetch failed")
                 return null
             }
-        val source = page.hotComments.ifEmpty { page.latestComments }
-        com.maxrave.logger.Logger.w("NeteaseComments", "page ok: ${source.size} items, hasMore=${page.hasMore}")
-        val items =
-            source.map {
-                NeteaseSongInfoEntity.HotComment(
-                    nickname = it.nickname,
-                    avatarUrl = it.avatarUrl,
-                    content = it.content,
-                    likedCount = it.likedCount,
-                    location = it.location,
-                )
-            }
-        val hasMore = page.hasMore || items.size >= limit
-        return items to hasMore
+        val items = page.comments.map { it.toHotComment() }
+        com.maxrave.logger.Logger.w(
+            "NeteaseComments",
+            "page ok: sort=$sortType n=${items.size} hasMore=${page.hasMore} cursor=${page.cursor} replySum=${items.sumOf { it.replyCount }}",
+        )
+        return NeteaseCommentListPage(
+            items = items,
+            hasMore = page.hasMore,
+            nextCursor = if (page.hasMore) page.cursor else null,
+        )
     }
+
+    /**
+     * 评论楼中楼回复分页页(播放页评论展开回复):time 游标翻页(首页 -1,后续传上一页
+     * 最后一条时间戳),返回 (条目, 下一页游标);游标 null=没有更多,整体 null=请求失败。
+     */
+    suspend fun getSongCommentFloorPage(
+        songId: String,
+        parentCommentId: Long,
+        limit: Int,
+        time: Long,
+    ): Pair<List<NeteaseSongInfoEntity.HotComment>, Long?>? {
+        val id = songId.toLongOrNull() ?: return null
+        val page =
+            client.commentFloor(id, parentCommentId, time = time, limit = limit).getOrNull() ?: run {
+                com.maxrave.logger.Logger.w("NeteaseComments", "floor fetch failed for $parentCommentId")
+                return null
+            }
+        return page.comments.map { it.toHotComment() } to page.nextTimeMs
+    }
+
+    private fun com.maxrave.netease.model.NeteaseComment.toHotComment() =
+        NeteaseSongInfoEntity.HotComment(
+            nickname = nickname,
+            avatarUrl = avatarUrl,
+            content = content,
+            likedCount = likedCount,
+            location = location,
+            commentId = commentId,
+            timeMs = timeMs,
+            timeStr = timeStr,
+            replyCount = replyCount,
+            beRepliedNickname = beRepliedNickname,
+            beRepliedContent = beRepliedContent,
+        )
 
     /**
      * 播放页网易详情卡:艺人(头像/粉丝)、专辑(发行日/简介)、互动(红心/评论)五路数据

@@ -14,7 +14,9 @@ import com.maxrave.netease.model.NeteaseArtistIntroduction
 import com.maxrave.netease.model.NeteaseCloudDiskPage
 import com.maxrave.netease.model.NeteaseCloudFile
 import com.maxrave.netease.model.NeteaseComment
+import com.maxrave.netease.model.NeteaseCommentFloorPage
 import com.maxrave.netease.model.NeteaseCommentPage
+import com.maxrave.netease.model.NeteaseCommentPageV2
 import com.maxrave.netease.model.NeteaseDjRadio
 import com.maxrave.netease.model.NeteaseHighQualityTag
 import com.maxrave.netease.model.NeteaseHotWord
@@ -1291,25 +1293,99 @@ suspend fun NeteaseClient.songComments(
                     "beforeTime" to "",
                 ),
             )
-        fun parse(array: JsonArray?): List<NeteaseComment> =
-            array?.mapNotNull { element ->
-                val obj = element.jsonObject
-                NeteaseComment(
-                    commentId = obj["commentId"].nLong() ?: return@mapNotNull null,
-                    userId = obj.obj("user")?.get("userId").nLong(),
-                    nickname = obj.obj("user")?.str("nickname"),
-                    avatarUrl = obj.obj("user")?.str("avatarUrl")?.toHttpsUrl(),
-                    content = obj.str("content").orEmpty(),
-                    timeMs = obj["time"].nLong(),
-                    likedCount = obj["likedCount"].nLong(),
-                    location = obj.obj("ipLocation")?.str("location") ?: obj.str("ipLocation"),
-                )
-            } ?: emptyList()
+        fun parse(array: JsonArray?): List<NeteaseComment> = array?.mapNotNull { parseNeteaseComment(it.jsonObject) } ?: emptyList()
         NeteaseCommentPage(
             hotComments = parse(body.array("hotComments")),
             latestComments = parse(body.array("comments")),
             totalCount = body["total"].nInt() ?: 0,
             hasMore = (body["more"] as? JsonPrimitive)?.content == "true",
+        )
+    }
+
+/**
+ * 评论楼中楼回复页(weapi /resource/comment/floor/get)。time 是游标:首页传 -1,
+ * 后续页传上一页最后一条的时间戳(官方 app 同款翻页方式),没有更多时返回 hasMore=false。
+ */
+suspend fun NeteaseClient.commentFloor(
+    songId: Long,
+    parentCommentId: Long,
+    time: Long = -1,
+    limit: Int = 20,
+): Result<NeteaseCommentFloorPage> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/resource/comment/floor/get",
+                mapOf(
+                    "parentCommentId" to parentCommentId,
+                    "threadId" to "R_SO_4_$songId",
+                    "time" to time,
+                    "limit" to limit,
+                ),
+            )
+        val data = body.obj("data")
+        NeteaseCommentFloorPage(
+            comments = data?.array("comments").orEmpty().mapNotNull { parseNeteaseComment(it.jsonObject) },
+            totalCount = data?.get("totalCount")?.nInt() ?: 0,
+            hasMore = (data?.get("hasMore") as? JsonPrimitive)?.content == "true",
+            nextTimeMs =
+                if ((data?.get("hasMore") as? JsonPrimitive)?.content == "true") {
+                    data?.get("time")?.nLong()
+                        ?: data?.array("comments")?.lastOrNull()?.jsonObject?.get("time")?.nLong()
+                } else {
+                    null
+                },
+        )
+    }
+
+/** v1 resource/comments 单条评论 → [NeteaseComment](歌曲/楼层两端点共用) */
+internal fun parseNeteaseComment(obj: JsonObject): NeteaseComment? {
+    val beReplied = obj.array("beReplied")?.firstOrNull()?.jsonObject
+    return NeteaseComment(
+        commentId = obj["commentId"].nLong() ?: return null,
+        userId = obj.obj("user")?.get("userId").nLong(),
+        nickname = obj.obj("user")?.str("nickname"),
+        avatarUrl = obj.obj("user")?.str("avatarUrl")?.toHttpsUrl(),
+        content = obj.str("content").orEmpty(),
+        timeMs = obj["time"].nLong(),
+        timeStr = obj.str("timeStr"),
+        likedCount = obj["likedCount"].nLong(),
+        location = obj.obj("ipLocation")?.str("location") ?: obj.str("ipLocation"),
+        replyCount = obj.obj("showFloorComment")?.get("replyCount")?.nInt() ?: 0,
+        beRepliedNickname = beReplied?.obj("user")?.str("nickname"),
+        beRepliedContent = beReplied?.str("content"),
+    )
+}
+
+/**
+ * 评论列表 v2 端点(weapi /v2/resource/comments):服务端排序(2=最热,3=最新)+cursor 分页,
+ * 评论条目带 showFloorComment.replyCount(v1 列表响应已不吐楼层计数,楼层入口必须走 v2)。
+ * cursor:最热档首页 "normalHot#0"、最新档首页 "0",后续页透传上一页响应的 cursor。
+ */
+suspend fun NeteaseClient.songCommentsV2(
+    songId: Long,
+    sortType: Int,
+    cursor: String,
+    pageSize: Int = 20,
+): Result<NeteaseCommentPageV2> =
+    runCatching {
+        val body =
+            callWeApi(
+                "/v2/resource/comments",
+                mapOf(
+                    "threadId" to "R_SO_4_$songId",
+                    "pageSize" to pageSize,
+                    "cursor" to cursor,
+                    "sortType" to sortType,
+                    "showInner" to true,
+                ),
+            )
+        val data = body.obj("data")
+        NeteaseCommentPageV2(
+            comments = data?.array("comments").orEmpty().mapNotNull { parseNeteaseComment(it.jsonObject) },
+            totalCount = data?.get("totalCount")?.nInt() ?: 0,
+            hasMore = (data?.get("hasMore") as? JsonPrimitive)?.content == "true",
+            cursor = data?.str("cursor"),
         )
     }
 

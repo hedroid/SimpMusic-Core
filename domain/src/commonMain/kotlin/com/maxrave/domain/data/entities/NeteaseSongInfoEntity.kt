@@ -34,5 +34,15 @@ data class NeteaseSongInfoEntity(
         val likedCount: Long? = null,
         /** IP 归属地(评论展示要求) */
         val location: String? = null,
+        /** 评论 id,楼中楼展开的父评论锚点 */
+        val commentId: Long? = null,
+        val timeMs: Long? = null,
+        /** 服务端预格式化的展示日期(如 2014-10-17) */
+        val timeStr: String? = null,
+        /** 楼中楼回复总数,0=无展开入口 */
+        val replyCount: Int = 0,
+        /** 本条是回复时引用的父评论摘要("回复 @xx: ..." 展示) */
+        val beRepliedNickname: String? = null,
+        val beRepliedContent: String? = null,
     )
 }

@@ -278,7 +278,7 @@ data class NeteaseArtistIntroduction(
     val sections: List<Pair<String, String>> = emptyList(),
 )
 
-/** 歌曲评论单条(weapi /comment/music) */
+/** 歌曲评论单条(weapi /v1/resource/comments/R_SO_4_) */
 data class NeteaseComment(
     val commentId: Long,
     val userId: Long?,
@@ -286,9 +286,16 @@ data class NeteaseComment(
     val avatarUrl: String?,
     val content: String,
     val timeMs: Long?,
+    /** 服务端预格式化的展示日期(如 2014-10-17),官方 app 同款 */
+    val timeStr: String?,
     val likedCount: Long?,
     /** IP 归属地(评论展示要求) */
     val location: String?,
+    /** 楼中楼回复总数(showFloorComment.replyCount),0=无回复不显示展开入口 */
+    val replyCount: Int,
+    /** 本条是回复时引用的父评论摘要(昵称+内容),官方 app 显示为"回复 @xx: ..." */
+    val beRepliedNickname: String?,
+    val beRepliedContent: String?,
 )
 
 /** 歌曲评论页:热评 + 最新 + 总数 */
@@ -297,6 +304,27 @@ data class NeteaseCommentPage(
     val latestComments: List<NeteaseComment>,
     val totalCount: Int,
     val hasMore: Boolean,
+)
+
+/**
+ * 评论列表 v2 页(weapi /v2/resource/comments):服务端排序(2=最热,3=最新)+cursor 分页。
+ * v1 列表响应已不吐 showFloorComment(恒 null),楼中楼入口计数必须走 v2。
+ */
+data class NeteaseCommentPageV2(
+    val comments: List<NeteaseComment>,
+    val totalCount: Int,
+    val hasMore: Boolean,
+    /** 下一页游标,服务端算好直接透传(最热 normalHot#N / 最新时间戳),null=没有更多 */
+    val cursor: String?,
+)
+
+/** 楼中楼回复页(weapi /resource/comment/floor/get) */
+data class NeteaseCommentFloorPage(
+    val comments: List<NeteaseComment>,
+    val totalCount: Int,
+    val hasMore: Boolean,
+    /** 下一页游标(取最后一条的时间戳),null=没有更多 */
+    val nextTimeMs: Long?,
 )
 
 /** 云盘单个文件(weapi /v1/cloud/get:simpleSong 是可播放的歌曲形状) */
