@@ -63,6 +63,7 @@ import com.maxrave.domain.repository.StreamRepository
 import com.maxrave.logger.Logger
 import com.maxrave.media3.cast.CastHandoffManager
 import com.maxrave.media3.cast.CastStreamResolver
+import com.maxrave.media3.cast.DlnaHandoffManager
 import com.maxrave.media3.exoplayer.CrossfadeExoPlayerAdapter
 import com.maxrave.media3.extension.isFullyCached
 import com.maxrave.media3.repository.CacheRepositoryImpl
@@ -203,6 +204,14 @@ private val mediaServiceModule =
             CastHandoffManager(
                 adapter = get<MediaPlayerInterface>() as CrossfadeExoPlayerAdapter,
                 sessionPlayer = get(qualifier = named(MAIN_PLAYER)),
+                resolver = CastStreamResolver(get(), get()),
+                coroutineScope = get(qualifier = named(SERVICE_SCOPE)),
+            ).also { it.start() }
+        }
+
+        single<DlnaHandoffManager>(createdAtStart = true) {
+            DlnaHandoffManager(
+                adapter = get<MediaPlayerInterface>() as CrossfadeExoPlayerAdapter,
                 resolver = CastStreamResolver(get(), get()),
                 coroutineScope = get(qualifier = named(SERVICE_SCOPE)),
             ).also { it.start() }

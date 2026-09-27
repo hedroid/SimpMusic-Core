@@ -1,7 +1,7 @@
 package com.maxrave.domain.data.player
 
 /**
- * Generic Cast (Google Cast) state wrapper (no Cast SDK dependencies)
+ * Protocol-neutral remote playback state wrapper (Google Cast or DLNA; no SDK dependencies).
  */
 data class GenericCastState(
     val isRemote: Boolean = false,

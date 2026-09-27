@@ -102,9 +102,6 @@ internal class CastHandoffManager(
             Logger.d(TAG, "Cast unavailable (FOSS build or no GMS) — handoff disabled")
             return
         }
-        adapter.castPlaybackRouter = { index, positionMs, playWhenReady ->
-            pushQueueWindow(index, positionMs, playWhenReady)
-        }
         sessionPlayer.addListener(playerListener)
         Logger.d(TAG, "Cast handoff manager started")
     }
@@ -116,7 +113,7 @@ internal class CastHandoffManager(
         val playWhenReady = adapter.isPlaying || adapter.playWhenReady
         val deviceName = currentCastDeviceName()
         Logger.w(TAG, "Cast connected to ${deviceName ?: "unknown"} — handing off index=$startIndex pos=${startPositionMs}ms")
-        adapter.setCastActive(sessionPlayer, deviceName)
+        adapter.setCastActive(sessionPlayer, deviceName, ::pushQueueWindow)
         lastKnownRemotePositionMs = startPositionMs
         startPositionPolling()
         if (startIndex >= 0) {
@@ -139,8 +136,8 @@ internal class CastHandoffManager(
         val resumePositionMs = lastKnownRemotePositionMs
         // Clear remote routing first so the seek below starts the local machinery again;
         // seekTo() resumes with the adapter's playWhenReady, which tracked the remote state.
-        adapter.setCastActive(null, null)
-        if (resumeIndex >= 0) {
+        val released = adapter.setCastActive(null, null)
+        if (released && resumeIndex >= 0) {
             adapter.seekTo(resumeIndex, resumePositionMs)
         }
     }

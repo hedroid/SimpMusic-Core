@@ -459,22 +459,41 @@ internal class CrossfadeExoPlayerAdapter(
      * receiver only ever sees a small resolved-URL window of it.
      */
     @Volatile
-    private var castRemotePlayer: Player? = null
+    private var castRemotePlayer: RemotePlaybackController? = null
+
+    @Volatile
+    private var remotePlaybackOwner: RemotePlaybackOwner? = null
 
     internal val isCastActive: Boolean
         get() = castRemotePlayer != null
 
-    /** Set by CastHandoffManager: (playlistIndex, startPositionMs, playWhenReady) -> load on receiver. */
+    /** Set by the active remote handoff manager: (playlistIndex, startPositionMs, playWhenReady). */
     internal var castPlaybackRouter: ((Int, Long, Boolean) -> Unit)? = null
 
     internal fun setCastActive(
         remotePlayer: Player?,
         deviceName: String?,
-    ) {
+        playbackRouter: ((Int, Long, Boolean) -> Unit)? = null,
+    ): Boolean =
+        setRemotePlaybackActive(
+            owner = RemotePlaybackOwner.GOOGLE_CAST,
+            remotePlayer = remotePlayer?.let(::Media3RemotePlaybackController),
+            deviceName = deviceName,
+            playbackRouter = playbackRouter,
+        )
+
+    internal fun setRemotePlaybackActive(
+        owner: RemotePlaybackOwner,
+        remotePlayer: RemotePlaybackController?,
+        deviceName: String?,
+        playbackRouter: ((Int, Long, Boolean) -> Unit)? = null,
+    ): Boolean {
         if (remotePlayer != null) {
-            if (castRemotePlayer === remotePlayer) return
+            if (castRemotePlayer === remotePlayer && remotePlaybackOwner == owner) return true
             castRemotePlayer = remotePlayer
-            Logger.w(TAG, "Cast session active on ${deviceName ?: "unknown device"} — local playback suspended")
+            remotePlaybackOwner = owner
+            castPlaybackRouter = playbackRouter
+            Logger.w(TAG, "Remote session active on ${deviceName ?: "unknown device"} — local playback suspended")
             coroutineScope.launch {
                 // Kill anything that makes local noise or wastes battery while remote.
                 crossfadeJob?.cancel()
@@ -493,11 +512,17 @@ internal class CrossfadeExoPlayerAdapter(
                 notifyEqualizerIntent(false)
             }
             listeners.forEach { it.onCastStateChanged(GenericCastState(isRemote = true, deviceName = deviceName)) }
+            return true
         } else {
-            if (castRemotePlayer == null) return
+            // A disconnect callback from the previous protocol may arrive after the replacement
+            // session is already active. It must not tear down the new owner.
+            if (castRemotePlayer == null || remotePlaybackOwner != owner) return false
             castRemotePlayer = null
-            Logger.w(TAG, "Cast session ended — back to local playback")
+            remotePlaybackOwner = null
+            castPlaybackRouter = null
+            Logger.w(TAG, "Remote session ended — back to local playback")
             listeners.forEach { it.onCastStateChanged(GenericCastState.NOT_CASTING) }
+            return true
         }
     }
 
