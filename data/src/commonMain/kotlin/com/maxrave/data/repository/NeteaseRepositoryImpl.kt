@@ -308,6 +308,9 @@ class NeteaseRepositoryImpl(
         const val TAG = "NeteaseRepo"
         const val NETEASE_SEARCH_PAGE_SIZE = 30
         const val NETEASE_SEARCH_OFFSET_PREFIX = "offset:"
+
+        /** 付费内容占位试听文件的 size 上限(实测 26576B,全库同一 md5;真实音频≥128k 下 8s 就超 128KB) */
+        const val TRIAL_SNIPPET_MAX_BYTES = 100_000L
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -501,6 +504,18 @@ class NeteaseRepositoryImpl(
                 }
                 val url = result.url
                 if (!url.isNullOrEmpty() && result.freeTrialInfo == null) {
+                    // 付费 dj 节目/短剧的"占位试听":code 200 + 有效 url + freeTrialInfo=null,
+                    // 但文件只有 26KB(320k 下≈0.7s,全库同一 md5 占位;实测 2026-09-28)——
+                    // privilege 层看不出(mainSong.fee=0),唯一信号就是 size。真实音频在
+                    // ≥128kbps 下不可能 <100KB(8s interlude≥128KB),阈值双向留量。
+                    // 判定即注册(resolver 命中免重试梯)+降级链继续(各档同一占位,链走完
+                    // 自然 null)→调用方按 neteaseUnavailableAction 三档处理,不再播试听。
+                    val snippetSize = result.sizeBytes
+                    if (snippetSize != null && snippetSize < TRIAL_SNIPPET_MAX_BYTES) {
+                        markNeteaseSongUnavailable(id)
+                        Logger.w(TAG, "trial snippet detected ($songId @${level.key} size=$snippetSize), marking unavailable")
+                        continue
+                    }
                     // CDN 签发的链接是 http://,Android 默认禁明文流量(ExoPlayer 报 Source error),
                     // music.126.net 的 CDN 支持 https,统一升级
                     return Result.success(
@@ -2300,7 +2315,10 @@ internal fun NeteaseSong.toResultSong(): ResultSong =
     )
 
 /** dj 节目 → ResultSong(videoId=**mainSong.id**——节目自身 id 取流无效)。无 mainSong 的节目不可播,返回 null。
- *  public:播客页 VM 直接拿节目列表组队起播用 */
+ *  public:播客页 VM 直接拿节目列表组队起播用。
+ *  paid 节目 isAvailable=false:进灰歌体系(行置灰+点播走 neteaseUnavailableAction 三档,
+ *  队列行标灰在 setQueueData 播种会话注册表,零试听零网络)——付费节目取流只回 26KB 级
+ *  试听片段(几秒)且 privilege 层看不出,必须在节目层拦。 */
 fun NeteaseDjProgram.toResultSong(): ResultSong? {
     val songId = mainSongId ?: return null
     return ResultSong(
@@ -2311,7 +2329,7 @@ fun NeteaseDjProgram.toResultSong(): ResultSong? {
         album = Album(id = radioId?.toString() ?: "", name = radioName ?: ""),
         likeStatus = "INDIFFERENT",
         thumbnails = coverUrl.toThumbnails(),
-        isAvailable = true,
+        isAvailable = !paid,
         isExplicit = false,
         videoType = null,
     )

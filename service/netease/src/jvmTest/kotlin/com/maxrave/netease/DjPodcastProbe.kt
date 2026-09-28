@@ -2,6 +2,7 @@ package com.maxrave.netease
 
 import java.io.File
 import kotlin.test.Test
+import kotlinx.serialization.json.booleanOrNull
 
 /**
  * 播客端点形状探针(手动,非 CI):验证发现侧四个端点的响应外层形状
@@ -116,6 +117,84 @@ class DjPodcastProbe {
             section("program embedded radio.categoryId sample") {
                 val r = client.recommendPodcastPrograms(null, limit = 3, offset = 0)
                 r.fold(onSuccess = { (list, _) -> list.joinToString("/") { p -> p.radioId.toString() } }, onFailure = { "FAILED ${it.message}" })
+            }
+            section("短剧诊断:找电台+节目+取流") {
+                val sb2 = StringBuilder()
+                // 榜单里找"有声短剧"
+                val all = (client.djRadioToplist().getOrNull().orEmpty()) +
+                    (client.recommendDjRadios().getOrNull().orEmpty()) +
+                    (client.personalizedDjRadios().getOrNull().orEmpty())
+                sb2.appendLine("candidates=" + all.joinToString("/") { it.name.take(10) })
+                val radio = all.firstOrNull { it.name.contains("短剧") || it.name.contains("有声") }
+                if (radio != null) {
+                    val progs = client.djRadioPrograms(radio.id, limit = 3, offset = 0).getOrNull()?.first ?: emptyList()
+                    sb2.appendLine("programs=${progs.size}")
+                    progs.take(2).forEach { p ->
+                        sb2.appendLine("program id=${p.id} name=${p.name.take(20)} durMs=${p.durationMs} mainSongId=${p.mainSongId}")
+                        if (p.mainSongId != null) {
+                            val url = client.songUrl(p.mainSongId, com.maxrave.netease.model.NeteaseQuality.LOSSLESS).getOrNull()
+                            sb2.appendLine("  songUrl: url=${url?.url?.take(60)} size=${url?.sizeBytes} br=${url?.bitrate} level=${url?.level} trial=${url?.freeTrialInfo}")
+                        }
+                    }
+                }
+                sb2.toString().trim()
+            }
+            section("短剧 songDetail privilege") {
+                val songs = client.songDetail(listOf(2724359175L)).getOrNull()
+                songs?.firstOrNull()?.let { sd ->
+                    "name=${sd.name.take(16)} hasCopyright=${sd.hasCopyright} fee=${sd.fee}"
+                } ?: "songDetail empty"
+            }
+            section("短剧节目原始字段") {
+                val all2 = (client.djRadioToplist().getOrNull().orEmpty()) +
+                    (client.recommendDjRadios().getOrNull().orEmpty())
+                val radio2 = all2.firstOrNull { it.name.contains("短剧") } ?: return@section "no radio in ${all2.size}"
+                val body = client.callEApi("/dj/program/byradio", mapOf("radioId" to radio2.id, "limit" to 1, "offset" to 0, "asc" to false))
+                val raw = (body.array("programs")?.firstOrNull() as? kotlinx.serialization.json.JsonObject)?.toString() ?: "none"
+                // 只留关键字段:过滤出费相关+时长相关
+                raw.substring(0, raw.length.coerceAtMost(30000))
+            }
+            section("programFeeType 对照:推荐节目vs普通电台") {
+                val rec = client.recommendPodcastPrograms(null, limit = 5, offset = 0).getOrNull()?.first.orEmpty()
+                val recInfo = rec.joinToString("/") { "${it.name.take(6)}" }
+                // 原始字段对照
+                val rawRec = client.callEApi("/program/recommend/v1", mapOf("limit" to 3, "offset" to 0))
+                val feeTypes = (rawRec.array("programs") ?: kotlinx.serialization.json.JsonArray(emptyList())).mapNotNull { p ->
+                    (p as? kotlinx.serialization.json.JsonObject)?.let {
+                        val fee = it["programFeeType"].nInt()
+                        val buyed = (it["buyed"] as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull
+                        "${it.str("name")?.take(6)}:feeType=$fee,buyed=$buyed"
+                    }
+                }
+                "rec=$recInfo\nfeeTypes=" + feeTypes.joinToString(" | ")
+            }
+            section("女王电台 paid 标志分布") {
+                val all3 = (client.djRadioToplist().getOrNull().orEmpty()) +
+                    (client.recommendDjRadios().getOrNull().orEmpty())
+                val r3 = all3.firstOrNull { it.name.contains("女王归来") } ?: return@section "no radio"
+                val body3 = client.callEApi("/dj/program/byradio", mapOf("radioId" to r3.id, "limit" to 30, "offset" to 0, "asc" to false))
+                val arr = body3.array("programs") ?: kotlinx.serialization.json.JsonArray(emptyList())
+                arr.mapNotNull { p ->
+                    (p as? kotlinx.serialization.json.JsonObject)?.let {
+                        "${it.str("name")?.take(8)}:feeType=${it["programFeeType"].nInt()},buyed=${(it["buyed"] as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull}"
+                    }
+                }.joinToString(" | ")
+            }
+            section("取流原始响应对照:试听vs正常") {
+                val sb3 = StringBuilder()
+                listOf(2724359175L, 2724348872L).forEach { sid ->
+                    val body = client.callWeApi("/song/enhance/player/url/v1", mapOf("ids" to "[$sid]", "level" to "lossless", "encodeType" to "flac"))
+                    val first = (body.array("data")?.firstOrNull() as? kotlinx.serialization.json.JsonObject)?.toString() ?: "none"
+                    sb3.appendLine("TRIAL $sid -> $first")
+                }
+                // 正常对照:用推荐节目里免费节目 mainSong
+                val freeProg = client.recommendPodcastPrograms(null, limit = 3, offset = 0).getOrNull()?.first?.firstOrNull { it.mainSongId != null }
+                freeProg?.mainSongId?.let { fid ->
+                    val body = client.callWeApi("/song/enhance/player/url/v1", mapOf("ids" to "[$fid]", "level" to "lossless", "encodeType" to "flac"))
+                    val first = (body.array("data")?.firstOrNull() as? kotlinx.serialization.json.JsonObject)?.toString() ?: "none"
+                    sb3.appendLine("FREE $fid(${freeProg.name.take(8)}) -> $first")
+                }
+                sb3.toString().trim()
             }
             out.writeText(sb.toString())
             println(sb.toString())

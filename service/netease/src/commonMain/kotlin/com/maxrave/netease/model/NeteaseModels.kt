@@ -170,7 +170,9 @@ data class NeteaseDjRadio(
     val subed: Boolean? = null,
 )
 
-/** DJ 电台节目。**可播的是 [mainSongId](节目内嵌的主歌 id),节目自身 id 取流无效**(Melodia 真机抓包定论) */
+/** DJ 电台节目。**可播的是 [mainSongId](节目内嵌的主歌 id),节目自身 id 取流无效**(Melodia 真机抓包定论)。
+ *  [paid]=付费节目且当前账号未购买(programFeeType!=0 && !buyed)——这类节目取流只回
+ *  26KB 级试听片段(几秒),且 privilege 层看不出(mainSong.fee=0),必须节目层判定。 */
 data class NeteaseDjProgram(
     val id: Long,
     val name: String,
@@ -187,6 +189,7 @@ data class NeteaseDjProgram(
     val radioId: Long?,
     val radioName: String?,
     val djNickname: String?,
+    val paid: Boolean = false,
 )
 
 /** 播客电台分类(/djradio/category/get,公开,19 个) */

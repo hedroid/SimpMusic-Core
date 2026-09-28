@@ -1731,6 +1731,9 @@ internal fun JsonElement.toDjRadioOrNull(): NeteaseDjRadio? {
 internal fun JsonElement.toDjProgramOrNull(): NeteaseDjProgram? {
     val obj = jsonObject
     val id = obj["id"].nLong() ?: return null
+    // 付费判定在节目层:programFeeType!=0 且未购买(付费节目取流只回试听片段,privilege 层看不出)
+    val buyed = (obj["buyed"] as? JsonPrimitive)?.booleanOrNull == true ||
+        (obj["buyedNew"] as? JsonPrimitive)?.booleanOrNull == true
     return NeteaseDjProgram(
         id = id,
         name = obj.str("name").orEmpty(),
@@ -1743,6 +1746,7 @@ internal fun JsonElement.toDjProgramOrNull(): NeteaseDjProgram? {
         radioId = obj.obj("radio")?.get("id").nLong(),
         radioName = obj.obj("radio")?.str("name"),
         djNickname = obj.obj("dj")?.str("nickname"),
+        paid = (obj["programFeeType"].nInt() ?: 0) != 0 && !buyed,
     )
 }
 

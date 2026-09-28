@@ -326,6 +326,13 @@ private fun provideResolvingDataSourceFactory(
             }
         }
         if (!resolved) {
+            // 会话内已实证取不到流(灰歌/付费占位试听)的歌最先判:连缓存都不读——缓存里
+            // 可能躺着历史上当真播过的占位试听(26KB),读出来又能"成功播放"触发 READY
+            // 自愈写回 isAvailable=true,把注册表判定整个翻掉(2026-09-28 短剧实测踩过)。
+            if (streamRepository.isKnownUnresolvable(mediaId.removePrefix(MERGING_DATA_TYPE.VIDEO))) {
+                Logger.e("Stream", "known-unresolvable, refusing even cache: $mediaId")
+                throw UnresolvableTrackException(mediaId)
+            }
             if (fullyCached) {
                 // 灰歌等取不到流但整首还在缓存:裸 id 不封顶兜底直读缓存(仅此兜底路径
                 // 存在"读盘中被驱逐"风险,可接受——取不到 URL 的歌没别的播法)
@@ -333,13 +340,9 @@ private fun provideResolvingDataSourceFactory(
                 return@Factory dataSpec
             }
             Logger.e("Stream", "Failed to resolve stream URL for $mediaId")
-            // 会话内已实证取不到流的歌抛专属异常,装载错误策略对它不重试——确定性失败走
-            // 默认重试梯(0/1/2s 三连,每轮都重新 resolve)纯属浪费,占灰歌跳过前转圈的大头
-            throw if (streamRepository.isKnownUnresolvable(mediaId.removePrefix(MERGING_DATA_TYPE.VIDEO))) {
-                UnresolvableTrackException(mediaId)
-            } else {
-                java.io.IOException("Failed to resolve stream URL for $mediaId")
-            }
+            // 确定性失败抛专属异常,装载错误策略对它不重试——默认重试梯(0/1/2s 三连,
+            // 每轮都重新 resolve)纯属浪费,占灰歌跳过前转圈的大头
+            throw java.io.IOException("Failed to resolve stream URL for $mediaId")
         }
         return@Factory dataSpecReturn
     }
