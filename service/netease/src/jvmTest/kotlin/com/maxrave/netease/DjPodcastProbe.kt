@@ -83,6 +83,40 @@ class DjPodcastProbe {
             section("program/byradio (radio 349426053)") {
                 keysSummary(client.callEApi("/dj/program/byradio", mapOf("radioId" to 349426053L, "limit" to 5, "offset" to 0, "asc" to false)))
             }
+            section("fn programs cateId=3(情感)") {
+                val r = client.recommendPodcastPrograms(3L, limit = 5, offset = 0)
+                r.fold(onSuccess = { (list, more) -> "size=${list.size} more=$more titles=" + list.take(3).joinToString("/") { it.name.take(12) } }, onFailure = { "FAILED ${it.message}" })
+            }
+            section("fn programs cateId=null") {
+                val r = client.recommendPodcastPrograms(null, limit = 5, offset = 0)
+                r.fold(onSuccess = { (list, more) -> "size=${list.size} more=$more titles=" + list.take(3).joinToString("/") { it.name.take(12) } }, onFailure = { "FAILED ${it.message}" })
+            }
+            section("fn programs listenerCount sample") {
+                val r = client.recommendPodcastPrograms(null, limit = 3, offset = 0)
+                r.fold(onSuccess = { (list, _) -> list.joinToString("/") { "${it.listenerCount}" } }, onFailure = { "FAILED ${it.message}" })
+            }
+            section("fn programs cateId=3 limit30") {
+                val r = client.recommendPodcastPrograms(3L, limit = 30, offset = 0)
+                r.fold(onSuccess = { (list, more) -> "size=${list.size} more=$more titles=" + list.take(3).joinToString("/") { it.name.take(12) } }, onFailure = { "FAILED ${it.message}" })
+            }
+            section("fn programs null limit30") {
+                val r = client.recommendPodcastPrograms(null, limit = 30, offset = 0)
+                r.fold(onSuccess = { (list, more) -> "size=${list.size} more=$more titles=" + list.take(3).joinToString("/") { it.name.take(12) } }, onFailure = { "FAILED ${it.message}" })
+            }
+            section("variant categoryId=3") {
+                val body = client.callEApi("/program/recommend/v1", mapOf("categoryId" to 3, "limit" to 10, "offset" to 0))
+                val arr = body.array("programs")
+                "size=${arr?.size} first=${(arr?.firstOrNull() as? kotlinx.serialization.json.JsonObject)?.str("name")?.take(16)}"
+            }
+            section("variant cateId string") {
+                val body = client.callEApi("/program/recommend/v1", mapOf("cateId" to "3", "limit" to 10, "offset" to 0))
+                val arr = body.array("programs")
+                "size=${arr?.size} first=${(arr?.firstOrNull() as? kotlinx.serialization.json.JsonObject)?.str("name")?.take(16)}"
+            }
+            section("program embedded radio.categoryId sample") {
+                val r = client.recommendPodcastPrograms(null, limit = 3, offset = 0)
+                r.fold(onSuccess = { (list, _) -> list.joinToString("/") { p -> p.radioId.toString() } }, onFailure = { "FAILED ${it.message}" })
+            }
             out.writeText(sb.toString())
             println(sb.toString())
         }
