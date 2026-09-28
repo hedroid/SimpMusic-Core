@@ -58,6 +58,26 @@ import kotlin.math.sin
 
 private const val TAG = "CrossfadeExoPlayerAdapter"
 
+internal fun playWhenReadyChangeReasonName(reason: Int): String =
+    when (reason) {
+        Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> "user-request"
+        Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS -> "audio-focus-loss"
+        Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY -> "audio-becoming-noisy"
+        Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE -> "remote"
+        Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM -> "end-of-media-item"
+        Player.PLAY_WHEN_READY_CHANGE_REASON_SUPPRESSED_TOO_LONG -> "suppressed-too-long"
+        else -> "unknown"
+    }
+
+internal fun audioFocusChangeName(focusChange: Int): String =
+    when (focusChange) {
+        AudioManager.AUDIOFOCUS_GAIN -> "gain"
+        AudioManager.AUDIOFOCUS_LOSS -> "loss"
+        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> "loss-transient"
+        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> "loss-transient-can-duck"
+        else -> "unknown"
+    }
+
 /**
  * ExoPlayer implementation of [MediaPlayerInterface] with crossfade support.
  *
@@ -242,6 +262,11 @@ internal class CrossfadeExoPlayerAdapter(
 
     private val audioFocusListener =
         AudioManager.OnAudioFocusChangeListener { focusChange ->
+            Logger.w(
+                TAG,
+                "audioFocusChange=${audioFocusChangeName(focusChange)}($focusChange) " +
+                    "state=$internalState mediaId=${currentPlayer?.currentMediaItem?.mediaId}",
+            )
             when (focusChange) {
                 AudioManager.AUDIOFOCUS_GAIN -> {
                     // Don't fight the crossfade ramp; while crossfading it owns the volume.
@@ -621,7 +646,14 @@ internal class CrossfadeExoPlayerAdapter(
                             DefaultLoadControl.DEFAULT_MAX_BUFFER_MS * 4,
                             0,
                             0,
-                        ).build(),
+                        )
+                        // The four-times duration above is meant to keep roughly 200 seconds
+                        // ahead for tunnels and other brief network gaps. Media3 otherwise stops
+                        // loading as soon as its default 13 MiB audio allocation is full, which
+                        // can be less than a minute of high-bitrate lossless audio. Make the time
+                        // target authoritative so every quality tier gets the same resilience.
+                        .setPrioritizeTimeOverSizeThresholds(true)
+                        .build(),
                 ).setWakeMode(C.WAKE_MODE_NETWORK)
                 .setHandleAudioBecomingNoisy(true)
                 .setSeekForwardIncrementMs(5000)
@@ -1882,6 +1914,18 @@ internal class CrossfadeExoPlayerAdapter(
 
         val listener =
             object : Player.Listener {
+                override fun onPlayWhenReadyChanged(
+                    playWhenReady: Boolean,
+                    reason: Int,
+                ) {
+                    if (player != currentPlayer) return
+                    Logger.w(
+                        TAG,
+                        "playWhenReady=$playWhenReady reason=${playWhenReadyChangeReasonName(reason)}($reason) " +
+                            "mediaId=${player.currentMediaItem?.mediaId} positionMs=${player.currentPosition}",
+                    )
+                }
+
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     when (playbackState) {
                         Player.STATE_ENDED -> {
