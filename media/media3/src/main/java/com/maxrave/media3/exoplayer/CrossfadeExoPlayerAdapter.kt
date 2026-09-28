@@ -2002,7 +2002,12 @@ internal class CrossfadeExoPlayerAdapter(
                             error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND ||
                             // Listed in the comment above but missing from the condition; a refused
                             // connection is just as recoverable as the other IO failures.
-                            error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED
+                            error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+                            // Mid-stream socket timeout (subway tunnels, cell handoff). Media3's
+                            // load policy has already retried the HTTP layer; a full reload re-runs
+                            // the resolver and refills the buffer, so a brief outage recovers
+                            // instead of pausing outright in the background with no toast.
+                            error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT
 
                     val currentVideoId = playlist.getOrNull(localCurrentMediaItemIndex)?.mediaId
                     if (error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND) {
