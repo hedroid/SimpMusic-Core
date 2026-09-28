@@ -105,6 +105,15 @@ interface SongRepository {
         videoId: String,
     )
 
+    /**
+     * 只改版权态一列(影响行数,0=无此行)。song 行的 isAvailable 是首次插入值的冻结快照
+     * (insertSong 为 IGNORE),灰歌"播放实证/探针实证"的回写必须走 UPDATE 才能落库。
+     */
+    suspend fun updateIsAvailable(
+        available: Boolean,
+        videoId: String,
+    ): Int
+
     fun getMostPlayedSongs(): Flow<List<SongEntity>>
 
     suspend fun updateDownloadState(

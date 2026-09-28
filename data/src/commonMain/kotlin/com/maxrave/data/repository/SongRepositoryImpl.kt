@@ -436,6 +436,11 @@ internal class SongRepositoryImpl(
         likeStatus: Int,
     ) = withContext(Dispatchers.IO) { localDataSource.updateLiked(likeStatus, videoId) }
 
+    override suspend fun updateIsAvailable(
+        available: Boolean,
+        videoId: String,
+    ): Int = withContext(Dispatchers.IO) { localDataSource.updateIsAvailable(available, videoId) }
+
     override fun getSongInfo(videoId: String): Flow<SongInfoEntity?> =
         flow {
             runCatching {

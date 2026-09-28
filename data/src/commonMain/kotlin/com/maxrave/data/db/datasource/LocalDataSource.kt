@@ -240,6 +240,9 @@ internal class LocalDataSource(
         videoId: String,
     ) = databaseDao.updateLiked(liked, videoId)
 
+    suspend fun updateIsAvailable(available: Boolean, videoId: String) =
+        databaseDao.updateIsAvailable(available, videoId)
+
     suspend fun updateDurationSeconds(
         durationSeconds: Int,
         videoId: String,

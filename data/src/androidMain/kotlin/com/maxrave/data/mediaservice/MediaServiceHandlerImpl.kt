@@ -3408,9 +3408,9 @@ internal class MediaServiceHandlerImpl(
         }
     }
 
-    /** 队列内存行+song 行回写 isAvailable。song 行:媒体项切换时已用旧值落过一行,
-     *  这里补正确值(重启恢复当前曲走 getSongById 读的就是它);saved queue 由暂停/
-     *  停止时的 mayBeSaveRecentSong 用已补丁的 queueData 落盘,无需在此重写 */
+    /** 队列内存行+song 行回写 isAvailable。song 行走 UPDATE(insertSong 是 IGNORE,
+     *  行已存在时静默 no-op——回写曾因此全部丢失,列表灰态永不自愈);行不存在才补插。
+     *  saved queue 由暂停/停止时的 mayBeSaveRecentSong 用已补丁的 queueData 落盘,无需在此重写 */
     private suspend fun patchQueueTrackIsAvailable(
         track: Track,
         available: Boolean,
@@ -3426,7 +3426,11 @@ internal class MediaServiceHandlerImpl(
                 qd.copy(data = qd.data.copy(listTracks = list))
             }
         }
-        runCatching { songRepository.insertSong(patched.toSongEntity()).first() }
+        runCatching {
+            if (songRepository.updateIsAvailable(available, track.videoId) == 0) {
+                songRepository.insertSong(patched.toSongEntity()).first()
+            }
+        }
     }
 
 

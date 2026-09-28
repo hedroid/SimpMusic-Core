@@ -273,6 +273,14 @@ interface DatabaseDao {
         favoriteAt: LocalDateTime? = if (liked == 1) now() else null,
     )
 
+    /**
+     * 版权态回写专用:insertSong 是 IGNORE 策略,行已存在时静默 no-op——灰歌"播放实证
+     * 可播/探针实证无版权"的落库曾因此全部丢失(song 行冻结在首次插入值)。返回影响行数,
+     * 0 = 行不存在,调用方自行决定是否补插。
+     */
+    @Query("UPDATE song SET isAvailable = :available WHERE videoId = :videoId")
+    suspend fun updateIsAvailable(available: Boolean, videoId: String): Int
+
     @Insert(onConflict = OnConflictStrategy.Companion.IGNORE)
     suspend fun insertSong(song: SongEntity): Long
 
