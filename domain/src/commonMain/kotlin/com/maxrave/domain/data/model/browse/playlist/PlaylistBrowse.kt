@@ -18,4 +18,9 @@ data class PlaylistBrowse(
     val year: String,
     val shuffleEndpoint: YouTubeWatchEndpoint? = null,
     val radioEndpoint: YouTubeWatchEndpoint? = null,
+    /**
+     * 当前账号可编辑该歌单(YT browse 响应对自建歌单用 musicEditablePlaylistDetailHeaderRenderer
+     * 包装头部)。自建歌单没有"收藏进资料库"的概念,详情页顶栏收藏心按它隐藏。
+     */
+    val isOwnYouTubePlaylist: Boolean = false,
 )

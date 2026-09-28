@@ -891,6 +891,10 @@ class NeteaseRepositoryImpl(
             val (meta, trackIds) =
                 client.playlistDetail(id).getOrNull() ?: error("歌单不存在: $playlistId")
             meta.subscribed?.let { playlistSubscribedCache = playlistSubscribedCache + (id to it) }
+            // 顺带回填自建/红心缓存:深链/冷启直进歌单详情页时(库页未拉过),详情页顶栏
+            // 收藏心的隐藏判定即刻生效,不必等 getLibraryPlaylists 播种
+            meta.creatorId?.let { libraryCreatorIds = libraryCreatorIds + (meta.id to it) }
+            if (meta.rawSpecialType == 5) neteaseLikedPlaylistId = meta.id
             val firstPage =
                 if (trackIds.isNotEmpty()) {
                     client.songDetail(trackIds.take(NETEASE_PLAYLIST_PAGE_SIZE)).getOrDefault(emptyList())

@@ -582,6 +582,20 @@ internal class PlaylistRepositoryImpl(
                                     ?.header
                                     ?.musicResponsiveHeaderRenderer
                         Logger.d("getPlaylistData", "header: $header")
+                        // 自建歌单信号:可编辑包装只在当前账号有编辑权时出现(顶部或 contents 两处之一)。
+                        // 收藏的他人歌单是 musicDetailHeaderRenderer 大卡头,两者互斥。
+                        val isOwnYouTubePlaylist =
+                            result.header?.musicEditablePlaylistDetailHeaderRenderer != null ||
+                                result.contents
+                                    ?.twoColumnBrowseResultsRenderer
+                                    ?.tabs
+                                    ?.get(0)
+                                    ?.tabRenderer
+                                    ?.content
+                                    ?.sectionListRenderer
+                                    ?.contents
+                                    ?.get(0)
+                                    ?.musicEditablePlaylistDetailHeaderRenderer != null
                         val continueParam =
                             result.getPlaylistContinuation()
                         val radioEndpoint =
@@ -602,6 +616,7 @@ internal class PlaylistRepositoryImpl(
                                                 trackCount = (playlist.trackCount + listContent.size),
                                                 shuffleEndpoint = shuffleEndpoint?.toYouTubeWatchEndpoint(),
                                                 radioEndpoint = radioEndpoint?.toYouTubeWatchEndpoint(),
+                                                isOwnYouTubePlaylist = isOwnYouTubePlaylist,
                                             ),
                                             continueParam,
                                         ),
