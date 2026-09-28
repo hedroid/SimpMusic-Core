@@ -51,6 +51,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlin.time.ExperimentalTime
 import kotlin.time.TimeSource
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.sync.withLock
@@ -1838,13 +1839,28 @@ class NeteaseRepositoryImpl(
         runCatching { client.recommendPodcastPrograms(cateId, limit = limit, offset = offset).getOrThrow() }
 
     /** 电台节目列表分页页(电台详情页,offset 分页,asc=false 默认新→旧) */
+    /** byradio 连续调用会被网易限流(HTTP 200+空数据或 code=405"操作频繁"——用户快速连逛
+     *  几个电台必中,同一电台"先空后有"即此)。串行+最小间隔错开,连点自动排队不触发 */
+    private val byradioMutex = Mutex()
+    private var lastByradioMark: kotlin.time.TimeSource.Monotonic.ValueTimeMark? = null
+
     suspend fun getDjRadioProgramsPage(
         radioId: Long,
         offset: Int,
         limit: Int = 30,
         asc: Boolean = false,
     ): Result<Pair<List<NeteaseDjProgram>, Boolean>> =
-        runCatching { client.djRadioPrograms(radioId, limit = limit, offset = offset, asc = asc).getOrThrow() }
+        runCatching {
+            byradioMutex.withLock {
+                lastByradioMark?.let { last ->
+                    val elapsed = last.elapsedNow()
+                    val minGap = 800.milliseconds
+                    if (elapsed < minGap) delay(minGap - elapsed)
+                }
+                lastByradioMark = kotlin.time.TimeSource.Monotonic.markNow()
+            }
+            client.djRadioPrograms(radioId, limit = limit, offset = offset, asc = asc).getOrThrow()
+        }
 
     /** 猜你喜欢电台(需登录;未登录服务端返回空列表,按成功空处理让 UI 隐藏该区块) */
     suspend fun getPersonalizedDjRadios(): Result<List<NeteaseDjRadio>> =

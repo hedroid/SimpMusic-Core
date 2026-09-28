@@ -196,6 +196,36 @@ class DjPodcastProbe {
                 }
                 sb3.toString().trim()
             }
+            section("榜单电台 programCount vs byradio 实际节目数") {
+                val tops = client.djRadioToplist().getOrNull().orEmpty()
+                tops.take(8).map { r ->
+                    val actual = client.djRadioPrograms(r.id, limit = 5, offset = 0).getOrNull()?.first?.size ?: -1
+                    "${r.name.take(18)}(id=${r.id}): declared=${r.programCount}, actual=$actual"
+                }.joinToString("\n")
+            }
+            section("音乐合集型电台:songs 字段验证") {
+                val body = client.callEApi("/dj/program/byradio", mapOf("radioId" to 793942484L, "limit" to 2, "offset" to 0, "asc" to false))
+                val cnt = body["count"].nInt()
+                val progs = body.array("programs")?.size
+                val raw = body.toString()
+                val songsIdx = raw.indexOf("\"songs\"")
+                val songsSnippet = if (songsIdx >= 0) raw.substring(songsIdx, minOf(songsIdx + 400, raw.length)) else "NO songs field"
+                "count=$cnt programs=$progs\nsongs snippet: $songsSnippet"
+            }
+            section("电台当歌单拉:v6/v3 playlist detail") {
+                val sb4 = StringBuilder()
+                val b6 = runCatching { client.callApi("/v6/playlist/detail", mapOf("id" to 793942484L, "n" to 5, "s" to 0)) }.getOrNull()
+                sb4.appendLine("v6 code=${b6?.get("code")?.nLong()} keys=${b6?.keys?.joinToString(",").toString().take(120)}")
+                val tracks6 = b6?.array("playlist") // playlist 是对象不是数组
+                val pl = b6?.obj("playlist")
+                sb4.appendLine("v6 playlist.trackCount=${pl?.get("trackCount").nInt()} tracks=${pl?.array("tracks")?.size} trackIds=${pl?.array("trackIds")?.size}")
+                val byAsc = client.callEApi("/dj/program/byradio", mapOf("radioId" to 793942484L, "limit" to 3, "offset" to 0, "asc" to true))
+                sb4.appendLine("byradio asc=true: code=${byAsc["code"].nLong()} msg=${byAsc.str("msg")}/${byAsc.str("message")} programs=${byAsc.array("programs")?.size}")
+                // 对照:能返回节目的电台(清音悦耳 972022490)
+                val ok2 = client.callEApi("/dj/program/byradio", mapOf("radioId" to 972022490L, "limit" to 2, "offset" to 0, "asc" to false))
+                sb4.appendLine("byradio 清音悦耳: programs=${ok2.array("programs")?.size} count=${ok2["count"].nInt()}")
+                sb4.toString().trim()
+            }
             out.writeText(sb.toString())
             println(sb.toString())
         }
