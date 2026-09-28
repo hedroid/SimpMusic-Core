@@ -125,6 +125,7 @@ import com.maxrave.netease.addToPlaylist
 import com.maxrave.netease.subscribeAlbum
 import com.maxrave.netease.subscribePlaylist
 import com.maxrave.netease.deletePlaylist
+import com.maxrave.netease.djRadioDetail
 import com.maxrave.netease.djRadioPrograms
 import com.maxrave.netease.djRadioToplist
 import com.maxrave.netease.personalizedDjRadios
@@ -1850,8 +1851,12 @@ class NeteaseRepositoryImpl(
         runCatching {
             val uid = client.getAccountStatus().getOrNull()?.userId
             if (uid == null || uid == 0L) error("未登录")
-            client.userDjRadios(uid, limit = 100, offset = 0).getOrThrow()
+            client.userDjRadios(limit = 100, offset = 0).getOrThrow()
         }
+
+    /** 电台详情(eapi /djradio/get,含 subed 已订阅态) */
+    suspend fun getDjRadioDetail(radioId: Long): Result<NeteaseDjRadio> =
+        runCatching { client.djRadioDetail(radioId).getOrThrow() }
 
     /** 订阅/退订电台。**登录态必须先验:未登录时服务端也回 code 200(假成功)**(Melodia 抓包注释+本仓
      *  cloud-write 铁律同源);客户端先 getAccountStatus 拦一道。 */
@@ -2294,8 +2299,9 @@ internal fun NeteaseSong.toResultSong(): ResultSong =
         videoType = null,
     )
 
-/** dj 节目 → ResultSong(videoId=**mainSong.id**——节目自身 id 取流无效)。无 mainSong 的节目不可播,返回 null */
-internal fun NeteaseDjProgram.toResultSong(): ResultSong? {
+/** dj 节目 → ResultSong(videoId=**mainSong.id**——节目自身 id 取流无效)。无 mainSong 的节目不可播,返回 null。
+ *  public:播客页 VM 直接拿节目列表组队起播用 */
+fun NeteaseDjProgram.toResultSong(): ResultSong? {
     val songId = mainSongId ?: return null
     return ResultSong(
         videoId = songId.toString(),

@@ -1048,22 +1048,22 @@ suspend fun NeteaseClient.highQualityTags(): Result<List<NeteaseHighQualityTag>>
         } ?: emptyList()
     }
 
-/** 用户订阅的 DJ 电台(weapi /user/djradio/get/subed) */
+/** 用户订阅的 DJ 电台(weapi /djradio/get/subed,**不带 uid**——cookie 自证身份;旧路径
+ *  /user/djradio/get/subed 已死:业务 code=404 接口未找到,2026-09-28 探针实证) */
 suspend fun NeteaseClient.userDjRadios(
-    userId: Long,
     limit: Int = 100,
     offset: Int = 0,
 ): Result<List<NeteaseDjRadio>> =
     runCatching {
         val body =
             callWeApi(
-                "/user/djradio/get/subed",
+                "/djradio/get/subed",
                 mapOf(
-                    "uid" to userId,
                     "limit" to limit,
                     "offset" to offset,
                 ),
             )
+        check((body["code"]?.nLong() ?: -1L) == 200L) { "djradio get/subed code=${body["code"]}" }
         body.array("djRadios")?.mapNotNull { it.toDjRadioOrNull() } ?: emptyList()
     }
 
@@ -1082,6 +1082,7 @@ suspend fun NeteaseClient.djRadioDetail(radioId: Long): Result<NeteaseDjRadio> =
 suspend fun NeteaseClient.podcastCategories(): Result<List<NeteasePodcastCategory>> =
     runCatching {
         val body = callEApi("/djradio/category/get", emptyMap())
+        check((body["code"]?.nLong() ?: -1L) == 200L) { "djradio/category/get code=${body["code"]}" }
         body.array("categories")
             ?.mapNotNull { c ->
                 val obj = c.jsonObject
@@ -1103,6 +1104,7 @@ suspend fun NeteaseClient.recommendPodcastPrograms(
             put("offset", offset)
         }
         val body = callEApi("/program/recommend/v1", params)
+        check((body["code"]?.nLong() ?: -1L) == 200L) { "program/recommend/v1 code=${body["code"]}" }
         val programs = body.array("programs")?.mapNotNull { it.toDjProgramOrNull() }.orEmpty()
         val more = (body["more"] as? JsonPrimitive)?.booleanOrNull ?: false
         programs to more
@@ -1114,6 +1116,7 @@ suspend fun NeteaseClient.personalizedDjRadios(
 ): Result<List<NeteaseDjRadio>> =
     runCatching {
         val body = callEApi("/djradio/personalize/rcmd", mapOf("limit" to limit))
+        check((body["code"]?.nLong() ?: -1L) == 200L) { "personalize/rcmd code=${body["code"]}" }
         body.array("data")?.mapNotNull { it.toDjRadioOrNull() }.orEmpty()
     }
 
@@ -1121,6 +1124,7 @@ suspend fun NeteaseClient.personalizedDjRadios(
 suspend fun NeteaseClient.recommendDjRadios(): Result<List<NeteaseDjRadio>> =
     runCatching {
         val body = callEApi("/djradio/recommend/v1", emptyMap())
+        check((body["code"]?.nLong() ?: -1L) == 200L) { "djradio/recommend/v1 code=${body["code"]}" }
         body.array("djRadios")?.mapNotNull { it.toDjRadioOrNull() }.orEmpty()
     }
 
@@ -1131,6 +1135,7 @@ suspend fun NeteaseClient.djRadioToplist(
 ): Result<List<NeteaseDjRadio>> =
     runCatching {
         val body = callEApi("/djradio/toplist", mapOf("limit" to limit, "offset" to 0, "type" to type))
+        check((body["code"]?.nLong() ?: -1L) == 200L) { "djradio/toplist code=${body["code"]}" }
         body.array("toplist")?.mapNotNull { it.toDjRadioOrNull() }.orEmpty()
     }
 

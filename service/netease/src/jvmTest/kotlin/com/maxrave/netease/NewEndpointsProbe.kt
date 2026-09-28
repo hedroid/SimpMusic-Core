@@ -69,7 +69,7 @@ class NewEndpointsProbe {
                 )
             }
             section("userDjRadios") {
-                client.userDjRadios(uid ?: 0L).fold(
+                client.userDjRadios().fold(
                     { it.joinToString("\n") { r -> "${r.id} | ${r.name} | ${r.programCount}期" }.ifEmpty { "(未订阅电台)" } },
                     { "ERR ${it.message}" },
                 )
@@ -81,7 +81,7 @@ class NewEndpointsProbe {
                 )
             }
             section("djRadioDetail(未订阅时用公开电台 349426053)") {
-                val rid = client.userDjRadios(uid ?: 0L).getOrNull()?.firstOrNull()?.id ?: 349426053L
+                val rid = client.userDjRadios().getOrNull()?.firstOrNull()?.id ?: 349426053L
                 client.djRadioDetail(rid).fold(
                     { "${it.id} ${it.name} | ${it.programCount}期 | dj=${it.djNickname}" },
                     { "ERR ${it.message}" },
