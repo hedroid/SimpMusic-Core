@@ -84,9 +84,12 @@ import com.maxrave.netease.lyric
 import com.maxrave.netease.model.NeteaseAccount
 import com.maxrave.netease.model.NeteaseAlbum
 import com.maxrave.netease.model.NeteaseArtist
+import com.maxrave.netease.model.NeteaseDjProgram
+import com.maxrave.netease.model.NeteaseDjRadio
 import com.maxrave.netease.model.NeteaseHighQualityTag
 import com.maxrave.netease.model.NeteaseHotWord
 import com.maxrave.netease.model.NeteasePlaylist
+import com.maxrave.netease.model.NeteasePodcastCategory
 import com.maxrave.netease.model.NeteaseQuality
 import com.maxrave.netease.model.NeteaseSong
 import com.maxrave.netease.personalRadio
@@ -122,14 +125,22 @@ import com.maxrave.netease.addToPlaylist
 import com.maxrave.netease.subscribeAlbum
 import com.maxrave.netease.subscribePlaylist
 import com.maxrave.netease.deletePlaylist
+import com.maxrave.netease.djRadioPrograms
+import com.maxrave.netease.djRadioToplist
+import com.maxrave.netease.personalizedDjRadios
+import com.maxrave.netease.podcastCategories
 import com.maxrave.netease.radarPlaylists
+import com.maxrave.netease.recommendDjRadios
+import com.maxrave.netease.recommendPodcastPrograms
 import com.maxrave.netease.searchArtists
 import com.maxrave.netease.searchHot
 import com.maxrave.netease.searchPlaylists
 import com.maxrave.netease.searchSongs
 import com.maxrave.netease.searchSuggest
 import com.maxrave.netease.songUrl
+import com.maxrave.netease.subDjRadio
 import com.maxrave.netease.toplistPlaylists
+import com.maxrave.netease.userDjRadios
 import com.maxrave.netease.userPlaylists
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -1796,6 +1807,64 @@ class NeteaseRepositoryImpl(
             page.items.map { it.toResultSong() } to more
         }
 
+    // ---------------------------------------------------------------- 播客 tab(dj 电台/节目,端点形状对齐 Melodia 真机抓包)
+
+    /** 播客电台分类(公开,19 个) */
+    suspend fun getPodcastCategories(): Result<List<NeteasePodcastCategory>> =
+        runCatching { client.podcastCategories().getOrThrow() }
+
+    /** 推荐/最新节目分页页:cateId=null 不限分类,响应自带 more */
+    suspend fun getRecommendPodcastProgramsPage(
+        cateId: Long?,
+        offset: Int,
+        limit: Int = 30,
+    ): Result<Pair<List<NeteaseDjProgram>, Boolean>> =
+        runCatching { client.recommendPodcastPrograms(cateId, limit = limit, offset = offset).getOrThrow() }
+
+    /** 电台节目列表分页页(电台详情页,offset 分页,asc=false 默认新→旧) */
+    suspend fun getDjRadioProgramsPage(
+        radioId: Long,
+        offset: Int,
+        limit: Int = 30,
+        asc: Boolean = false,
+    ): Result<Pair<List<NeteaseDjProgram>, Boolean>> =
+        runCatching { client.djRadioPrograms(radioId, limit = limit, offset = offset, asc = asc).getOrThrow() }
+
+    /** 猜你喜欢电台(需登录;未登录服务端返回空列表,按成功空处理让 UI 隐藏该区块) */
+    suspend fun getPersonalizedDjRadios(): Result<List<NeteaseDjRadio>> =
+        runCatching { client.personalizedDjRadios().getOrThrow() }
+
+    /** 精选电台(公开) */
+    suspend fun getRecommendDjRadios(): Result<List<NeteaseDjRadio>> =
+        runCatching { client.recommendDjRadios().getOrThrow() }
+
+    /** 电台榜(type 0 新晋 / 1 热门) */
+    suspend fun getDjRadioToplist(
+        limit: Int = 20,
+        type: Int = 1,
+    ): Result<List<NeteaseDjRadio>> =
+        runCatching { client.djRadioToplist(limit = limit, type = type).getOrThrow() }
+
+    /** 我的订阅电台(需登录) */
+    suspend fun getMyDjRadios(): Result<List<NeteaseDjRadio>> =
+        runCatching {
+            val uid = client.getAccountStatus().getOrNull()?.userId
+            if (uid == null || uid == 0L) error("未登录")
+            client.userDjRadios(uid, limit = 100, offset = 0).getOrThrow()
+        }
+
+    /** 订阅/退订电台。**登录态必须先验:未登录时服务端也回 code 200(假成功)**(Melodia 抓包注释+本仓
+     *  cloud-write 铁律同源);客户端先 getAccountStatus 拦一道。 */
+    suspend fun setDjRadioSubscribed(
+        radioId: Long,
+        subscribe: Boolean,
+    ): Result<Boolean> =
+        runCatching {
+            val uid = client.getAccountStatus().getOrNull()?.userId
+            if (uid == null || uid == 0L) error("未登录")
+            client.subDjRadio(radioId, subscribe).getOrThrow()
+        }
+
     // ---------------------------------------------------------------- 主页 M6 行:热门歌手 + 新碟上架
 
     /** 热门歌手榜 → ArtistsResult(主页行;点击进艺人页)。行缓存 10min。 */
@@ -2224,6 +2293,23 @@ internal fun NeteaseSong.toResultSong(): ResultSong =
         isExplicit = false,
         videoType = null,
     )
+
+/** dj 节目 → ResultSong(videoId=**mainSong.id**——节目自身 id 取流无效)。无 mainSong 的节目不可播,返回 null */
+internal fun NeteaseDjProgram.toResultSong(): ResultSong? {
+    val songId = mainSongId ?: return null
+    return ResultSong(
+        videoId = songId.toString(),
+        title = name,
+        artists = listOf(Artist(id = null, name = djNickname ?: radioName ?: "")),
+        durationSeconds = (durationMs / 1000).toInt(),
+        album = Album(id = radioId?.toString() ?: "", name = radioName ?: ""),
+        likeStatus = "INDIFFERENT",
+        thumbnails = coverUrl.toThumbnails(),
+        isAvailable = true,
+        isExplicit = false,
+        videoType = null,
+    )
+}
 
 internal fun Long.toMinutesSeconds(): String {
     val totalSeconds = this / 1000

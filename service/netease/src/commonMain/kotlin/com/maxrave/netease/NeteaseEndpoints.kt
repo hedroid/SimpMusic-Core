@@ -17,10 +17,12 @@ import com.maxrave.netease.model.NeteaseComment
 import com.maxrave.netease.model.NeteaseCommentFloorPage
 import com.maxrave.netease.model.NeteaseCommentPage
 import com.maxrave.netease.model.NeteaseCommentPageV2
+import com.maxrave.netease.model.NeteaseDjProgram
 import com.maxrave.netease.model.NeteaseDjRadio
 import com.maxrave.netease.model.NeteaseHighQualityTag
 import com.maxrave.netease.model.NeteaseHotWord
 import com.maxrave.netease.model.NeteaseLyrics
+import com.maxrave.netease.model.NeteasePodcastCategory
 import com.maxrave.netease.model.NeteasePlaylist
 import com.maxrave.netease.model.NeteaseQuality
 import com.maxrave.netease.model.NeteaseRadioSession
@@ -36,6 +38,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.buildJsonObject
@@ -1072,6 +1075,100 @@ suspend fun NeteaseClient.djRadioDetail(radioId: Long): Result<NeteaseDjRadio> =
     }
 
 // ----------------------------------------------------------------------------
+// 播客 tab(dj 生态发现侧):端点形状对齐 Melodia(rinchao0721/Melodia)真机抓包,统一 eapi 通道
+// ----------------------------------------------------------------------------
+
+/** 电台分类(公开,19 个) */
+suspend fun NeteaseClient.podcastCategories(): Result<List<NeteasePodcastCategory>> =
+    runCatching {
+        val body = callEApi("/djradio/category/get", emptyMap())
+        body.array("categories")
+            ?.mapNotNull { c ->
+                val obj = c.jsonObject
+                val id = obj["id"].nLong() ?: return@mapNotNull null
+                NeteasePodcastCategory(id = id, name = obj.str("name").orEmpty())
+            }.orEmpty()
+    }
+
+/** 推荐/最新节目(公开):cateId=null 不限分类;响应 programs[] + more */
+suspend fun NeteaseClient.recommendPodcastPrograms(
+    cateId: Long?,
+    limit: Int = 30,
+    offset: Int = 0,
+): Result<Pair<List<NeteaseDjProgram>, Boolean>> =
+    runCatching {
+        val params = buildMap<String, Any?> {
+            if (cateId != null) put("cateId", cateId)
+            put("limit", limit)
+            put("offset", offset)
+        }
+        val body = callEApi("/program/recommend/v1", params)
+        val programs = body.array("programs")?.mapNotNull { it.toDjProgramOrNull() }.orEmpty()
+        val more = (body["more"] as? JsonPrimitive)?.booleanOrNull ?: false
+        programs to more
+    }
+
+/** 猜你喜欢的电台(需登录,未登录返回空列表) */
+suspend fun NeteaseClient.personalizedDjRadios(
+    limit: Int = 10,
+): Result<List<NeteaseDjRadio>> =
+    runCatching {
+        val body = callEApi("/djradio/personalize/rcmd", mapOf("limit" to limit))
+        body.array("data")?.mapNotNull { it.toDjRadioOrNull() }.orEmpty()
+    }
+
+/** 精选电台(公开) */
+suspend fun NeteaseClient.recommendDjRadios(): Result<List<NeteaseDjRadio>> =
+    runCatching {
+        val body = callEApi("/djradio/recommend/v1", emptyMap())
+        body.array("djRadios")?.mapNotNull { it.toDjRadioOrNull() }.orEmpty()
+    }
+
+/** 电台榜(type: 0 新晋 / 1 热门) */
+suspend fun NeteaseClient.djRadioToplist(
+    limit: Int = 20,
+    type: Int = 1,
+): Result<List<NeteaseDjRadio>> =
+    runCatching {
+        val body = callEApi("/djradio/toplist", mapOf("limit" to limit, "offset" to 0, "type" to type))
+        body.array("toplist")?.mapNotNull { it.toDjRadioOrNull() }.orEmpty()
+    }
+
+/** 电台下的节目列表(一次 30 条,offset 分页) */
+suspend fun NeteaseClient.djRadioPrograms(
+    radioId: Long,
+    limit: Int = 30,
+    offset: Int = 0,
+    asc: Boolean = false,
+): Result<Pair<List<NeteaseDjProgram>, Boolean>> =
+    runCatching {
+        val body =
+            callEApi(
+                "/dj/program/byradio",
+                mapOf("radioId" to radioId, "limit" to limit, "offset" to offset, "asc" to asc),
+            )
+        val programs = body.array("programs")?.mapNotNull { it.toDjProgramOrNull() }.orEmpty()
+        val more = (body["more"] as? JsonPrimitive)?.booleanOrNull ?: false
+        programs to more
+    }
+
+/** 订阅/退订电台。**未登录调用同样返回 code 200**(Melodia 抓包注释),登录态校验必须在上层 */
+suspend fun NeteaseClient.subDjRadio(
+    radioId: Long,
+    subscribe: Boolean,
+): Result<Boolean> =
+    runCatching {
+        val body =
+            callEApi(
+                if (subscribe) "/djradio/sub" else "/djradio/unsub",
+                mapOf("id" to radioId),
+            )
+        val code = body["code"]?.nLong()
+        check(code == 200L) { "djradio sub code=$code" }
+        true
+    }
+
+// ----------------------------------------------------------------------------
 // C 档:歌手详情/百科/相似歌手、歌曲评论、云盘 —— 端点真实现,UI 入口下个需求接
 // ----------------------------------------------------------------------------
 
@@ -1605,7 +1702,8 @@ internal fun JsonElement.toAlbum(): NeteaseAlbum {
     )
 }
 
-/** 从 djRadio/电台形状映射;没有 id 返回 null(调用方 mapNotNull 过滤) */
+/** 从 djRadio/电台形状映射;没有 id 返回 null(调用方 mapNotNull 过滤)。
+ *  精选/猜你喜欢/榜单三个列表接口的电台结构一致,只是外层包装字段名不同(解析层无感) */
 internal fun JsonElement.toDjRadioOrNull(): NeteaseDjRadio? {
     val obj = jsonObject
     val id = obj["id"].nLong() ?: return null
@@ -1614,6 +1712,31 @@ internal fun JsonElement.toDjRadioOrNull(): NeteaseDjRadio? {
         name = obj.str("name").orEmpty(),
         coverUrl = (obj.str("coverUrl") ?: obj.str("coverImgUrl") ?: obj.str("picUrl"))?.toHttpsUrl(),
         programCount = obj["programCount"].nInt() ?: obj["trackCount"].nInt() ?: 0,
+        djNickname = obj.obj("dj")?.str("nickname"),
+        subCount = obj["subCount"].nLong(),
+        description = obj.str("desc") ?: obj.str("description"),
+        rcmdtext = obj.str("rcmdtext") ?: obj.str("rcmdText"),
+        category = obj.str("category"),
+        subed = (obj["subed"] as? JsonPrimitive)?.booleanOrNull,
+    )
+}
+
+/** 节目形状映射;没有 id 返回 null。mainSong 缺失=不可播节目,mainSongId 置 null(调用方过滤)。
+ *  **节目自身 id 取流无效,可播的是 mainSong.id**(Melodia 真机抓包定论) */
+internal fun JsonElement.toDjProgramOrNull(): NeteaseDjProgram? {
+    val obj = jsonObject
+    val id = obj["id"].nLong() ?: return null
+    return NeteaseDjProgram(
+        id = id,
+        name = obj.str("name").orEmpty(),
+        coverUrl = obj.str("coverUrl")?.toHttpsUrl(),
+        durationMs = obj["duration"].nLong() ?: 0L,
+        createTimeMs = obj["createTime"].nLong(),
+        serialNum = obj["serialNum"].nInt(),
+        listenerCount = obj["listenerCount"].nLong(),
+        mainSongId = obj.obj("mainSong")?.get("id").nLong(),
+        radioId = obj.obj("radio")?.get("id").nLong(),
+        radioName = obj.obj("radio")?.str("name"),
         djNickname = obj.obj("dj")?.str("nickname"),
     )
 }

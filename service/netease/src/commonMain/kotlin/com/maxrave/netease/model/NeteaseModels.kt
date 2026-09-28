@@ -162,6 +162,37 @@ data class NeteaseDjRadio(
     val coverUrl: String?,
     val programCount: Int,
     val djNickname: String?,
+    /** 订阅数/描述/推荐语/分类/当前账号是否已订阅(详情端点才带,列表端点为 null) */
+    val subCount: Long? = null,
+    val description: String? = null,
+    val rcmdtext: String? = null,
+    val category: String? = null,
+    val subed: Boolean? = null,
+)
+
+/** DJ 电台节目。**可播的是 [mainSongId](节目内嵌的主歌 id),节目自身 id 取流无效**(Melodia 真机抓包定论) */
+data class NeteaseDjProgram(
+    val id: Long,
+    val name: String,
+    val coverUrl: String?,
+    /** 毫秒 */
+    val durationMs: Long,
+    /** 毫秒时间戳 */
+    val createTimeMs: Long?,
+    /** 期号 */
+    val serialNum: Int?,
+    /** 播放量 */
+    val listenerCount: Long?,
+    val mainSongId: Long?,
+    val radioId: Long?,
+    val radioName: String?,
+    val djNickname: String?,
+)
+
+/** 播客电台分类(/djradio/category/get,公开,19 个) */
+data class NeteasePodcastCategory(
+    val id: Long,
+    val name: String,
 )
 
 /** 高质量歌单分类标签(网易云专属能力) */
