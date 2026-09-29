@@ -276,6 +276,71 @@ class DjPodcastProbe {
                 }
                 sb7.toString().trim()
             }
+            section("优秀新电台四轮:toplist分类版type档") {
+                val sb11 = StringBuilder()
+                for (t in listOf(0, 1, 2, 3)) {
+                    val b = runCatching { client.callEApi("/djradio/toplist", mapOf("cateId" to 3L, "limit" to 6, "offset" to 0, "type" to t)) }.getOrNull()
+                    val arr = b?.array("toplist")
+                    val names = arr?.take(3)?.mapNotNull { (it as? kotlinx.serialization.json.JsonObject)?.str("name")?.take(6) }?.joinToString("/")
+                    sb11.appendLine("toplist cateId=3 type=$t: code=${b?.get("code").nLong()} n=${arr?.size} [$names]")
+                }
+                for (path in listOf("/djradio/category/rec", "/djradio/featured")) {
+                    val b = runCatching { client.callEApi(path, mapOf("cateId" to 3L, "limit" to 6)) }.getOrNull()
+                    sb11.appendLine("$path: code=${b?.get("code").nLong()}")
+                }
+                sb11.toString().trim()
+            }
+            section("优秀新电台端点三轮") {
+                val sb10 = StringBuilder()
+                // 社区 dj_radio 模块(分类推荐电台)用的路径
+                val byasidW = runCatching { client.callWeApi("/djradio/get/byasid", mapOf("asid" to "", "cateId" to 3L, "limit" to 6, "offset" to 0)) }.getOrNull()
+                sb10.appendLine("byasid weapi: code=${byasidW?.get("code").nLong()} keys=${byasidW?.keys?.joinToString(",").toString().take(60)}")
+                val byasidE = runCatching { client.callEApi("/djradio/get/byasid", mapOf("asid" to "", "cateId" to 3L, "limit" to 6, "offset" to 0)) }.getOrNull()
+                sb10.appendLine("byasid eapi: code=${byasidE?.get("code").nLong()} keys=${byasidE?.keys?.joinToString(",").toString().take(60)}")
+                val arr = byasidW?.array("djRadios") ?: byasidE?.array("djRadios")
+                if (arr != null && arr.isNotEmpty()) {
+                    sb10.appendLine("首条: " + ((arr.first() as? kotlinx.serialization.json.JsonObject)?.str("name") ?: "?"))
+                }
+                sb10.toString().trim()
+            }
+            section("分类页端点二轮") {
+                val sb9 = StringBuilder()
+                suspend fun names(path: String, params: Map<String, Any?>, arrKey: String = "djRadios"): String {
+                    val b = runCatching { client.callEApi(path, params) }.getOrNull() ?: return "FAIL"
+                    val arr = b.array(arrKey) ?: return "code=${b.get("code").nLong()} noArr"
+                    return arr.take(4).mapNotNull { (it as? kotlinx.serialization.json.JsonObject)?.str("name")?.take(8) }.joinToString("/")
+                }
+                sb9.appendLine("hot默认: " + names("/djradio/hot", mapOf("cateId" to 3L, "limit" to 4, "offset" to 0)))
+                sb9.appendLine("hot type=1: " + names("/djradio/hot", mapOf("cateId" to 3L, "limit" to 4, "offset" to 0, "type" to 1)))
+                val tl = runCatching { client.callEApi("/djradio/toplist", mapOf("cateId" to 3L, "limit" to 4, "type" to 1)) }.getOrNull()
+                sb9.appendLine("toplist+cateId: code=${tl?.get("code").nLong()} n=${tl?.array("toplist")?.size}")
+                for (path in listOf("/djradio/highquality", "/djradio/get/highquality", "/dj/hot")) {
+                    val b = runCatching { client.callEApi(path, mapOf("cateId" to 3L, "limit" to 4)) }.getOrNull()
+                    sb9.appendLine("$path: code=${b?.get("code").nLong()} keys=${b?.keys?.joinToString(",").toString().take(50)}")
+                }
+                sb9.toString().trim()
+            }
+            section("分类页官方布局端点探测") {
+                val sb8 = StringBuilder()
+                suspend fun tryHot(name: String, params: Map<String, Any?>) {
+                    val b = runCatching { client.callEApi("/djradio/hot", params) }.getOrNull()
+                    val arr = b?.array("djRadios")
+                    sb8.appendLine("$name: code=${b?.get("code").nLong()} n=${arr?.size} keys=${b?.keys?.joinToString(",").toString().take(50)}")
+                }
+                // type 变体(上升最快/最热?)
+                tryHot("hot cateId=3 无type", mapOf("cateId" to 3L, "limit" to 4, "offset" to 0))
+                tryHot("hot type=0", mapOf("cateId" to 3L, "limit" to 4, "offset" to 0, "type" to 0))
+                tryHot("hot type=1", mapOf("cateId" to 3L, "limit" to 4, "offset" to 0, "type" to 1))
+                // orderBy 变体
+                tryHot("hot orderBy=hot", mapOf("cateId" to 3L, "limit" to 4, "offset" to 0, "orderBy" to "hot"))
+                tryHot("hot orderBy=rise", mapOf("cateId" to 3L, "limit" to 4, "offset" to 0, "orderBy" to "rise"))
+                // 优秀新电台候选
+                for ((n, path) in listOf("djradio/new" to "/djradio/new", "djradio/get/new" to "/djradio/get/new", "djradio/recommend/new" to "/djradio/recommend/new")) {
+                    val b = runCatching { client.callEApi(path, mapOf("cateId" to 3L, "limit" to 4)) }.getOrNull()
+                    sb8.appendLine("$n: code=${b?.get("code").nLong()} keys=${b?.keys?.joinToString(",").toString().take(60)}")
+                }
+                sb8.toString().trim()
+            }
             out.writeText(sb.toString())
             println(sb.toString())
         }

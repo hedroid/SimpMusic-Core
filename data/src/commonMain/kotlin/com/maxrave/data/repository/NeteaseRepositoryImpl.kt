@@ -1883,13 +1883,14 @@ class NeteaseRepositoryImpl(
     suspend fun getDjProgramToplist(): Result<List<NeteaseDjProgram>> =
         runCatching { client.djProgramToplist().getOrThrow() }
 
-    /** 分类下电台列表(公开分页,/djradio/hot) */
+    /** 分类下电台列表(公开分页,/djradio/hot;type 分档:0=上升最快/1=最热,官方分类页双 tab) */
     suspend fun getDjRadiosByCategory(
         cateId: Long,
         offset: Int,
         limit: Int = 30,
+        type: Int? = null,
     ): Result<Pair<List<NeteaseDjRadio>, Boolean>> =
-        runCatching { client.djRadiosByCategory(cateId, limit = limit, offset = offset).getOrThrow() }
+        runCatching { client.djRadiosByCategory(cateId, limit = limit, offset = offset, type = type).getOrThrow() }
 
     /** 我的订阅电台(需登录) */
     suspend fun getMyDjRadios(): Result<List<NeteaseDjRadio>> =

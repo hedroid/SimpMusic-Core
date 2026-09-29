@@ -1091,18 +1091,26 @@ suspend fun NeteaseClient.podcastCategories(): Result<List<NeteasePodcastCategor
             }.orEmpty()
     }
 
-/** 分类下电台列表(公开,探针实证 2026-09-28:/djradio/hot cateId+limit+offset,响应 djRadios+hasMore)。
- *  官方播客 tab"分类浏览"的正主——注意与 /program/recommend/v1 的 cateId(被服务端忽略)不是一回事 */
+/** 分类下电台列表(公开,探针实证:/djradio/hot cateId+limit+offset,响应 djRadios+hasMore)。
+ *  官方播客 tab"分类浏览"的正主——注意与 /program/recommend/v1 的 cateId(被服务端忽略)不是一回事。
+ *  type 分档(2026-09-29 探针实证,官方分类页双 tab 数据源):0=上升最快(默认档,8 条档)、
+ *  1=最热电台(名单完全不同);不传=与 type 0 同档 */
 suspend fun NeteaseClient.djRadiosByCategory(
     cateId: Long,
     limit: Int = 30,
     offset: Int = 0,
+    type: Int? = null,
 ): Result<Pair<List<NeteaseDjRadio>, Boolean>> =
     runCatching {
         val body =
             callEApi(
                 "/djradio/hot",
-                mapOf("cateId" to cateId, "limit" to limit, "offset" to offset),
+                buildMap<String, Any?> {
+                    put("cateId", cateId)
+                    put("limit", limit)
+                    put("offset", offset)
+                    if (type != null) put("type", type)
+                },
             )
         check((body["code"]?.nLong() ?: -1L) == 200L) { "djradio/hot code=${body["code"]}" }
         val radios = body.array("djRadios")?.mapNotNull { it.toDjRadioOrNull() }.orEmpty()
