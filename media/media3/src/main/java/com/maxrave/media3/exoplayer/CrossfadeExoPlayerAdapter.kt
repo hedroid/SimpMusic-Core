@@ -1129,6 +1129,9 @@ internal class CrossfadeExoPlayerAdapter(
         if (fromIndex !in playlist.indices || toIndex !in playlist.indices) return
 
         coroutineScope.launch {
+            // launch 前的守卫到执行之间 playlist 可能被其它协程(清队列/trimQueueTo)改动,
+            // 二次校验防 IndexOutOfBounds(2026-09-29 用户崩溃栈:1132 removeAt(0) on empty)
+            if (fromIndex !in playlist.indices || toIndex !in playlist.indices) return@launch
             val item = playlist.removeAt(fromIndex)
             playlist.add(toIndex, item)
 

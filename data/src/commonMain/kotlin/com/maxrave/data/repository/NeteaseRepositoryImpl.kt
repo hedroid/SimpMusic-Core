@@ -307,6 +307,10 @@ class NeteaseRepositoryImpl(
     }
 
 
+    /** 付费节目试听事件(songId):UI 层收集发"需单独购买"toast。会话级去重由 UI 做 */
+    private val _trialToastFlow = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val trialToastFlow: kotlinx.coroutines.flow.SharedFlow<String> = _trialToastFlow
+
     private companion object {
         const val TAG = "NeteaseRepo"
         const val NETEASE_SEARCH_PAGE_SIZE = 30
@@ -511,13 +515,24 @@ class NeteaseRepositoryImpl(
                     // 但文件只有 26KB(320k 下≈0.7s,全库同一 md5 占位;实测 2026-09-28)——
                     // privilege 层看不出(mainSong.fee=0),唯一信号就是 size。真实音频在
                     // ≥128kbps 下不可能 <100KB(8s interlude≥128KB),阈值双向留量。
-                    // 判定即注册(resolver 命中免重试梯)+降级链继续(各档同一占位,链走完
-                    // 自然 null)→调用方按 neteaseUnavailableAction 三档处理,不再播试听。
+                    // 付费 dj 节目/短剧的"占位试听":code 200 + 有效 url + freeTrialInfo=null,
+                    // 但文件只有 26KB(320k 下≈0.7s,全库同一 md5 占位;实测 2026-09-28)——
+                    // privilege 层看不出(mainSong.fee=0),唯一信号就是 size。
+                    // 2026-09-29 用户定案:付费≠无版权,**不走灰歌三档**(跳过/暂停/YT 兜底)、
+                    // 不标记注册表——正常返回占位 URL 播完(≈1s)自然切下一首,同时发 trial 事件
+                    // 给 UI 层 toast"需单独购买"。行置灰/锁形角标仍在(节目层 paid 判定)。
                     val snippetSize = result.sizeBytes
                     if (snippetSize != null && snippetSize < TRIAL_SNIPPET_MAX_BYTES) {
-                        markNeteaseSongUnavailable(id)
-                        Logger.w(TAG, "trial snippet detected ($songId @${level.key} size=$snippetSize), marking unavailable")
-                        continue
+                        Logger.w(TAG, "trial snippet detected ($songId @${level.key} size=$snippetSize), serving trial + toast")
+                        _trialToastFlow.tryEmit(songId)
+                        return Result.success(
+                            NeteaseStreamInfo(
+                                url = url.replaceFirst("http://", "https://"),
+                                mimeType = result.mimeType,
+                                level = level.key,
+                                bitrate = result.bitrate,
+                            ),
+                        )
                     }
                     // CDN 签发的链接是 http://,Android 默认禁明文流量(ExoPlayer 报 Source error),
                     // music.126.net 的 CDN 支持 https,统一升级
