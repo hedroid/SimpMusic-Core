@@ -369,6 +369,48 @@ class DjPodcastProbe {
                 }
                 sb8.toString().trim()
             }
+            section("buyed 语义验证:对照节目层与 mainSong.privilege") {
+                val sb14 = StringBuilder()
+                val all4 = (client.djRadioToplist().getOrNull().orEmpty())
+                val r4 = all4.firstOrNull { it.name.contains("女王归来") } ?: run {
+                    // 退路:推荐里挑付费节目
+                    client.recommendPodcastPrograms(null, limit = 30, offset = 0).getOrNull()?.first
+                        ?.firstOrNull { p -> p.paid }?.radioId?.let { rid -> client.djRadioPrograms(rid, limit = 3, offset = 0).getOrNull()?.first }
+                        ?.let { progs -> return@section progs.joinToString("\n") { p -> "${p.name.take(10)}: paid=${p.paid}" } }
+                        ?: "no target"
+                }
+                sb14.appendLine(r4)
+                sb14.toString().trim()
+            }
+            section("付费节目原始字段全量") {
+                val all5 = client.djRadioToplist().getOrNull().orEmpty() + client.recommendDjRadios().getOrNull().orEmpty()
+                val r5 = all5.firstOrNull { it.name.contains("女王归来") } ?: return@section "no radio"
+                val body = client.callEApi("/dj/program/byradio", mapOf("radioId" to r5.id, "limit" to 2, "offset" to 0, "asc" to false))
+                val arr = body.array("programs") ?: kotlinx.serialization.json.JsonArray(emptyList())
+                (arr.firstOrNull() as? kotlinx.serialization.json.JsonObject)?.let { o ->
+                    o.obj("mainSong")?.obj("privilege")?.let { pr ->
+                        "privilege: fee=${pr["fee"].nInt()} st=${pr["st"].nInt()} pl=${pr["pl"].nInt()} dl=${pr["dl"].nInt()} chargeInfoList=" + (pr["chargeInfoList"]?.toString()?.take(120) ?: "null")
+                    } ?: "no privilege"
+                } ?: "none"
+            }
+            section("女王付费字段精查") {
+                // 直连已知电台 id(历史实测 46 条全 feeType=15)
+                val body = client.callEApi("/dj/program/byradio", mapOf("radioId" to 1225587488L, "limit" to 2, "offset" to 0, "asc" to false))
+                val arr = body.array("programs") ?: kotlinx.serialization.json.JsonArray(emptyList())
+                val o = arr.firstOrNull() as? kotlinx.serialization.json.JsonObject
+                if (o == null) { "empty: code=${body.get("code").nLong()} keys=${body.keys}" } else {
+                    val ms = o.obj("mainSong")
+                    val pr = ms?.obj("privilege")
+                    "program: feeType=${o["programFeeType"].nInt()} buyed=${o["buyed"]} buyedNew=${o["buyedNew"]}\n" +
+                    "mainSong.fee=${ms?.get("fee").nInt()}\n" +
+                    "privilege: " + (pr?.let { "fee=${it["fee"].nInt()} st=${it["st"].nInt()} pl=${it["pl"].nInt()} dl=${it["dl"].nInt()} ds=${it["downloadMaxbr"].nInt()} charge=" + (it["chargeInfoList"]?.toString()?.take(150) ?: "null") } ?: "null")
+                }
+            }
+            section("VIP 账号对付费节目的真实取流(判角标语义)") {
+                val sid = 2724359175L // 宫斗赢家(历史 feeType=15)
+                val r = client.songUrl(sid, com.maxrave.netease.model.NeteaseQuality.LOSSLESS).getOrNull()
+                "size=${r?.sizeBytes} url=${r?.url?.take(40)} -> " + if ((r?.sizeBytes ?: 0) < 100_000) "TRIAL(仍付费墙)" else "FULL(VIP 权益覆盖,可完整播)"
+            }
             out.writeText(sb.toString())
             println(sb.toString())
         }
