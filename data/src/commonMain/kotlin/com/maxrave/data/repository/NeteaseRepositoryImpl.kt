@@ -307,9 +307,11 @@ class NeteaseRepositoryImpl(
     }
 
 
-    /** 付费节目试听事件(songId):UI 层收集发"需单独购买"toast。会话级去重由 UI 做 */
+    /** 付费节目试听事件(songId):UI 层收集发"需单独购买"toast。同节目会话内只发一次
+     *  (预缓存/主路/切档会多次走取流,不去重 toast 会连弹顶掉自己) */
     private val _trialToastFlow = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 8)
     val trialToastFlow: kotlinx.coroutines.flow.SharedFlow<String> = _trialToastFlow
+    private val trialToastShown = mutableSetOf<String>()
 
     private companion object {
         const val TAG = "NeteaseRepo"
@@ -524,7 +526,9 @@ class NeteaseRepositoryImpl(
                     val snippetSize = result.sizeBytes
                     if (snippetSize != null && snippetSize < TRIAL_SNIPPET_MAX_BYTES) {
                         Logger.w(TAG, "trial snippet detected ($songId @${level.key} size=$snippetSize), serving trial + toast")
-                        _trialToastFlow.tryEmit(songId)
+                        if (trialToastShown.add(songId)) {
+                            _trialToastFlow.tryEmit(songId)
+                        }
                         return Result.success(
                             NeteaseStreamInfo(
                                 url = url.replaceFirst("http://", "https://"),
