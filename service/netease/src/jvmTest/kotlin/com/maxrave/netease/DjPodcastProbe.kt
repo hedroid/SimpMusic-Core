@@ -265,6 +265,17 @@ class DjPodcastProbe {
                 val first = (arr?.firstOrNull() as? kotlinx.serialization.json.JsonObject)?.toString() ?: "none"
                 first.take(900)
             }
+            section("全部分类+逐分类电台数") {
+                val cats = client.podcastCategories().getOrNull().orEmpty()
+                val sb7 = StringBuilder()
+                sb7.appendLine("categories(${cats.size}): " + cats.joinToString("/") { "${it.id}:${it.name}" })
+                cats.forEach { c ->
+                    val r = client.djRadiosByCategory(c.id, limit = 5, offset = 0).getOrNull()
+                    val info = r?.let { "n=${it.first.size},more=${it.second}" } ?: "FAILED"
+                    sb7.appendLine("  ${c.name}(${c.id}): $info")
+                }
+                sb7.toString().trim()
+            }
             out.writeText(sb.toString())
             println(sb.toString())
         }
