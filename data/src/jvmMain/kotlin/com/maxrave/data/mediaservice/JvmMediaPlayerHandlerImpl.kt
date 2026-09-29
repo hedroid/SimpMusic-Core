@@ -14,6 +14,8 @@ import com.maxrave.common.LOCAL_PLAYLIST_ID
 import com.maxrave.common.LOCAL_PLAYLIST_ID_SAVED_QUEUE
 import com.maxrave.common.MERGING_DATA_TYPE
 import com.maxrave.common.NETEASE_FM_PLAYLIST_ID
+import com.maxrave.common.NETEASE_PODCAST_QUEUE_PREFIX
+import com.maxrave.common.NETEASE_PODCAST_RADIO_QUEUE_PREFIX
 import com.maxrave.common.NETEASE_RADIO_APPEND_BATCH
 import com.maxrave.common.NETEASE_RADIO_PLAYLIST_ID_PREFIX
 import com.maxrave.common.SPONSOR_BLOCK_MIN_SEGMENT_SECONDS
@@ -25,6 +27,7 @@ import com.maxrave.data.lastfm.LastfmScrobbler
 import com.maxrave.data.repository.NeteasePlayability
 import com.maxrave.data.repository.NeteaseRepositoryImpl
 import com.maxrave.data.repository.SearchRepositoryImpl
+import com.maxrave.data.repository.toResultSong
 import com.maxrave.data.mediaservice.mac.MacOSMediaIntegration
 import com.maxrave.data.mediaservice.mac.MacOSRemoteCommandListener
 import com.maxrave.data.mediaservice.mac.NowPlayingInfo
@@ -1583,6 +1586,14 @@ class JvmMediaPlayerHandlerImpl(
             getNeteaseRadioBatch()
             return
         }
+        // 网易播客队列:不走无尽电台(尾曲 mainSong 当种子拉相似歌,会把外来歌混进剧集队列,
+        // 2026-09-29 实证)。RADIO 队列续本台节目下一页(起播只带第一页 30 条);其余播完即止。
+        if (playlistId.startsWith(NETEASE_PODCAST_QUEUE_PREFIX)) {
+            if (playlistId.startsWith(NETEASE_PODCAST_RADIO_QUEUE_PREFIX)) {
+                appendNeteasePodcastRadioPage()
+            }
+            return
+        }
         if (continuation != null) {
             if (playlistId.startsWith(LOCAL_PLAYLIST_ID)) {
                 coroutineScope.launch {
@@ -2093,6 +2104,75 @@ class JvmMediaPlayerHandlerImpl(
                 reorderShuffledQueue(player.getCurrentMediaTimeLine())
                 // 无尽队列开着：simiSong 见底不收摊，换尾曲种子接着续
                 reseedNeteaseRadioIfEndless()
+            }
+        }
+    }
+
+    /**
+     * 网易播客电台队列续页：起播只带组队时已载的节目（第一页 30 条），这里按 continuation
+     * 令牌（POD{A|D}_<offset>，A=最早在前）拉本台下一页追加——排序方向必须与组队时一致，
+     * 否则追加页顺序与队首颠倒。整台节目拉完=播完即止，绝不转无尽电台。令牌缺失（旧会话/
+     * 恢复队列）按默认新→旧、offset=当前队列长度续。拉取失败保留令牌，下次触发原 offset 重试。
+     * 与 android 端 MediaServiceHandlerImpl 同构。
+     */
+    private fun appendNeteasePodcastRadioPage() {
+        if (queueData.value.queueState == QueueData.StateSource.STATE_INITIALIZING) return
+        val radioId =
+            queueData.value.data.playlistId
+                ?.removePrefix(NETEASE_PODCAST_RADIO_QUEUE_PREFIX)
+                ?.toLongOrNull() ?: return
+        val token = queueData.value.data.continuation
+        val ascending = token?.getOrNull(3) == 'A'
+        val offset = token?.substringAfter('_')?.toIntOrNull() ?: queueData.value.data.listTracks.size
+        coroutineScope.launch {
+            _queueData.update {
+                it.copy(queueState = QueueData.StateSource.STATE_INITIALIZING)
+            }
+            val repository = runCatching { getKoin().get<NeteaseRepositoryImpl>() }.getOrNull()
+            if (repository == null) {
+                Logger.w(TAG, "appendNeteasePodcastRadioPage: repository unavailable")
+                _queueData.update {
+                    it.copy(queueState = QueueData.StateSource.STATE_INITIALIZED)
+                }
+                return@launch
+            }
+            // SERVICE_SCOPE 是 Dispatchers.Main,getDjRadioProgramsPage 是裸 suspend,必须自己切 IO
+            val page =
+                withContext(Dispatchers.IO) {
+                    repository.getDjRadioProgramsPage(radioId, offset = offset, asc = ascending).getOrNull()
+                }
+            if (page == null) {
+                Logger.w(TAG, "appendNeteasePodcastRadioPage: fetch failed at offset $offset, token kept for retry")
+                _queueData.update {
+                    it.copy(queueState = QueueData.StateSource.STATE_INITIALIZED)
+                }
+                return@launch
+            }
+            val (programs, hasMore) = page
+            val existingIds = queueData.value.data.listTracks.map { it.videoId }.toSet()
+            val fresh =
+                programs
+                    .mapNotNull { it.toResultSong() }
+                    .map { it.toTrack() }
+                    .filter { it.videoId !in existingIds }
+            if (fresh.isNotEmpty()) {
+                loadMoreCatalog(fresh.toCollection(arrayListOf()))
+                // loadMoreCatalog 末尾已把状态复位为 INITIALIZED,这里只推进令牌
+            } else {
+                _queueData.update {
+                    it.copy(queueState = QueueData.StateSource.STATE_INITIALIZED)
+                }
+                reorderShuffledQueue(player.getCurrentMediaTimeLine())
+            }
+            // offset 按服务端原始页大小推进(过滤掉的不可播节目也占服务端分页位)
+            val nextToken =
+                if (hasMore && programs.isNotEmpty()) {
+                    "POD${if (ascending) 'A' else 'D'}_${offset + programs.size}"
+                } else {
+                    null
+                }
+            _queueData.update {
+                it.copy(data = it.data.copy(continuation = nextToken))
             }
         }
     }
