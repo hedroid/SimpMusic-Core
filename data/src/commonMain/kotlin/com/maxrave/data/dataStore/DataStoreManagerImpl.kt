@@ -370,6 +370,36 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    override val playlistIdFromSaved =
+        settingsDataStore.data.map { preferences ->
+            preferences[FROM_SAVED_PLAYLIST_ID] ?: ""
+        }
+
+    override val playlistTypeFromSaved =
+        settingsDataStore.data.map { preferences ->
+            preferences[FROM_SAVED_PLAYLIST_TYPE] ?: ""
+        }
+
+    override val continuationFromSaved =
+        settingsDataStore.data.map { preferences ->
+            preferences[FROM_SAVED_CONTINUATION] ?: ""
+        }
+
+    override suspend fun setSavedQueueIdentity(
+        playlistId: String,
+        playlistType: String,
+        continuation: String?,
+    ) {
+        // 单 edit 原子写三键,恢复侧读到的永远是同一批保存的完整身份
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[FROM_SAVED_PLAYLIST_ID] = playlistId
+                settings[FROM_SAVED_PLAYLIST_TYPE] = playlistType
+                settings[FROM_SAVED_CONTINUATION] = continuation ?: ""
+            }
+        }
+    }
+
     override val sendBackToGoogle =
         settingsDataStore.data.map { preferences ->
             preferences[SEND_BACK_TO_GOOGLE] ?: FALSE
@@ -2010,6 +2040,9 @@ internal class DataStoreManagerImpl(
         val REPEAT_KEY = stringPreferencesKey("repeat_key")
         val SEND_BACK_TO_GOOGLE = stringPreferencesKey("send_back_to_google")
         val FROM_SAVED_PLAYLIST = stringPreferencesKey("from_saved_playlist")
+        val FROM_SAVED_PLAYLIST_ID = stringPreferencesKey("from_saved_playlist_id")
+        val FROM_SAVED_PLAYLIST_TYPE = stringPreferencesKey("from_saved_playlist_type")
+        val FROM_SAVED_CONTINUATION = stringPreferencesKey("from_saved_continuation")
 
         val KILL_SERVICE_ON_EXIT = stringPreferencesKey("kill_service_on_exit")
         val CROSSFADE_ENABLED = stringPreferencesKey("crossfade_enabled")

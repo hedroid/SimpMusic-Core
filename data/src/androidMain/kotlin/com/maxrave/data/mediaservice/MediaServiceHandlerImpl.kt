@@ -2800,13 +2800,25 @@ internal class MediaServiceHandlerImpl(
                 // updateCatalog clears listTracks and re-inserts the current track only at
                 // the end, so saving in that window persists a queue missing the current
                 // track (plus a blank media id), which desyncs the next restore.
+                // "不在当前队列"同理跳过:换队后 setQueueData 已写入新 listTracks 而
+                // songEntity 还是旧曲的窗口里落盘,会写出"新队列+旧曲 id"的错位对——
+                // 恢复时旧曲被前插成混入队列(2026-09-29 实证的拼接队列即此),等下一个
+                // 一致状态再存。
                 val videoId = nowPlayingState.value.songEntity?.videoId
-                if (videoId != null && queueData.value.queueState == QueueData.StateSource.STATE_INITIALIZED) {
+                if (videoId != null &&
+                    queueData.value.queueState == QueueData.StateSource.STATE_INITIALIZED &&
+                    _queueData.value.data.listTracks.any { it.videoId == videoId }
+                ) {
                     dataStoreManager.saveRecentSong(
                         videoId,
                         player.contentPosition,
                     )
                     dataStoreManager.setPlaylistFromSaved(queueData.value.data.playlistName ?: "")
+                    dataStoreManager.setSavedQueueIdentity(
+                        playlistId = queueData.value.data.playlistId ?: "",
+                        playlistType = (queueData.value.data.playlistType ?: PlaylistType.PLAYLIST).name,
+                        continuation = queueData.value.data.continuation,
+                    )
                     Logger.d(
                         "Check saved",
                         player.currentMediaItem
@@ -3058,10 +3070,17 @@ internal class MediaServiceHandlerImpl(
                 QueueData.Data(
                     listTracks = listTracks,
                     firstPlayedTrack = currentPlayingTrack,
-                    playlistId = LOCAL_PLAYLIST_ID_SAVED_QUEUE,
+                    // 还原保存时的真实队列身份(NETEASE_PODCAST_/FM/RADIO 前缀+续页令牌):
+                    // SAVED_QUEUE 占位 id 会让无尽钩子误转电台、播客 UI 门控(红心/歌词隐藏)
+                    // 全失效;旧数据没写过身份键时回退占位 id(旧行为)
+                    playlistId =
+                        dataStoreManager.playlistIdFromSaved.first().ifEmpty { LOCAL_PLAYLIST_ID_SAVED_QUEUE },
                     playlistName = dataStoreManager.playlistFromSaved.first(),
-                    playlistType = PlaylistType.PLAYLIST,
-                    continuation = null,
+                    playlistType =
+                        runCatching {
+                            PlaylistType.valueOf(dataStoreManager.playlistTypeFromSaved.first())
+                        }.getOrDefault(PlaylistType.PLAYLIST),
+                    continuation = dataStoreManager.continuationFromSaved.first().ifEmpty { null },
                 ),
             )
             // Playing is the whole difference: the track starts loading (and so reaches

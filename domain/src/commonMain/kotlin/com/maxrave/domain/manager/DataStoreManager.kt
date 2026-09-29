@@ -109,6 +109,21 @@ interface DataStoreManager {
 
     suspend fun setPlaylistFromSaved(playlist: String)
 
+    /** 恢复队列的完整身份(与 playlistFromSaved/queue 表同批写):恢复时还原真实
+     *  playlistId/playlistType/continuation——SAVED_QUEUE 占位 id 会丢 NETEASE_PODCAST_/
+     *  NETEASE_FM/NETEASE_RADIO 前缀,无尽续播、播客 UI 门控全失效。空=旧数据未写过 */
+    val playlistIdFromSaved: Flow<String>
+
+    val playlistTypeFromSaved: Flow<String>
+
+    val continuationFromSaved: Flow<String>
+
+    suspend fun setSavedQueueIdentity(
+        playlistId: String,
+        playlistType: String,
+        continuation: String?,
+    )
+
     val sendBackToGoogle: Flow<String>
 
     suspend fun setSendBackToGoogle(send: Boolean)
