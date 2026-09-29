@@ -1452,6 +1452,7 @@ suspend fun NeteaseClient.commentFloor(
     parentCommentId: Long,
     time: Long = -1,
     limit: Int = 20,
+    threadId: String? = null,
 ): Result<NeteaseCommentFloorPage> =
     runCatching {
         val body =
@@ -1459,7 +1460,7 @@ suspend fun NeteaseClient.commentFloor(
                 "/resource/comment/floor/get",
                 mapOf(
                     "parentCommentId" to parentCommentId,
-                    "threadId" to "R_SO_4_$songId",
+                    "threadId" to (threadId ?: "R_SO_4_$songId"),
                     "time" to time,
                     "limit" to limit,
                 ),
@@ -1612,13 +1613,15 @@ suspend fun NeteaseClient.songCommentsV2(
     cursor: String,
     pageNo: Int = 1,
     pageSize: Int = 20,
+    /** 评论线程 id;null=歌曲默认 R_SO_4_<songId>。播客节目=A_DJ_1_<programId> */
+    threadId: String? = null,
 ): Result<NeteaseCommentPageV2> =
     runCatching {
         val body =
             callWeApi(
                 "/v2/resource/comments",
                 mapOf(
-                    "threadId" to "R_SO_4_$songId",
+                    "threadId" to (threadId ?: "R_SO_4_$songId"),
                     "pageNo" to pageNo,
                     "pageSize" to pageSize,
                     "cursor" to cursor,
@@ -1757,6 +1760,7 @@ internal fun JsonElement.toDjRadioOrNull(): NeteaseDjRadio? {
         coverUrl = (obj.str("coverUrl") ?: obj.str("coverImgUrl") ?: obj.str("picUrl"))?.toHttpsUrl(),
         programCount = obj["programCount"].nInt() ?: obj["trackCount"].nInt() ?: 0,
         djNickname = obj.obj("dj")?.str("nickname"),
+        djUserId = obj.obj("dj")?.get("userId").nLong(),
         subCount = obj["subCount"].nLong(),
         description = obj.str("desc") ?: obj.str("description"),
         rcmdtext = obj.str("rcmdtext") ?: obj.str("rcmdText"),

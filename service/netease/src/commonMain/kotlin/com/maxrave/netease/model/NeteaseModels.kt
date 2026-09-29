@@ -162,6 +162,8 @@ data class NeteaseDjRadio(
     val coverUrl: String?,
     val programCount: Int,
     val djNickname: String?,
+    /** 播主用户 id(点播主名跳艺人页路由用);列表端点部分形状不带则 null */
+    val djUserId: Long? = null,
     /** 订阅数/描述/推荐语/分类/当前账号是否已订阅(详情端点才带,列表端点为 null) */
     val subCount: Long? = null,
     val description: String? = null,

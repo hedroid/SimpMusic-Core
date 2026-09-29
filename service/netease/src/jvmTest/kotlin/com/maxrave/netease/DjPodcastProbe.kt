@@ -411,6 +411,43 @@ class DjPodcastProbe {
                 val r = client.songUrl(sid, com.maxrave.netease.model.NeteaseQuality.LOSSLESS).getOrNull()
                 "size=${r?.sizeBytes} url=${r?.url?.take(40)} -> " + if ((r?.sizeBytes ?: 0) < 100_000) "TRIAL(仍付费墙)" else "FULL(VIP 权益覆盖,可完整播)"
             }
+            section("播主主页 id 与节目评论线程v2") {
+                val sb15 = StringBuilder()
+                // 女王电台:dj 对象里有没有 userId
+                val body = runCatching { client.callEApi("/djradio/get", mapOf("id" to 1225587488L)) }.getOrNull()
+                val dj = body?.obj("djRadio")?.obj("dj")
+                sb15.appendLine("djRadio.dj: userId=${dj?.get("userId").nLong()} nickname=${dj?.str("nickname")}")
+                // 节目评论线程:官方节目评论用 R_PR_<programId>
+                val pid = 3080522427L
+                val c = runCatching { client.callWeApi("/v1/resource/comments/R_PR_3_$pid", mapOf("rid" to pid, "offset" to 0, "limit" to 3, "beforeTime" to "")) }.getOrNull()
+                sb15.appendLine("R_PR_3 raw keys=${c?.keys?.joinToString(",")} total=${c?.get("total").nInt()} more=${(c?.get("more") as? kotlinx.serialization.json.JsonPrimitive)?.content}")
+                val top3 = (c?.array("topComments") ?: c?.array("hotComments"))?.size
+                sb15.appendLine("topComments=$top3 comments=${c?.array("comments")?.size}")
+                // 女王台已知节目:commentThreadId 字段是服务端给的官方线程 id,直接用它查
+                val bp4 = runCatching { client.callEApi("/dj/program/detail", mapOf("id" to 3080522427L)) }.getOrNull()
+                val tid = bp4?.obj("program")?.str("commentThreadId")
+                sb15.appendLine("program/detail: code=${bp4?.get("code").nLong()} tid=$tid")
+                if (tid != null) {
+                    val c5 = runCatching { client.callWeApi("/v1/resource/comments/$tid", mapOf("rid" to 3080522427, "offset" to 0, "limit" to 3, "beforeTime" to "")) }.getOrNull()
+                    sb15.appendLine("comments by tid: code=${c5?.get("code").nLong()} total=${c5?.get("total").nInt()} hot=${c5?.array("hotComments")?.size} comments=${c5?.array("comments")?.size}")
+                }
+                // 找一档大台节目对照:清音悦耳(972022490, 788 期)首期
+                val bp = runCatching { client.callEApi("/dj/program/byradio", mapOf("radioId" to 972022490L, "limit" to 1, "offset" to 0, "asc" to false)) }.getOrNull()
+                val pid2 = (bp?.array("programs")?.firstOrNull() as? kotlinx.serialization.json.JsonObject)?.get("id").nLong()
+                val cnt2 = bp?.obj("programs") // no-op
+                if (pid2 != null) {
+                    val c3 = runCatching { client.callWeApi("/v1/resource/comments/R_PR_3_$pid2", mapOf("rid" to pid2, "offset" to 0, "limit" to 3, "beforeTime" to "")) }.getOrNull()
+                    sb15.appendLine("R_PR_3 清音悦耳 pid=$pid2: code=${c3?.get("code").nLong()} total=${c3?.get("total").nInt()} hot=${c3?.array("hotComments")?.size} comments=${c3?.array("comments")?.size}")
+                }
+                // 播主 userId 可达性:用户档案端点(艺人页同源)
+                val u = runCatching { client.callWeApi("/v1/user/detail/${12876638585L}", mapOf()) }.getOrNull()
+                sb15.appendLine("user/detail: code=${u?.get("code").nLong()} profile=${u?.obj("profile")?.str("nickname")}")
+                sb15.toString().trim()
+            }
+            section("订阅列表 dj.userId 解析") {
+                val subs = client.userDjRadios(limit = 3).getOrNull().orEmpty()
+                subs.joinToString("\n") { "${it.name.take(10)}: djUserId=${it.djUserId}" }
+            }
             out.writeText(sb.toString())
             println(sb.toString())
         }
