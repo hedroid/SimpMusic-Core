@@ -226,6 +226,45 @@ class DjPodcastProbe {
                 sb4.appendLine("byradio 清音悦耳: programs=${ok2.array("programs")?.size} count=${ok2["count"].nInt()}")
                 sb4.toString().trim()
             }
+            section("移植候选端点验证") {
+                val sb5 = StringBuilder()
+                fun kotlinx.serialization.json.JsonObject?.brief(name: String) {
+                    val o = this
+                    sb5.appendLine("$name: code=${o?.get("code").nLong()} keys=${o?.keys?.joinToString(",").toString().take(100)}")
+                }
+                // 1.分类下电台(bycat):官方"分类浏览"的正主
+                runCatching { client.callEApi("/djradio/get/bycat", mapOf("cateId" to 3L, "limit" to 5, "offset" to 0, "asid" to "")) }.getOrNull().brief("bycat cateId=3")
+                runCatching { client.callWeApi("/djradio/get/bycat", mapOf("cateId" to 3L, "limit" to 5, "offset" to 0)) }.getOrNull().brief("bycat weapi")
+                // 2.新晋电台榜(type=0)
+                val t0 = client.djRadioToplist(limit = 5, type = 0).getOrNull()
+                sb5.appendLine("新晋榜(type=0): size=${t0?.size} first=${t0?.firstOrNull()?.name?.take(10)}")
+                // 3.节目榜
+                runCatching { client.callEApi("/program/toplist", mapOf("limit" to 5, "offset" to 0)) }.getOrNull().brief("program/toplist eapi")
+                runCatching { client.callWeApi("/dj/program/toplist", mapOf("limit" to 5, "offset" to 0)) }.getOrNull().brief("dj/program/toplist weapi")
+                // 4.相似电台
+                runCatching { client.callEApi("/djradio/similar", mapOf("radioId" to 792734685L)) }.getOrNull().brief("djradio/similar")
+                runCatching { client.callWeApi("/djradio/similarity", mapOf("radioId" to 792734685L)) }.getOrNull().brief("djradio/similarity")
+                sb5.toString().trim()
+            }
+            section("bycat 路径变体穷举") {
+                val sb6 = StringBuilder()
+                suspend fun tryCall(name: String, path: String, params: Map<String, Any?>, eapi: Boolean = true) {
+                    val body = runCatching { if (eapi) client.callEApi(path, params) else client.callWeApi(path, params) }.getOrNull()
+                    val arr = body?.array("djRadios") ?: body?.array("data") ?: body?.array("radios")
+                    sb6.appendLine("$name: code=${body?.get("code").nLong()} keys=${body?.keys?.joinToString(",").toString().take(60)} arr=${arr?.size}")
+                }
+                tryCall("eapi /djradio/category/recommend", "/djradio/category/recommend", mapOf("cateId" to 3L, "limit" to 5, "offset" to 0))
+                tryCall("eapi /djradio/hot", "/djradio/hot", mapOf("cateId" to 3L, "limit" to 5, "offset" to 0))
+                tryCall("weapi /djradio/bycat", "/djradio/bycat", mapOf("cateId" to 3L, "limit" to 5, "offset" to 0), eapi = false)
+                tryCall("eapi /dj/program/bycat", "/dj/program/bycat", mapOf("cateId" to 3L, "limit" to 5, "offset" to 0))
+                sb6.toString().trim()
+            }
+            section("program/toplist 元素形状") {
+                val body = client.callEApi("/program/toplist", mapOf("limit" to 2, "offset" to 0))
+                val arr = body.array("toplist")
+                val first = (arr?.firstOrNull() as? kotlinx.serialization.json.JsonObject)?.toString() ?: "none"
+                first.take(900)
+            }
             out.writeText(sb.toString())
             println(sb.toString())
         }

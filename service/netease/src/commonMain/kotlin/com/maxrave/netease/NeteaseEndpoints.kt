@@ -1091,6 +1091,25 @@ suspend fun NeteaseClient.podcastCategories(): Result<List<NeteasePodcastCategor
             }.orEmpty()
     }
 
+/** 分类下电台列表(公开,探针实证 2026-09-28:/djradio/hot cateId+limit+offset,响应 djRadios+hasMore)。
+ *  官方播客 tab"分类浏览"的正主——注意与 /program/recommend/v1 的 cateId(被服务端忽略)不是一回事 */
+suspend fun NeteaseClient.djRadiosByCategory(
+    cateId: Long,
+    limit: Int = 30,
+    offset: Int = 0,
+): Result<Pair<List<NeteaseDjRadio>, Boolean>> =
+    runCatching {
+        val body =
+            callEApi(
+                "/djradio/hot",
+                mapOf("cateId" to cateId, "limit" to limit, "offset" to offset),
+            )
+        check((body["code"]?.nLong() ?: -1L) == 200L) { "djradio/hot code=${body["code"]}" }
+        val radios = body.array("djRadios")?.mapNotNull { it.toDjRadioOrNull() }.orEmpty()
+        val more = (body["hasMore"] as? JsonPrimitive)?.booleanOrNull ?: false
+        radios to more
+    }
+
 /** 推荐/最新节目(公开):cateId=null 不限分类;响应 programs[] + more */
 suspend fun NeteaseClient.recommendPodcastPrograms(
     cateId: Long?,
@@ -1137,6 +1156,18 @@ suspend fun NeteaseClient.djRadioToplist(
         val body = callEApi("/djradio/toplist", mapOf("limit" to limit, "offset" to 0, "type" to type))
         check((body["code"]?.nLong() ?: -1L) == 200L) { "djradio/toplist code=${body["code"]}" }
         body.array("toplist")?.mapNotNull { it.toDjRadioOrNull() }.orEmpty()
+    }
+
+/** 热门节目榜(公开,探针实证:/program/toplist eapi,toplist 数组,元素是 **{"program":{...}} 包装**
+ *  ——顶层无 id,须解包后再喂节目解析)。 */
+suspend fun NeteaseClient.djProgramToplist(): Result<List<NeteaseDjProgram>> =
+    runCatching {
+        val body = callEApi("/program/toplist", mapOf("limit" to 30, "offset" to 0))
+        check((body["code"]?.nLong() ?: -1L) == 200L) { "program/toplist code=${body["code"]}" }
+        body.array("toplist")
+            ?.mapNotNull { it.jsonObject.obj("program") ?: it.jsonObject }
+            ?.mapNotNull { it.toDjProgramOrNull() }
+            .orEmpty()
     }
 
 /** 电台下的节目列表(一次 30 条,offset 分页) */

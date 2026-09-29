@@ -129,6 +129,8 @@ import com.maxrave.netease.deletePlaylist
 import com.maxrave.netease.djRadioDetail
 import com.maxrave.netease.djRadioPrograms
 import com.maxrave.netease.djRadioToplist
+import com.maxrave.netease.djProgramToplist
+import com.maxrave.netease.djRadiosByCategory
 import com.maxrave.netease.personalizedDjRadios
 import com.maxrave.netease.podcastCategories
 import com.maxrave.netease.radarPlaylists
@@ -1876,6 +1878,18 @@ class NeteaseRepositoryImpl(
         type: Int = 1,
     ): Result<List<NeteaseDjRadio>> =
         runCatching { client.djRadioToplist(limit = limit, type = type).getOrThrow() }
+
+    /** 热门节目榜(公开;元素是节目形状,可播判定同 toResultSong) */
+    suspend fun getDjProgramToplist(): Result<List<NeteaseDjProgram>> =
+        runCatching { client.djProgramToplist().getOrThrow() }
+
+    /** 分类下电台列表(公开分页,/djradio/hot) */
+    suspend fun getDjRadiosByCategory(
+        cateId: Long,
+        offset: Int,
+        limit: Int = 30,
+    ): Result<Pair<List<NeteaseDjRadio>, Boolean>> =
+        runCatching { client.djRadiosByCategory(cateId, limit = limit, offset = offset).getOrThrow() }
 
     /** 我的订阅电台(需登录) */
     suspend fun getMyDjRadios(): Result<List<NeteaseDjRadio>> =
