@@ -166,6 +166,8 @@ data class NeteaseCommentListPage(
     val items: List<NeteaseSongInfoEntity.HotComment>,
     val hasMore: Boolean,
     val nextCursor: String?,
+    /** 服务端总数(v2 data.totalCount);节目线程与歌曲线程数不同,UI 用它刷新标题 */
+    val totalCount: Int = 0,
 )
 
 /**
@@ -1332,6 +1334,7 @@ class NeteaseRepositoryImpl(
         return NeteaseCommentListPage(
             items = items,
             hasMore = page.hasMore,
+            totalCount = page.totalCount,
             // 游标三档统一用服务端回传值(最热=normalHot#N 排名偏移;最新/推荐=末条 time;
             // 探针实证 pageNo>1 时两者都能推进,pageNo 恒 1 则原样返回第一页)
             nextCursor = if (page.hasMore) page.cursor else null,

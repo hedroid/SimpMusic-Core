@@ -193,6 +193,8 @@ data class NeteaseDjProgram(
     val radioId: Long?,
     val radioName: String?,
     val djNickname: String?,
+    /** 节目评论数(节目层字段,与 mainSong 歌曲线程的评论数不是一个数) */
+    val commentCount: Long? = null,
     val paid: Boolean = false,
     val vip: Boolean = false,
     val bought: Boolean = false,
