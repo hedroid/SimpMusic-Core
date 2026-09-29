@@ -276,6 +276,34 @@ class DjPodcastProbe {
                 }
                 sb7.toString().trim()
             }
+            section("byradio asc 参数验证") {
+                val rid = client.userDjRadios().getOrNull()?.firstOrNull()?.id
+                    ?: client.djRadioToplist().getOrNull()?.firstOrNull()?.id
+                    ?: return@section "no radio"
+                val a = client.djRadioPrograms(rid, limit = 3, offset = 0, asc = false).getOrNull()?.first
+                val b = client.djRadioPrograms(rid, limit = 3, offset = 0, asc = true).getOrNull()?.first
+                "radio=$rid\nfalse: " + (a?.joinToString("/") { "${it.name.take(6)}@${it.serialNum}" } ?: "null") +
+                    "\ntrue:  " + (b?.joinToString("/") { "${it.name.take(6)}@${it.serialNum}" } ?: "null")
+            }
+            section("sub/unsub 真实响应形状(测试后还原)") {
+                val sb12 = StringBuilder()
+                // 找一个当前未订阅的电台(榜单里挑)
+                val target = client.djRadioToplist(limit = 20, type = 1).getOrNull()
+                    ?.firstOrNull { it.subed != true } ?: return@section "no unsubscribed target"
+                sb12.appendLine("target: ${target.id} ${target.name.take(10)} subed=${target.subed}")
+                // sub
+                val subBody = runCatching { client.callEApi("/djradio/sub", mapOf("id" to target.id)) }.getOrNull()
+                sb12.appendLine("SUB: code=${subBody?.get("code").nLong()} keys=${subBody?.keys?.joinToString(",").toString().take(70)}")
+                // 验证订阅生效
+                val subed1 = client.userDjRadios().getOrNull()?.any { it.id == target.id }
+                sb12.appendLine("subscribed now: $subed1")
+                // unsub 还原
+                val unsubBody = runCatching { client.callEApi("/djradio/unsub", mapOf("id" to target.id)) }.getOrNull()
+                sb12.appendLine("UNSUB: code=${unsubBody?.get("code").nLong()}")
+                val subed2 = client.userDjRadios().getOrNull()?.any { it.id == target.id }
+                sb12.appendLine("subscribed after unsub: $subed2")
+                sb12.toString().trim()
+            }
             section("优秀新电台四轮:toplist分类版type档") {
                 val sb11 = StringBuilder()
                 for (t in listOf(0, 1, 2, 3)) {
