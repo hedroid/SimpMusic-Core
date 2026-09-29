@@ -448,6 +448,30 @@ class DjPodcastProbe {
                 val subs = client.userDjRadios(limit = 3).getOrNull().orEmpty()
                 subs.joinToString("\n") { "${it.name.take(10)}: djUserId=${it.djUserId}" }
             }
+            section("节目喜欢端点验证") {
+                val sb16 = StringBuilder()
+                val pid = 3080522427L
+                // 候选: /dj/program/like、/program/like、/dj/program/subscribe
+                // weapi 与 eapi 双通道 × 参数形状(id / programId)
+                for ((path, params) in listOf(
+                    "/dj/program/like" to mapOf<String, Any?>("programId" to pid),
+                    "/dj/program/like" to mapOf<String, Any?>("id" to pid),
+                    "/dj/program/like" to mapOf<String, Any?>("programId" to pid, "like" to "true"),
+                )) {
+                    val b = runCatching { client.callWeApi(path, params) }.getOrNull()
+                    sb16.appendLine("weapi $path ${params.keys}: code=${b?.get("code").nLong()} msg=${b?.str("msg") ?: b?.str("message")}")
+                }
+                for ((path, params) in listOf(
+                    "/dj/program/favorite" to mapOf<String, Any?>("id" to pid),
+                    "/dj/program/like" to mapOf<String, Any?>("programId" to pid, "op" to "like"),
+                    "/v1/dj/program/like" to mapOf<String, Any?>("programId" to pid),
+                    "/dj/program/like" to mapOf<String, Any?>("pid" to pid, "op" to "like"),
+                )) {
+                    val b = runCatching { client.callEApi(path, params) }.getOrNull()
+                    sb16.appendLine("eapi $path: code=${b?.get("code").nLong()} msg=${b?.str("msg") ?: b?.str("message")}")
+                }
+                sb16.toString().trim()
+            }
             out.writeText(sb.toString())
             println(sb.toString())
         }
