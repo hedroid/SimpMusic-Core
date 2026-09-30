@@ -50,6 +50,7 @@ internal class FileDownloadExporter(
     private val downloadCache: SimpleCache,
     private val songRepository: SongRepository,
     private val dataStoreManager: DataStoreManager,
+    private val downloadManager: androidx.media3.exoplayer.offline.DownloadManager? = null,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -97,25 +98,42 @@ internal class FileDownloadExporter(
                 // 1) 缓存 → 完整原始流(网易=mp3/flac 字节;YT=所选 itag 容器 webm/m4a)
                 if (!dumpCacheTo(videoId, rawInput)) {
                     Logger.e(TAG, "exportAudio: cache miss/incomplete for $videoId")
+                    // 对账路径的必然边角:转存成功后缓存已清、文件又被外部删——COMPLETED
+                    // 条目在而数据没了,对账每次启动都白试。清掉 index 条目,下次点下载全新。
+                    if (downloadManager != null) {
+                        runCatching { downloadManager.removeDownload(videoId) }
+                    }
                     return@withContext false
                 }
                 val isNetease = videoId.toLongOrNull() != null
                 val isFlac = rawInput.inputStream().use { s -> ByteArray(4).also { s.read(it) }.decodeToString().startsWith("fLaC") }
 
-                // 2) tag/歌词尽力收集(失败全空字段,不阻塞);封面(升档 1080)用 okhttp 拉字节
+                // 2) tag/歌词尽力收集(失败全空字段,不阻塞);封面(升档 1080)用 okhttp 拉字节。
+                // 封面只嵌 mp3:flac 嵌 attached_pic 后 ExoPlayer 的 MediaCodec 路线会炸
+                // InsufficientCapacityException(实测 2026-10-01,129KB 帧超 32KB buffer),
+                // 且 flac 嵌图在部分播放器生态本就兼容性差——flac 封面走文件管理器缩略图
                 val content: EnrichedDownloadContent =
                     runCatching { enricher?.enrich(song, song.thumbnails) ?: EnrichedDownloadContent() }
                         .getOrElse { EnrichedDownloadContent() }
-                val coverFile =
-                    song.thumbnails?.let { url -> downloadArtwork(hiResArtworkUrl(url)) }
-                        ?.let { bytes -> File(workDir, "$videoId.jpg").apply { writeBytes(bytes) } }
-                        ?.takeIf { it.length() > 0 }
-
-                // 3) ffmpeg:网易原格式 -c:a copy;YT 一律转 mp3(-q:a 0);tag+封面一次写入
                 val ext = if (isNetease && isFlac) "flac" else "mp3"
+                val coverFile =
+                    if (ext == "mp3") {
+                        song.thumbnails?.let { url -> downloadArtwork(hiResArtworkUrl(url)) }
+                            ?.let { bytes -> File(workDir, "$videoId.jpg").apply { writeBytes(bytes) } }
+                            ?.takeIf { it.length() > 0 }
+                    } else {
+                        null
+                    }
+
+                // 3) 成品流:flac=原始字节直落(ffmpeg-kit 6.0.1 的 flac muxer 重封即损坏——
+                // 帧数据逐字节完好但头部 block 错位,ExoPlayer/ffmpeg 都解析失败;去 lyrics
+                // 也一样,宿主 ffmpeg 同命令对照完好=构建级 bug,实测 2026-10-01。tag 由
+                // 文件名+同名 lrc 承载);mp3(网易标准档/YT 转码)走 ffmpeg 写 tag
                 val mime = if (ext == "flac") "audio/flac" else "audio/mpeg"
                 val tagged = File(workDir, "$videoId-tagged.$ext")
-                if (!writeTaggedAudio(rawInput, tagged, coverFile, song, content, isNetease && isFlac)) {
+                if (ext == "flac") {
+                    rawInput.copyTo(tagged, overwrite = true)
+                } else if (!writeTaggedAudio(rawInput, tagged, coverFile, song, content, isNetease && isFlac, ext)) {
                     Logger.e(TAG, "exportAudio: ffmpeg failed for $videoId")
                     return@withContext false
                 }
@@ -239,8 +257,12 @@ internal class FileDownloadExporter(
                     val buf = ByteArray(64 * 1024)
                     while (true) {
                         val n = source.read(buf, 0, buf.size)
-                        if (n <= 0) break
-                        out.write(buf, 0, n)
+                        // DataSource.read 契约:0=暂时无数据(继续读),-1(RESULT_END_OF_INPUT)=流
+                        // 结束。把 0 当 EOF 会把续传下载(缓存 spans 有边界)的流截断——导出的
+                        // flac 帧数据损坏、ExoPlayer "First frame does not start with sync code"
+                        // 即此(实测 2026-10-01)
+                        if (n == -1) break
+                        if (n > 0) out.write(buf, 0, n)
                     }
                 }
             } finally {
@@ -261,6 +283,7 @@ internal class FileDownloadExporter(
         song: SongEntity,
         content: EnrichedDownloadContent,
         copyAudio: Boolean,
+        ext: String,
     ): Boolean {
         val cmd = mutableListOf<String>()
         cmd += listOf("-i", input.path)
@@ -275,16 +298,22 @@ internal class FileDownloadExporter(
         if (cover != null) {
             cmd += listOf("-c:v", "copy", "-disposition:v", "attached_pic", "-metadata:s:v", "title=Album cover")
         }
-        val meta = buildTags(song, content)
+        // flac 不带 lyrics(见 buildTags 注释);mp3(ID3 USLT)暂带,标准档网易歌实测过再定
+        val meta = buildTags(song, content, includeLyrics = ext == "mp3")
         meta.forEach { (k, v) -> cmd += listOf("-metadata", "$k=$v") }
         cmd.add(output.path)
         return runFfmpeg(cmd)
     }
 
-    /** ffmpeg 通用 metadata 键(空值不写;注释 tag 固定为发布来源标记) */
+    /** ffmpeg 通用 metadata 键(空值不写;注释 tag 固定为发布来源标记)。
+     *  flac 不写 lyrics:ffmpeg-kit 6.0.1 的 flac muxer 对大体积带换行的 vorbis comment
+     *  长度计算有 bug——4KB LRC 文本入 tag 后 block 边界错位,帧区解析全毁("First frame
+     *  does not start with sync code",宿主 ffmpeg 同命令完好=构建差异;实测 2026-10-01
+     *  逐字节对比帧数据 100% 完好、损坏全在头部 483 字节内)。歌词由同名 .lrc 文件承载。 */
     private fun buildTags(
         song: SongEntity,
         c: EnrichedDownloadContent,
+        includeLyrics: Boolean,
     ): Map<String, String> =
         buildMap {
             song.title.takeIf { it.isNotBlank() }?.let { put("title", it) }
@@ -300,7 +329,7 @@ internal class FileDownloadExporter(
             c.composer?.let { put("composer", it) }
             c.copyright?.let { put("copyright", it) }
             put("comment", "SimpMusic-Hedroid")
-            c.lrcText?.let { put("lyrics", it) }
+            if (includeLyrics) c.lrcText?.let { put("lyrics", it) }
         }
 
     private fun runFfmpeg(args: List<String>): Boolean {
@@ -363,6 +392,17 @@ internal class FileDownloadExporter(
             .take(100)
             .ifBlank { "download_$fallback" }
 
+    /** relPath(如 Music/SimpMusic/艺人) → 该卷根下的绝对路径目录 */
+    private fun relPathToDir(relPath: String): File =
+        File(
+            when (relPath.substringBefore('/')) {
+                "Movies" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES)
+                "Download" -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                else -> android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
+            },
+            relPath.substringAfter('/'),
+        )
+
     /** MediaStore 插入 + 写流 + 解除 pending,返回实际落盘文件(读 DATA 列)。 */
     private fun insertMediaStore(
         source: File,
@@ -373,6 +413,17 @@ internal class FileDownloadExporter(
     ): File? =
         runCatching {
             val resolver = context.contentResolver
+            // 同路径残行先清:文件被外部删但 MediaStore 行还在(root rm/FUSE 残占),或
+            // 转存被二次触发——insert 会撞 files._data 唯一索引(实测 2026-10-01
+            // SQLITE_CONSTRAINT_UNIQUE)。自己贡献的行免权限可删。
+            val absolutePath = File(relPathToDir(relPath), displayName).absolutePath
+            resolver.query(collection, arrayOf(MediaStore.MediaColumns._ID), "${MediaStore.MediaColumns.DATA}=?", arrayOf(absolutePath), null)?.use { c ->
+                val stale = mutableListOf<android.net.Uri>()
+                while (c.moveToNext()) {
+                    stale += android.net.Uri.withAppendedPath(collection, c.getLong(0).toString())
+                }
+                stale.forEach { runCatching { resolver.delete(it, null, null) } }
+            }
             val values =
                 ContentValues().apply {
                     put(MediaStore.MediaColumns.RELATIVE_PATH, relPath)
@@ -392,14 +443,26 @@ internal class FileDownloadExporter(
         }.onFailure { Logger.e(TAG, "insertMediaStore failed: ${it.message}") }
             .getOrNull()
 
-    /** lrc 落盘:同目录同名;Music/ 下非媒体文件 MediaStore 不一定接收,先直写(FUSE 对自己建过文件的目录通常放行),失败仅 log */
+    /** lrc 落盘:同目录同名;先删残占(FUSE 下同名目标常 EEXIST,老朋友),失败仅 log */
     private fun writeLrc(
         dir: File?,
         name: String,
         text: String,
     ) {
-        val target = File(dir ?: return, name)
-        target.writeText(text)
+        val dir_ = dir ?: return
+        val target = File(dir_, name)
+        // staged write:FUSE 对"新建同名文件"常 EEXIST(残占),delete 也清不掉目录项的同名
+        // 冲突记忆——写 .part 再原子 rename(同目录 rename 对已存在目标=覆盖),老配方
+        val part = File(dir_, "$name.part")
+        part.writeText(text)
+        try {
+            if (!part.renameTo(target)) {
+                target.delete()
+                check(part.renameTo(target)) { "lrc commit failed" }
+            }
+        } finally {
+            part.delete()
+        }
         Logger.i(TAG, "lrc written: $target")
     }
 

@@ -68,7 +68,7 @@ internal class DownloadUtils(
 
     /** 文件式转存端(COMPLETED 后缓存→真实文件);惰性避免构造期碰 Koin */
     private val exporter by lazy {
-        FileDownloadExporter(context, downloadCache, songRepository, dataStoreManager)
+        FileDownloadExporter(context, downloadCache, songRepository, dataStoreManager, downloadManager)
     }
 
     /** 文件式任务的 songId 集合(DownloadIndex 扫描+入队时填充):它们 COMPLETED≠已下载,要等转存 */
@@ -259,6 +259,14 @@ internal class DownloadUtils(
         if (!hasEnoughDisk()) {
             Logger.w(TAG, "downloadTrack rejected: low disk for $videoId")
             return false
+        }
+        // 重下场景(文件被外部删/转存失败残留):DownloadIndex 里的 COMPLETED 条目会挡住
+        // addDownload 重跑(addDownload 对已存在条目不重启),先清——两个调用走同一内部
+        // handler 队列,顺序有保证
+        val existing = downloadManager.downloadIndex.getDownload(videoId)
+        if (existing != null && existing.state == Download.STATE_COMPLETED) {
+            runCatching { downloadManager.removeDownload(videoId) }
+                .onFailure { Logger.w(TAG, "clear stale index entry failed: ${it.message}") }
         }
         val downloadRequest =
             DownloadRequest
