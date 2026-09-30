@@ -570,3 +570,9 @@ private fun JsonElement?.primitiveInt(): Int? =
 class NeteaseRateLimitException(
     val url: String,
 ) : Exception("netease rate limited: $url")
+
+/** 网易已登出/账号失效(account/get 无 profile 或 userId=0):与网络抖动、风控等可重试
+ *  失败区分——重试链看到它应立即收手并清空缓存列表(留着旧账号的歌单只会加错地方)。 */
+class NeteaseNotLoggedInException(
+    message: String,
+) : Exception(message)

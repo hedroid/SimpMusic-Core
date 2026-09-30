@@ -556,7 +556,18 @@ suspend fun NeteaseClient.userPlaylists(userId: Long): Result<List<NeteasePlayli
                     "offset" to 0,
                 ),
             )
-        body.array("playlist")?.mapIndexed { index, element ->
+        // 业务码+形状校验:HTTP 200 但 code!=200(账号风控/参数异常)或缺 playlist 字段
+        // 的异常响应,曾被折叠成"成功空列表"——上层无从重试,是"添加到歌单弹窗偶尔
+        // 空列表"的残留根因(2026-09-30 二轮 CR)。合法空不存在:任何有效账号至少
+        // 有一个红心歌单,playlist 缺失一律按失败处理。
+        val code = (body["code"] as? JsonPrimitive)?.content
+        check(code == null || code == "200") {
+            "userPlaylists rejected: code=$code msg=${(body["message"] ?: body["msg"])?.let { (it as? JsonPrimitive)?.content }}"
+        }
+        val playlists =
+            body.array("playlist")
+                ?: error("userPlaylists: playlist field missing (code=$code)")
+        playlists.mapIndexed { index, element ->
             val pl = element.toPlaylist()
             // specialType==5 是"我喜欢的音乐"红心歌单,网易固定将其排在首位
             if (index == 0 || pl.rawSpecialType == 5) {
@@ -564,7 +575,7 @@ suspend fun NeteaseClient.userPlaylists(userId: Long): Result<List<NeteasePlayli
             } else {
                 pl
             }
-        } ?: emptyList()
+        }
     }
 
 suspend fun NeteaseClient.personalRadio(): Result<NeteaseRadioSession> =

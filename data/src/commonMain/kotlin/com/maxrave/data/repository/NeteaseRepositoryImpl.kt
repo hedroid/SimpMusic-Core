@@ -145,6 +145,7 @@ import com.maxrave.netease.songUrl
 import com.maxrave.netease.subDjRadio
 import com.maxrave.netease.toplistPlaylists
 import com.maxrave.netease.userDjRadios
+import com.maxrave.netease.NeteaseNotLoggedInException
 import com.maxrave.netease.userPlaylists
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -1094,15 +1095,20 @@ class NeteaseRepositoryImpl(
 
     /**
      * 同上但保留失败语义(Result):"添加到歌单"弹窗首拉经常撞上冷网络/代理抖动失败,
-     * 旧签名把失败折叠成空列表,上层无从重试(用户 2026-09-30 反馈)。空成功(账号
-     * 确实没有自建歌单)与失败在此可区分,调用方按 isFailure 退避重试即可。
+     * 旧签名把失败折叠成空列表,上层无从重试(用户 2026-09-30 反馈)。失败分两类:
+     * - [NeteaseNotLoggedInException]=已登出/账号失效(无 profile 或 userId=0)——
+     *   不可重试,调用方应清空缓存列表(留着旧账号的歌单只会加错地方);
+     * - 网络/风控/业务 code!=200/响应形状异常=可重试失败,退避后重试。
+     * "成功且空"在正常账号下不存在(至少有红心歌单,但这里只取自建 NORMAL 会被
+     * 过滤,空=真的没有自建歌单,属合法成功)。
      */
     suspend fun getOwnNeteasePlaylistsResult(): Result<List<PlaylistsResult>> =
         runCatching {
-            val account = client.getAccountStatus().getOrThrow() ?: return@runCatching emptyList()
-            if (account.userId == 0L) return@runCatching emptyList()
+            val account =
+                client.getAccountStatus().getOrThrow()
+                    ?: throw NeteaseNotLoggedInException("account profile missing (logged out?)")
+            if (account.userId == 0L) throw NeteaseNotLoggedInException("account userId=0")
             client.userPlaylists(account.userId).getOrThrow()
-                .orEmpty()
                 .filter {
                     it.creatorId == account.userId && it.specialType == NeteasePlaylist.SpecialType.NORMAL
                 }
