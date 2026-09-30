@@ -58,6 +58,14 @@ class NeteaseQrLoginSession {
 
     fun reset() = cookies.clear()
 
+    /**
+     * 释放独立引擎。本会话的 HttpClient 不与 [NeteaseClient] 共享,不关的话
+     * 连接池/引擎线程随会话残留——持有方(登录页 ViewModel)销毁时必须调用。
+     */
+    fun close() {
+        http.close()
+    }
+
     fun currentCookies(): Map<String, String> = LinkedHashMap(cookies)
 
     suspend fun createSession(): Result<NeteaseQrSession> =
