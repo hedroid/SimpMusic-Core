@@ -234,6 +234,48 @@ interface DataStoreManager {
 
     suspend fun setNeteaseDownloadQuality(quality: String)
 
+    // ===== 文件式下载(第二代)设置分区 =====
+
+    /** 下载文件名格式: [DOWNLOAD_FILE_NAME_TITLE_ONLY]/[DOWNLOAD_FILE_NAME_ARTIST_TITLE]/[DOWNLOAD_FILE_NAME_TITLE_ARTIST] */
+    val downloadFileNameFormat: Flow<String>
+
+    suspend fun setDownloadFileNameFormat(format: String)
+
+    /** 同时下载任务数 1..10 */
+    val simultaneousDownloads: Flow<Int>
+
+    suspend fun setSimultaneousDownloads(count: Int)
+
+    /**
+     * 统一音频下载档位: [AUDIO_DOWNLOAD_QUALITY_STANDARD]/[AUDIO_DOWNLOAD_QUALITY_HIGH]/[AUDIO_DOWNLOAD_QUALITY_LOSSLESS]
+     * (网易映射 NeteaseQuality 三档+FALLBACK 降级链;YT 映射 itag,无损档取最高码率)。
+     * 读时惰性迁移旧键(downloadQuality/neteaseDownloadQuality):网易 8 档按 档位相近 原则折叠,
+     * 迁移优先级=网易旧值(老版本下载默认 LOSSLESS,行为不突变),无旧值默认 HIGH。
+     */
+    val audioDownloadQuality: Flow<String>
+
+    suspend fun setAudioDownloadQuality(quality: String)
+
+    /** 下载文件按 主艺人/专辑 建目录 */
+    val downloadArtistAlbumFolder: Flow<String>
+
+    suspend fun setDownloadArtistAlbumFolder(enabled: Boolean)
+
+    /** 下载时同步保存同名 .lrc(仅原文时间轴;拉词失败跳过不算下载失败) */
+    val downloadSaveLrc: Flow<String>
+
+    suspend fun setDownloadSaveLrc(enabled: Boolean)
+
+    /** AI 补全拿不到的标签(语言/流派兜底等),复用歌词翻译的 AiService key;失败不阻塞下载 */
+    val downloadAiTags: Flow<String>
+
+    suspend fun setDownloadAiTags(enabled: Boolean)
+
+    /** 仅 Wi-Fi 下载(默认开;蜂窝下入队的任务等待,网络恢复 Wi-Fi 自动继续) */
+    val downloadWifiOnly: Flow<String>
+
+    suspend fun setDownloadWifiOnly(enabled: Boolean)
+
     /** 关注与网易云同步(双向:关注/取关同步到账号) */
     val neteaseFollowSync: Flow<String>
     val neteaseFavoriteSync: Flow<String>
@@ -758,6 +800,16 @@ interface DataStoreManager {
         const val HAPTIC_FEEDBACK_LEVEL_LIGHT = "LIGHT"
         const val HAPTIC_FEEDBACK_LEVEL_MEDIUM = "MEDIUM"
         const val HAPTIC_FEEDBACK_LEVEL_STRONG = "STRONG"
+
+        /** 下载文件名格式三选(主艺人=艺人列表第一个;连接符 - 无空格) */
+        const val DOWNLOAD_FILE_NAME_TITLE_ONLY = "TITLE_ONLY"
+        const val DOWNLOAD_FILE_NAME_ARTIST_TITLE = "ARTIST_TITLE"
+        const val DOWNLOAD_FILE_NAME_TITLE_ARTIST = "TITLE_ARTIST"
+
+        /** 统一音频下载档位(网易→NeteaseQuality 映射并走 FALLBACK_ORDER 降级;YT→itag,LOSSLESS 取最高码率) */
+        const val AUDIO_DOWNLOAD_QUALITY_STANDARD = "STANDARD"
+        const val AUDIO_DOWNLOAD_QUALITY_HIGH = "HIGH"
+        const val AUDIO_DOWNLOAD_QUALITY_LOSSLESS = "LOSSLESS"
 
         const val THEME_COLOR_DEFAULT = "DEFAULT"
         const val THEME_COLOR_WALLPAPER = "WALLPAPER"

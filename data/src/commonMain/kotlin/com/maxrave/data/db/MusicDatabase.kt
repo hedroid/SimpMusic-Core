@@ -42,7 +42,6 @@ import com.maxrave.domain.data.entities.analytics.PlaybackEventEntity
         YourYouTubePlaylistList::class, PlaybackEventEntity::class, EventArtistEntity::class,
         AutoEqEntryEntity::class, AutoEqIndexMetaEntity::class, AutoEqCurveEntity::class
     ],
-    version = 30,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 2, to = 3), AutoMigration(
@@ -108,7 +107,11 @@ import com.maxrave.domain.data.entities.analytics.PlaybackEventEntity
         // Upstream shipped this as their v26 — same number, different schema — so it is
         // renumbered to 30 here; our v26 history must stay frozen for fork users.
         AutoMigration(29, 30),
+        // 31 adds song.downloadedFilePath / downloadedVideoFilePath (nullable ADD COLUMN,
+        // file-based downloads). Plain enough for the generator.
+        AutoMigration(30, 31),
     ],
+    version = 31,
 )
 @TypeConverters(Converters::class)
 abstract class MusicDatabase : RoomDatabase() {

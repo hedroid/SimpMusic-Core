@@ -260,6 +260,18 @@ internal class LocalDataSource(
         videoId: String,
     ) = databaseDao.updateDownloadState(downloadState, videoId)
 
+    suspend fun updateDownloadedFilePath(
+        path: String?,
+        videoId: String,
+    ) = databaseDao.updateDownloadedFilePath(path, videoId)
+
+    suspend fun updateDownloadedVideoFilePath(
+        path: String?,
+        videoId: String,
+    ) = databaseDao.updateDownloadedVideoFilePath(path, videoId)
+
+    suspend fun getSongIdByDownloadedPath(path: String): String? = databaseDao.getSongIdByDownloadedPath(path)
+
     suspend fun getAllArtists(limit: Int) = databaseDao.getAllArtists(limit)
 
     suspend fun insertArtist(artist: ArtistEntity) = databaseDao.insertArtist(artist)

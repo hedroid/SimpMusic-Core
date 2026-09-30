@@ -710,6 +710,131 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    // ===== 文件式下载(第二代)设置分区 =====
+
+    override val downloadFileNameFormat =
+        settingsDataStore.data.map { preferences ->
+            preferences[DOWNLOAD_FILE_NAME_FORMAT] ?: DataStoreManager.DOWNLOAD_FILE_NAME_TITLE_ARTIST
+        }
+
+    override suspend fun setDownloadFileNameFormat(format: String) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[DOWNLOAD_FILE_NAME_FORMAT] = format
+            }
+        }
+    }
+
+    override val simultaneousDownloads =
+        settingsDataStore.data.map { preferences ->
+            (preferences[SIMULTANEOUS_DOWNLOADS] ?: 3).coerceIn(1, 10)
+        }
+
+    override suspend fun setSimultaneousDownloads(count: Int) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[SIMULTANEOUS_DOWNLOADS] = count.coerceIn(1, 10)
+            }
+        }
+    }
+
+    /**
+     * 读时惰性迁移:新键没写过时,把旧键(downloadQuality/neteaseDownloadQuality)折叠进统一三档。
+     * 网易优先——旧版下载对网易走 neteaseDownloadQuality(默认 LOSSLESS),迁移后行为不突变;
+     * 惰性(只读不回写)与 QUALITY.normalize 同款,避免读写竞态。
+     */
+    override val audioDownloadQuality =
+        settingsDataStore.data.map { preferences ->
+            preferences[AUDIO_DOWNLOAD_QUALITY]
+                ?: migrateLegacyDownloadQuality(
+                    netease = preferences[NETEASE_DOWNLOAD_QUALITY],
+                    youtube = preferences[DOWNLOAD_QUALITY],
+                )
+        }
+
+    private fun migrateLegacyDownloadQuality(
+        netease: String?,
+        youtube: String?,
+    ): String {
+        netease?.let { saved ->
+            return when (saved) {
+                "STANDARD" -> DataStoreManager.AUDIO_DOWNLOAD_QUALITY_STANDARD
+                "HIGHER", "EXHIGH" -> DataStoreManager.AUDIO_DOWNLOAD_QUALITY_HIGH
+                // LOSSLESS/HIRES/SKY/JYEFFECT/JYMASTER 全部归无损档
+                else -> DataStoreManager.AUDIO_DOWNLOAD_QUALITY_LOSSLESS
+            }
+        }
+        youtube?.let { saved ->
+            return when {
+                saved.contains("Low", ignoreCase = true) -> DataStoreManager.AUDIO_DOWNLOAD_QUALITY_STANDARD
+                saved.contains("Medium", ignoreCase = true) -> DataStoreManager.AUDIO_DOWNLOAD_QUALITY_STANDARD
+                saved.contains("High", ignoreCase = true) -> DataStoreManager.AUDIO_DOWNLOAD_QUALITY_HIGH
+                else -> DataStoreManager.AUDIO_DOWNLOAD_QUALITY_HIGH
+            }
+        }
+        return DataStoreManager.AUDIO_DOWNLOAD_QUALITY_HIGH
+    }
+
+    override suspend fun setAudioDownloadQuality(quality: String) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[AUDIO_DOWNLOAD_QUALITY] = quality
+            }
+        }
+    }
+
+    override val downloadArtistAlbumFolder =
+        settingsDataStore.data.map { preferences ->
+            preferences[DOWNLOAD_ARTIST_ALBUM_FOLDER] ?: DataStoreManager.FALSE
+        }
+
+    override suspend fun setDownloadArtistAlbumFolder(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[DOWNLOAD_ARTIST_ALBUM_FOLDER] = if (enabled) DataStoreManager.TRUE else DataStoreManager.FALSE
+            }
+        }
+    }
+
+    override val downloadSaveLrc =
+        settingsDataStore.data.map { preferences ->
+            preferences[DOWNLOAD_SAVE_LRC] ?: DataStoreManager.TRUE
+        }
+
+    override suspend fun setDownloadSaveLrc(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[DOWNLOAD_SAVE_LRC] = if (enabled) DataStoreManager.TRUE else DataStoreManager.FALSE
+            }
+        }
+    }
+
+    override val downloadAiTags =
+        settingsDataStore.data.map { preferences ->
+            preferences[DOWNLOAD_AI_TAGS] ?: DataStoreManager.FALSE
+        }
+
+    override suspend fun setDownloadAiTags(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[DOWNLOAD_AI_TAGS] = if (enabled) DataStoreManager.TRUE else DataStoreManager.FALSE
+            }
+        }
+    }
+
+    override val downloadWifiOnly =
+        settingsDataStore.data.map { preferences ->
+            preferences[DOWNLOAD_WIFI_ONLY] ?: DataStoreManager.TRUE
+        }
+
+    override suspend fun setDownloadWifiOnly(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[DOWNLOAD_WIFI_ONLY] = if (enabled) DataStoreManager.TRUE else DataStoreManager.FALSE
+            }
+        }
+    }
+
     override val neteaseFollowSync =
         settingsDataStore.data.map { preferences ->
             preferences[NETEASE_FOLLOW_SYNC] ?: FALSE
@@ -2030,6 +2155,14 @@ internal class DataStoreManagerImpl(
         val QUALITY = stringPreferencesKey("quality")
         val DOWNLOAD_QUALITY = stringPreferencesKey("download_quality")
         val VIDEO_DOWNLOAD_QUALITY = stringPreferencesKey("video_download_quality")
+        // 文件式下载(第二代)分区
+        val DOWNLOAD_FILE_NAME_FORMAT = stringPreferencesKey("download_file_name_format")
+        val SIMULTANEOUS_DOWNLOADS = intPreferencesKey("simultaneous_downloads")
+        val AUDIO_DOWNLOAD_QUALITY = stringPreferencesKey("audio_download_quality")
+        val DOWNLOAD_ARTIST_ALBUM_FOLDER = stringPreferencesKey("download_artist_album_folder")
+        val DOWNLOAD_SAVE_LRC = stringPreferencesKey("download_save_lrc")
+        val DOWNLOAD_AI_TAGS = stringPreferencesKey("download_ai_tags")
+        val DOWNLOAD_WIFI_ONLY = stringPreferencesKey("download_wifi_only")
         val NORMALIZE_VOLUME = stringPreferencesKey("normalize_volume")
         val SKIP_SILENT = stringPreferencesKey("skip_silent")
         val SAVE_STATE_OF_PLAYBACK = stringPreferencesKey("save_state_of_playback")

@@ -286,6 +286,25 @@ internal class SongRepositoryImpl(
         )
     }
 
+    override suspend fun updateDownloadedFilePath(
+        videoId: String,
+        path: String?,
+    ): Int = withContext(Dispatchers.Main) {
+        localDataSource.updateDownloadedFilePath(path, videoId)
+    }
+
+    override suspend fun updateDownloadedVideoFilePath(
+        videoId: String,
+        path: String?,
+    ): Int = withContext(Dispatchers.Main) {
+        localDataSource.updateDownloadedVideoFilePath(path, videoId)
+    }
+
+    override suspend fun getSongIdByDownloadedPath(path: String): String? =
+        withContext(Dispatchers.Main) {
+            localDataSource.getSongIdByDownloadedPath(path)
+        }
+
     override suspend fun getRecentSong(
         limit: Int,
         offset: Int,

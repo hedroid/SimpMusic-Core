@@ -400,6 +400,24 @@ interface DatabaseDao {
         downloadedAt: LocalDateTime? = if (downloadState == 3) now() else null,
     )
 
+    /** 文件式下载:落音频文件路径(null=清列,配合 downloadState 一起回退) */
+    @Query("UPDATE song SET downloadedFilePath = :path WHERE videoId = :videoId")
+    suspend fun updateDownloadedFilePath(
+        path: String?,
+        videoId: String,
+    ): Int
+
+    /** 文件式下载:落视频文件路径(null=清列) */
+    @Query("UPDATE song SET downloadedVideoFilePath = :path WHERE videoId = :videoId")
+    suspend fun updateDownloadedVideoFilePath(
+        path: String?,
+        videoId: String,
+    ): Int
+
+    /** 同名冲突判定:这个绝对路径已被哪首歌占用(null=没人占;返回 videoId 与要下的歌不同=冲突) */
+    @Query("SELECT videoId FROM song WHERE downloadedFilePath = :path OR downloadedVideoFilePath = :path LIMIT 1")
+    suspend fun getSongIdByDownloadedPath(path: String): String?
+
     @Query("UPDATE song SET durationSeconds = :durationSeconds WHERE videoId = :videoId")
     suspend fun updateDurationSeconds(
         durationSeconds: Int,

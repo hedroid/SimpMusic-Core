@@ -121,6 +121,21 @@ interface SongRepository {
         downloadState: Int,
     )
 
+    /** 文件式下载:写/清音频文件绝对路径(null=清列),返回影响行数(0=无此行) */
+    suspend fun updateDownloadedFilePath(
+        videoId: String,
+        path: String?,
+    ): Int
+
+    /** 文件式下载:写/清视频文件绝对路径(null=清列),返回影响行数(0=无此行) */
+    suspend fun updateDownloadedVideoFilePath(
+        videoId: String,
+        path: String?,
+    ): Int
+
+    /** 同名冲突判定:该绝对路径已被哪首歌占用(返回 videoId,null=未占用) */
+    suspend fun getSongIdByDownloadedPath(path: String): String?
+
     suspend fun getRecentSong(
         limit: Int,
         offset: Int,

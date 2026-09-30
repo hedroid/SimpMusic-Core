@@ -40,6 +40,16 @@ data class SongEntity(
     val inLibrary: LocalDateTime = now(),
     val canvasUrl: String? = null,
     val canvasThumbUrl: String? = null,
+    /**
+     * 文件式下载(第二代):转存出的真实音频文件绝对路径。null=从未走过文件下载
+     * (旧 SimpleCache 下载或未下载)。已下载判定一律以此列+File.exists 为准,
+     * 旧缓存条目 downloadState=3 而此列 null 时按"未下载"处理(两代并存)。
+     */
+    @ColumnInfo(defaultValue = "NULL")
+    val downloadedFilePath: String? = null,
+    /** 文件式下载的视频版(音视频 merge 后的 mp4),语义同上;音频播放可用它兜底 */
+    @ColumnInfo(defaultValue = "NULL")
+    val downloadedVideoFilePath: String? = null,
 ) : RecentlyType {
     override fun objectType(): RecentlyType.Type = RecentlyType.Type.SONG
 }
