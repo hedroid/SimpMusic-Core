@@ -1090,16 +1090,24 @@ class NeteaseRepositoryImpl(
     }
 
     /** Current account's editable cloud playlists, for the shared add-to-playlist sheet. */
-    suspend fun getOwnNeteasePlaylists(): List<PlaylistsResult> {
-        val account = client.getAccountStatus().getOrNull() ?: return emptyList()
-        if (account.userId == 0L) return emptyList()
-        return client.userPlaylists(account.userId).getOrNull()
-            .orEmpty()
-            .filter {
-                it.creatorId == account.userId && it.specialType == NeteasePlaylist.SpecialType.NORMAL
-            }
-            .map { it.toPlaylistsResult() }
-    }
+    suspend fun getOwnNeteasePlaylists(): List<PlaylistsResult> = getOwnNeteasePlaylistsResult().getOrDefault(emptyList())
+
+    /**
+     * 同上但保留失败语义(Result):"添加到歌单"弹窗首拉经常撞上冷网络/代理抖动失败,
+     * 旧签名把失败折叠成空列表,上层无从重试(用户 2026-09-30 反馈)。空成功(账号
+     * 确实没有自建歌单)与失败在此可区分,调用方按 isFailure 退避重试即可。
+     */
+    suspend fun getOwnNeteasePlaylistsResult(): Result<List<PlaylistsResult>> =
+        runCatching {
+            val account = client.getAccountStatus().getOrThrow() ?: return@runCatching emptyList()
+            if (account.userId == 0L) return@runCatching emptyList()
+            client.userPlaylists(account.userId).getOrThrow()
+                .orEmpty()
+                .filter {
+                    it.creatorId == account.userId && it.specialType == NeteasePlaylist.SpecialType.NORMAL
+                }
+                .map { it.toPlaylistsResult() }
+        }
 
     suspend fun addTracksToNeteasePlaylist(
         playlistId: String,
