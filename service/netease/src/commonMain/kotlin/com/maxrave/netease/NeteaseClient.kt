@@ -533,7 +533,16 @@ class NeteaseClient(
     suspend fun getAccountStatus(): Result<NeteaseAccount?> =
         runCatching {
             val body = callWeApi("/w/nuser/account/get", mapOf("noCheckToken" to true))
-            val profile = body["profile"] as? JsonObject ?: return@runCatching null
+            // 业务码分流(2026-09-30 三轮 CR):301=明确未登录;200 但无 profile=游客态
+            // (实测形状)——两者都是不可重试的"已登出";其余非 200(临时风控/服务异常)
+            // 按可重试失败抛。曾一律折叠成 null(profile 缺席即 null)→上层把瞬时风控也判成
+            // 登出:不重试+清缓存,账号摘要一抖就误杀。
+            val code = (body["code"] as? JsonPrimitive)?.content
+            if (code == "301") throw NeteaseNotLoggedInException("account/get code=301 (not logged in)")
+            check(code == null || code == "200") { "account/get rejected: code=$code" }
+            val profile =
+                body["profile"] as? JsonObject
+                    ?: throw NeteaseNotLoggedInException("account/get: code=$code but no profile (guest)")
             val account = body["account"] as? JsonObject
             NeteaseAccount(
                 userId = profile["userId"].nLong() ?: 0L,

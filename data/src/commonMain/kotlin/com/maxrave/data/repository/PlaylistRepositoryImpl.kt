@@ -668,7 +668,10 @@ internal class PlaylistRepositoryImpl(
                     val listItem = mutableListOf<PlaylistsResult>()
                     if (input.isNullOrEmpty()) {
                         Logger.w("Library", "No playlists found")
-                        emit(null)
+                        // 成功但空=真没有歌单(新账号),emit 空列表而非 null——null 专指
+                        // 失败,上层 retryIf 按它重试/报错,真空账号曾因此被重试三遍
+                        // 后弹"出错了"(2026-09-30 三轮 CR)
+                        emit(emptyList())
                         return@onSuccess
                     }
                     listItem.addAll(
@@ -720,7 +723,8 @@ internal class PlaylistRepositoryImpl(
                             )
                         }
                     } else {
-                        emit(null)
+                        // 续页走完后仍空=真空账号,同首屏口径 emit 空列表
+                        emit(emptyList())
                     }
                 }.onFailure { e ->
                     Logger.e("Library", "Error: ${e.message}")
