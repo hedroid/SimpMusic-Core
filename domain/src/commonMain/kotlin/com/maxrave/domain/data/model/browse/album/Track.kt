@@ -29,4 +29,11 @@ data class Track(
      * up with view counts. Defaulted so existing persisted queue JSON still decodes.
      */
     val views: String? = null,
+    /**
+     * 网易播客节目 id(节目≠可播歌曲,videoId 是 mainSong.id)。电台详情页的收听位置记忆
+     * 直接从队列 Track O(1) 读取——core 续页追加的节目不在详情 VM 的已载列表里,
+     * 没有它播到第 2 页以后记忆就断(CR-26)。仅播客构造路径填充,其余默认 null;
+     * Defaulted 保证旧持久化队列 JSON 仍可解码。
+     */
+    val neteaseProgramId: Long? = null,
 )

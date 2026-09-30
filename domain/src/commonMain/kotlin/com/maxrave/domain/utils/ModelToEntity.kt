@@ -52,6 +52,7 @@ fun ResultSong.toTrack(): Track =
         feedbackTokens = null,
         resultType = null,
         year = "",
+        neteaseProgramId = neteaseProgramId,
     )
 
 fun ResultVideo.toTrack(): Track =

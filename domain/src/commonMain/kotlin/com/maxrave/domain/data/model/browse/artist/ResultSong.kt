@@ -15,4 +15,6 @@ data class ResultSong(
     val isExplicit: Boolean,
     /** YouTube's `MUSIC_VIDEO_TYPE_*`, or null when the response carried none — as on [ResultVideo]. */
     val videoType: String?,
+    /** 网易播客节目 id(仅播客 toResultSong 填充):随 toTrack 进队列,收听位置记忆 O(1) 读取(CR-26) */
+    val neteaseProgramId: Long? = null,
 )

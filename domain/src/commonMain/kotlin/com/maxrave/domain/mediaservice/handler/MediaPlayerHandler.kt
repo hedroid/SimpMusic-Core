@@ -1,5 +1,6 @@
 package com.maxrave.domain.mediaservice.handler
 
+import com.maxrave.common.NETEASE_PODCAST_QUEUE_PREFIX
 import com.maxrave.domain.data.entities.NewFormatEntity
 import com.maxrave.domain.data.entities.SongEntity
 import com.maxrave.domain.data.model.browse.album.Track
@@ -301,7 +302,17 @@ data class QueueData(
         val playlistName: String? = null,
         val playlistType: PlaylistType? = null,
         val continuation: String? = null,
-    )
+    ) {
+        /**
+         * 播客队列唯一判定:只认显式前缀。队列身份三键持久化(fd62b5a)后恢复路径
+         * 同样带前缀;更早的旧快照回退 SAVED_QUEUE 占位会被判否——那是一次性
+         * 升级过渡窗口,宁可漏判也不再从曲目形状猜:旧"全数字+单一 album.id"
+         * 指纹与普通网易专辑整队完全同形,会把歌曲功能(红心/歌词/菜单/无尽开关)
+         * 整组误伤(CR-22)。UI 六处门控必须统一走本属性,禁止再地摊指纹。
+         */
+        val isNeteasePodcastQueue: Boolean
+            get() = playlistId?.startsWith(NETEASE_PODCAST_QUEUE_PREFIX) == true
+    }
 
     enum class StateSource {
         STATE_CREATED,

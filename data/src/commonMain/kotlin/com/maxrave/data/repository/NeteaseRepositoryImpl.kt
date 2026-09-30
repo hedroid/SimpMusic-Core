@@ -1874,7 +1874,9 @@ class NeteaseRepositoryImpl(
 
     /** 电台节目列表分页页(电台详情页,offset 分页,asc=false 默认新→旧) */
     /** byradio 连续调用会被网易限流(HTTP 200+空数据或 code=405"操作频繁"——用户快速连逛
-     *  几个电台必中,同一电台"先空后有"即此)。串行+最小间隔错开,连点自动排队不触发 */
+     *  几个电台必中,同一电台"先空后有"即此)。真串行+最小间隔:请求本身也在锁内——
+     *  只锁等待/时间戳的话,两个慢请求仅错开开始时间、网络在途仍重叠(CR-28)。
+     *  连点自动排队不触发限流;调用方取消时 withLock 随协程取消释放,不会永久占锁 */
     private val byradioMutex = Mutex()
     private var lastByradioMark: kotlin.time.TimeSource.Monotonic.ValueTimeMark? = null
 
@@ -1892,8 +1894,8 @@ class NeteaseRepositoryImpl(
                     if (elapsed < minGap) delay(minGap - elapsed)
                 }
                 lastByradioMark = kotlin.time.TimeSource.Monotonic.markNow()
+                client.djRadioPrograms(radioId, limit = limit, offset = offset, asc = asc).getOrThrow()
             }
-            client.djRadioPrograms(radioId, limit = limit, offset = offset, asc = asc).getOrThrow()
         }
 
     /** 猜你喜欢电台(需登录;未登录服务端返回空列表,按成功空处理让 UI 隐藏该区块) */
@@ -2395,6 +2397,7 @@ fun NeteaseDjProgram.toResultSong(): ResultSong? {
         isAvailable = !paid,
         isExplicit = false,
         videoType = null,
+        neteaseProgramId = id,
     )
 }
 
