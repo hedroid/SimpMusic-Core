@@ -49,6 +49,11 @@ val repositoryModule =
             NeteaseRepositoryImpl(get(), get())
         }
 
+        // 文件式下载的 tag/歌词/封面收集器(下载引擎经 DownloadEnricher 接口消费)
+        single<com.maxrave.domain.mediaservice.handler.DownloadEnricher> {
+            com.maxrave.data.download.DownloadEnricherImpl(get(), get(), get(), get())
+        }
+
         single<AccountRepository>(createdAtStart = true) {
             AccountRepositoryImpl(get(), get())
         }

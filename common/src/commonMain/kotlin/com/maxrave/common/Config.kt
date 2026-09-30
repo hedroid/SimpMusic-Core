@@ -260,6 +260,9 @@ object ITAG {
     /** H.264 360p, adaptive video — what the "360p" video-quality setting selects. */
     const val VIDEO_360P: Int = 134
 
+    /** H.264 480p, adaptive video — the file-download video tier selects this. */
+    const val VIDEO_480P: Int = 135
+
     /** H.264 720p, adaptive video — what the "720p" video-quality setting selects. */
     const val VIDEO_720P: Int = 136
 
@@ -273,7 +276,7 @@ object ITAG {
     val AUDIO: Set<Int> = setOf(AUDIO_OPUS_LOW, AUDIO_OPUS_MEDIUM, AUDIO_OPUS_HIGH, AUDIO_AAC_HIGH)
 
     /** Every adaptive video itag the app knows how to play. */
-    val VIDEO: Set<Int> = setOf(VIDEO_1080P, VIDEO_720P, VIDEO_360P)
+    val VIDEO: Set<Int> = setOf(VIDEO_1080P, VIDEO_720P, VIDEO_480P, VIDEO_360P)
 
     /**
      * The other 256 kbps rendition of the same audio, or null for an itag that has no twin.
@@ -340,10 +343,10 @@ object QUALITY {
 }
 
 object VIDEO_QUALITY {
-    val items: Array<CharSequence> = arrayOf("1080p", "720p", "360p")
+    val items: Array<CharSequence> = arrayOf("1080p", "720p", "480p", "360p")
 
     /** Parallel to [items]: an index into one is an index into the other, so the order is load-bearing. */
-    val itags: Array<Int> = arrayOf(ITAG.VIDEO_1080P, ITAG.VIDEO_720P, ITAG.VIDEO_360P)
+    val itags: Array<Int> = arrayOf(ITAG.VIDEO_1080P, ITAG.VIDEO_720P, ITAG.VIDEO_480P, ITAG.VIDEO_360P)
 }
 
 object LIMIT_CACHE_SIZE {

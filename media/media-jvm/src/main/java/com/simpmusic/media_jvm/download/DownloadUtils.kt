@@ -72,7 +72,7 @@ internal class DownloadUtils(
         videoId: String,
         title: String,
         thumbnail: String,
-    ) {
+    ): Boolean {
         val song = songRepository.getSongById(videoId).lastOrNull()
         if (song != null) {
             songRepository.updateDownloadState(
@@ -108,7 +108,43 @@ internal class DownloadUtils(
                     }
                 }
         }
+        return song != null
     }
+
+    // ===== Android-only 文件式下载(第二代)在桌面端的占位:维持旧管线,不做文件/MediaStore =====
+
+    override suspend fun downloadVideo(
+        videoId: String,
+        title: String,
+        thumbnail: String,
+    ): Boolean {
+        // 桌面端无视频下载管线(旧版即无),保持不可用语义
+        return false
+    }
+
+    override fun removeAudioDownload(videoId: String) = removeDownload(videoId)
+
+    override fun removeVideoDownload(videoId: String) {
+        File(getDownloadPath())
+            .listFiles()
+            .filter { it.name.contains(videoId) }
+            .forEach { it.delete() }
+    }
+
+    override suspend fun isAudioFileDownloaded(videoId: String): Boolean {
+        // 桌面端旧管线直接落文件(路径即 <download>/<videoId>),按文件存在判定
+        val song = songRepository.getSongById(videoId).lastOrNull() ?: return false
+        return song.downloadState == DownloadState.STATE_DOWNLOADED &&
+            File(getDownloadPath() + File.separator + videoId + ".mp3").exists()
+    }
+
+    override suspend fun isVideoFileDownloaded(videoId: String): Boolean = false
+
+    override fun isAudioQueuedOrDownloading(videoId: String): Boolean =
+        downloadTask.value[videoId] == DownloadState.STATE_DOWNLOADING ||
+            downloadTask.value[videoId] == DownloadState.STATE_PREPARING
+
+    override fun isVideoQueuedOrDownloading(videoId: String): Boolean = false
 
     // ===== Desktop download notifications =====
     //

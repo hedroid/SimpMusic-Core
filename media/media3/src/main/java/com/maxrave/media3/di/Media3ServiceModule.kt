@@ -254,6 +254,29 @@ private fun provideResolvingDataSourceFactory(
         val mediaId = dataSpec.key ?: error("No media id")
         Logger.w("Stream", mediaId)
         Logger.w("Stream", mediaId.startsWith(MERGING_DATA_TYPE.VIDEO).toString())
+        // 文件式下载(第二代)直读:Room 记了文件路径且文件在→直接 file://,零网络零缓存。
+        // 音频条目优先音频文件,缺失时用视频 mp4 兜底(音轨可直接解);视频条目用视频文件。
+        // 投屏不走这里(Cast/DLNA 的 CastStreamResolver 独立取流),本地文件天然不外发。
+        runCatching {
+            val songId = if (mediaId.contains(MERGING_DATA_TYPE.VIDEO)) {
+                mediaId.removePrefix(MERGING_DATA_TYPE.VIDEO)
+            } else {
+                mediaId
+            }
+            val song = runBlocking(Dispatchers.IO) {
+                org.koin.core.context.GlobalContext.get().get<SongRepository>().getSongById(songId).firstOrNull()
+            }
+            val localFile =
+                if (mediaId.contains(MERGING_DATA_TYPE.VIDEO)) {
+                    song?.downloadedVideoFilePath
+                } else {
+                    song?.downloadedFilePath ?: song?.downloadedVideoFilePath
+                }
+            if (localFile != null && java.io.File(localFile).exists()) {
+                Logger.w("Stream", "Local file for $mediaId: $localFile")
+                return@Factory dataSpec.withUri(android.net.Uri.fromFile(java.io.File(localFile)))
+            }
+        }.onFailure { Logger.w("Stream", "local-file lookup failed for $mediaId: ${it.message}") }
         val fullyCached =
             downloadCache.isFullyCached(mediaId, dataSpec.position) ||
                 playerCache.isFullyCached(mediaId, dataSpec.position)

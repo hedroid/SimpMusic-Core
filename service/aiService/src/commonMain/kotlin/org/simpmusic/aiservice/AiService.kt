@@ -88,6 +88,33 @@ class AiService(
     /** Lists model IDs exposed by the current host's OpenAI-compatible `GET /models` endpoint. */
     suspend fun listModels(): List<String> = openAI.models().map { it.id.id }.sorted()
 
+    /**
+     * Plain-text completion — the generic door for callers that are not lyrics translation
+     * (e.g. download tag enrichment: genre/language guesses from song metadata). Returns the
+     * message text as-is; the caller parses what it asked for.
+     */
+    suspend fun complete(
+        systemPrompt: String,
+        userPrompt: String,
+    ): String {
+        val request =
+            chatCompletionRequest {
+                this.model = this@AiService.model
+                messages {
+                    system { content = systemPrompt }
+                    user { content = userPrompt }
+                }
+            }
+        val completion: ChatCompletion = openAI.chatCompletion(request)
+        return completion.choices
+            .firstOrNull()
+            ?.message
+            ?.content
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: throw IllegalStateException("No response from AI")
+    }
+
     suspend fun translateLyrics(
         inputLyrics: Lyrics,
         targetLanguage: String,

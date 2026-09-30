@@ -72,6 +72,8 @@ dependencies {
     implementation(libs.media3.exoplayer.workmanager)
     implementation(libs.media3.datasource.okhttp)
     implementation(libs.okhttp3.logging.interceptor)
+    // 文件式下载:YT webm→mp3 转码/封面与 tag 写入(与 kotlinYtmusicScraper 同一 ffmpeg-kit 音频版)
+    implementation(libs.ffmpeg.kit.audio)
     implementation(libs.coroutines.guava)
 
     // Android Auto (Car App Library media templates)

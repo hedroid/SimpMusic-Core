@@ -1,6 +1,9 @@
 package com.maxrave.media3.service.download
 
 import android.content.Context
+import android.net.Uri
+import android.os.StatFs
+import android.provider.MediaStore
 import androidx.core.net.toUri
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.DatabaseProvider
@@ -15,6 +18,7 @@ import androidx.media3.exoplayer.offline.DownloadManager
 import androidx.media3.exoplayer.offline.DownloadNotificationHelper
 import androidx.media3.exoplayer.offline.DownloadRequest
 import androidx.media3.exoplayer.offline.DownloadService
+import androidx.media3.exoplayer.scheduler.Requirements
 import coil3.ImageLoader
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
@@ -31,6 +35,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.firstOrNull
@@ -40,6 +45,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import java.io.ByteArrayInputStream
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
 
 @UnstableApi
@@ -53,6 +60,38 @@ internal class DownloadUtils(
     databaseProvider: DatabaseProvider,
 ) : DownloadHandler {
     private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    private companion object {
+        const val TAG = "DownloadUtils"
+        const val FILE_REQUEST_PREFIX = "FILEv1|"
+    }
+
+    /** 文件式转存端(COMPLETED 后缓存→真实文件);惰性避免构造期碰 Koin */
+    private val exporter by lazy {
+        FileDownloadExporter(context, downloadCache, songRepository, dataStoreManager)
+    }
+
+    /** 文件式任务的 songId 集合(DownloadIndex 扫描+入队时填充):它们 COMPLETED≠已下载,要等转存 */
+    private val fileBasedIds = ConcurrentHashMap.newKeySet<String>()
+
+    /** 仅 Wi-Fi 下载→DownloadManager requirements(原生排队语义:蜂窝下任务等待,回 Wi-Fi 自动续) */
+    private fun applyNetworkRequirements() {
+        runBlocking {
+            val wifiOnly = dataStoreManager.downloadWifiOnly.firstOrNull() == DataStoreManager.TRUE
+            downloadManager.requirements =
+                if (wifiOnly) {
+                    Requirements(Requirements.NETWORK_UNMETERED)
+                } else {
+                    Requirements(Requirements.NETWORK)
+                }
+        }
+    }
+
+    private fun applyParallelDownloads() {
+        runBlocking {
+            downloadManager.maxParallelDownloads = dataStoreManager.simultaneousDownloads.firstOrNull() ?: 3
+        }
+    }
 
     private val dataSourceFactory =
         ResolvingDataSource.Factory(
@@ -191,74 +230,181 @@ internal class DownloadUtils(
     val downloadingVideoIds = MutableStateFlow<MutableSet<String>>(mutableSetOf())
 
     /**
-     * Use thumbnail to check video or audio
+     * 文件式任务标记:DownloadRequest.data = "FILEv1|<标题>"。
+     * 旧一代(SimpleCache)任务的 data 是纯标题文本——没有该前缀即按旧语义处理
+     * (COMPLETED 直接置已下载,不触发转存),两代互不干扰。前缀而非 JSON:media3
+     * 模块不带 kotlinx-serialization,别为两字节的元数据加依赖。
+     */
+    private fun isFileBasedRequest(data: ByteArray?): Boolean =
+        data != null && runCatching { data.decodeToString().startsWith(FILE_REQUEST_PREFIX) }.getOrDefault(false)
+
+    private fun buildFileRequestData(title: String): ByteArray = (FILE_REQUEST_PREFIX + title).toByteArray()
+
+    /** 磁盘预检:公共音乐卷剩余 <500MB 拒绝入队(无损 flac 单首几十 MB,写满=静默失败) */
+    private fun hasEnoughDisk(): Boolean =
+        runCatching {
+            val stat = StatFs(FileDownloadExporter.AUDIO_ROOT_REL.let { android.os.Environment.getExternalStorageDirectory() }.absolutePath)
+            stat.availableBytes > 500L * 1024 * 1024
+        }.getOrDefault(true)
+
+    /**
+     * 音频文件下载(第二代):DownloadManager 打底下载进缓存,COMPLETED 后由
+     * [FileDownloadExporter] 转存成真实文件。返回 false=磁盘预检未过(未入队)。
      */
     override suspend fun downloadTrack(
         videoId: String,
         title: String,
         thumbnail: String,
-    ) {
-        var isVideo = false
-        val request =
-            ImageRequest
-                .Builder(context)
-                .data(thumbnail)
-                .diskCachePolicy(CachePolicy.ENABLED)
-                .build()
-        val imageResult = ImageLoader(context).execute(request)
-        if (imageResult.image?.height != imageResult.image?.width && imageResult.image != null) {
-            isVideo = true
+    ): Boolean {
+        if (!hasEnoughDisk()) {
+            Logger.w(TAG, "downloadTrack rejected: low disk for $videoId")
+            return false
         }
         val downloadRequest =
             DownloadRequest
                 .Builder(videoId, videoId.toUri())
-                .setData(title.toByteArray())
+                .setData(buildFileRequestData(title))
                 .setCustomCacheKey(videoId)
                 .build()
+        fileBasedIds.add(videoId)
         DownloadService.sendAddDownload(
             context,
             MusicDownloadService::class.java,
             downloadRequest,
             false,
         )
-        if (isVideo) {
-            val id = MERGING_DATA_TYPE.VIDEO + videoId
-            val downloadRequestVideo =
-                DownloadRequest
-                    .Builder(id, id.toUri())
-                    .setData("Video $title".toByteArray())
-                    .setCustomCacheKey(id)
-                    .build()
-            DownloadService.sendAddDownload(
+        return true
+    }
+
+    /**
+     * 视频文件下载(仅 YT):音视频两条任务,双双 COMPLETED 后 merge 成 mp4 落
+     * Movies/SimpMusic。音频条目与纯音频下载共用同一 cacheKey——已下载过音频则
+     * 该条目直接 COMPLETED,只补视频条目,对账逻辑天然兼容。
+     */
+    override suspend fun downloadVideo(
+        videoId: String,
+        title: String,
+        thumbnail: String,
+    ): Boolean {
+        if (!hasEnoughDisk()) {
+            Logger.w(TAG, "downloadVideo rejected: low disk for $videoId")
+            return false
+        }
+        downloadTrack(videoId, title, thumbnail)
+        val id = MERGING_DATA_TYPE.VIDEO + videoId
+        val downloadRequestVideo =
+            DownloadRequest
+                .Builder(id, id.toUri())
+                .setData(buildFileRequestData("Video $title"))
+                .setCustomCacheKey(id)
+                .build()
+        DownloadService.sendAddDownload(
+            context,
+            MusicDownloadService::class.java,
+            downloadRequestVideo,
+            false,
+        )
+        return true
+    }
+
+    override fun removeDownload(videoId: String) {
+        removeAudioDownload(videoId)
+        removeVideoDownload(videoId)
+    }
+
+    /** 删音频:有文件→删文件+MediaStore 行+Room 清列;缓存条目一并清(转存失败残留) */
+    override fun removeAudioDownload(videoId: String) {
+        coroutineScope.launch {
+            runCatching {
+                songRepository.getSongById(videoId).firstOrNull()?.downloadedFilePath?.let { path ->
+                    deleteMediaByPath(path)
+                    File(path).delete()
+                    songRepository.updateDownloadedFilePath(videoId, null)
+                }
+                // 文件已删:state 回落由缓存条目移除后的 collect 兜底置 0
+            }
+            DownloadService.sendRemoveDownload(
                 context,
                 MusicDownloadService::class.java,
-                downloadRequestVideo,
+                videoId,
                 false,
             )
         }
     }
 
-    override fun removeDownload(videoId: String) {
-        DownloadService.sendRemoveDownload(
-            context,
-            MusicDownloadService::class.java,
-            videoId,
-            false,
-        )
-        val id = MERGING_DATA_TYPE.VIDEO + videoId
-        DownloadService.sendRemoveDownload(
-            context,
-            MusicDownloadService::class.java,
-            id,
-            false,
-        )
+    override fun removeVideoDownload(videoId: String) {
+        coroutineScope.launch {
+            runCatching {
+                songRepository.getSongById(videoId).firstOrNull()?.downloadedVideoFilePath?.let { path ->
+                    deleteMediaByPath(path)
+                    File(path).delete()
+                    songRepository.updateDownloadedVideoFilePath(videoId, null)
+                }
+            }
+            DownloadService.sendRemoveDownload(
+                context,
+                MusicDownloadService::class.java,
+                MERGING_DATA_TYPE.VIDEO + videoId,
+                false,
+            )
+        }
+    }
+
+    /** 按 DATA 绝对路径删 MediaStore 行(自己贡献的行免权限);File.delete 兜底双清 */
+    private fun deleteMediaByPath(path: String) {
+        runCatching {
+            val resolver = context.contentResolver
+            listOf(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI).forEach { collection ->
+                resolver.query(collection, arrayOf(MediaStore.MediaColumns._ID), "${MediaStore.MediaColumns.DATA}=?", arrayOf(path), null)?.use { c ->
+                    while (c.moveToFirst()) {
+                        resolver.delete(Uri.withAppendedPath(collection, c.getLong(0).toString()), null, null)
+                        break
+                    }
+                }
+            }
+        }.onFailure { Logger.w(TAG, "deleteMediaByPath failed: ${it.message}") }
     }
 
     override fun removeAllDownloads() {
+        coroutineScope.launch {
+            // 文件式:遍历删文件+Room 清列(下载管理页/设置入口共用)
+            runCatching {
+                songRepository.getDownloadedSongs().firstOrNull()?.forEach { song ->
+                    song.downloadedFilePath?.let {
+                        deleteMediaByPath(it); File(it).delete(); songRepository.updateDownloadedFilePath(song.videoId, null)
+                    }
+                    song.downloadedVideoFilePath?.let {
+                        deleteMediaByPath(it); File(it).delete(); songRepository.updateDownloadedVideoFilePath(song.videoId, null)
+                    }
+                }
+            }
+        }
         _downloads.value = emptyMap()
         _downloadTask.value = emptyMap()
         downloadingVideoIds.value = mutableSetOf()
         downloadManager.removeAllDownloads()
+    }
+
+    override suspend fun isAudioFileDownloaded(videoId: String): Boolean =
+        songRepository.getSongById(videoId).firstOrNull()?.downloadedFilePath
+            ?.let { File(it).exists() } == true
+
+    override suspend fun isVideoFileDownloaded(videoId: String): Boolean =
+        songRepository.getSongById(videoId).firstOrNull()?.downloadedVideoFilePath
+            ?.let { File(it).exists() } == true
+
+    override fun isAudioQueuedOrDownloading(videoId: String): Boolean {
+        val state = _downloads.value[videoId]?.first?.state ?: return false
+        return state == Download.STATE_QUEUED || state == Download.STATE_DOWNLOADING ||
+            state == Download.STATE_RESTARTING || state == Download.STATE_STOPPED
+    }
+
+    override fun isVideoQueuedOrDownloading(videoId: String): Boolean {
+        val pair = _downloads.value[videoId] ?: return false
+        val audioBusy = pair.first?.state?.let { it == Download.STATE_QUEUED || it == Download.STATE_DOWNLOADING || it == Download.STATE_RESTARTING || it == Download.STATE_STOPPED } == true
+        val videoBusy = pair.second?.state?.let { it == Download.STATE_QUEUED || it == Download.STATE_DOWNLOADING || it == Download.STATE_RESTARTING || it == Download.STATE_STOPPED } == true
+        // 只有视频条目在途才算"视频下载中";纯音频任务不算(视频入口的三态判定用)
+        return videoBusy || (audioBusy && pair.second != null)
     }
 
     init {
@@ -307,7 +453,14 @@ internal class DownloadUtils(
                                     remove(videoId)
                                 }
                             }
-                            songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADED)
+                            // 文件式(第二代):DownloadManager 完成≠文件就绪——转存落地前 song 行
+                            // 保持"下载中"(UI 读作转存中),exporter 成功时自己回写 3;
+                            // 旧一代(无 file 标记)维持完成即 3 的原语义。
+                            if (videoId in fileBasedIds) {
+                                songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADING)
+                            } else {
+                                songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADED)
+                            }
                         }
                         DownloadState.STATE_DOWNLOADING -> {
                             songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADING)
@@ -331,6 +484,7 @@ internal class DownloadUtils(
         // Pair Audio and Video
         val result = mutableMapOf<String, Pair<DownloadHandler.Download?, DownloadHandler.Download?>>()
         val cursor = downloadManager.downloadIndex.getDownloads()
+        val pendingExports = mutableListOf<Pair<String, Boolean>>() // songId to isVideoPair
         while (cursor.moveToNext()) {
             val id = cursor.download.request.id
             val isVideo = id.contains(MERGING_DATA_TYPE.VIDEO)
@@ -340,6 +494,13 @@ internal class DownloadUtils(
                 } else {
                     id
                 }
+            if (isFileBasedRequest(cursor.download.request.data)) {
+                fileBasedIds.add(songId)
+                // 启动对账:COMPLETED 但文件还没落地(转存途中 app 被杀/上次失败)→重试转存
+                if (cursor.download.state == Download.STATE_COMPLETED) {
+                    pendingExports += songId to isVideo
+                }
+            }
             result[songId] =
                 if (isVideo) {
                     result[songId]?.copy(second = DownloadHandler.Download(cursor.download.state))
@@ -350,6 +511,37 @@ internal class DownloadUtils(
                 }
         }
         _downloads.value = result
+        if (pendingExports.isNotEmpty()) {
+            coroutineScope.launch {
+                // 同一首歌音视频都在列时按视频 merge 一次;纯音频按音频转存
+                val bySong = pendingExports.groupBy({ it.first }, { it.second })
+                bySong.forEach { (songId, entries) ->
+                    runCatching {
+                        if (entries.any { it }) {
+                            val audioDone = _downloads.value[songId]?.first?.state == Download.STATE_COMPLETED
+                            val videoDone = _downloads.value[songId]?.second?.state == Download.STATE_COMPLETED
+                            if (audioDone && videoDone) {
+                                exporter.exportVideo(songId)
+                            } else if (audioDone) {
+                                exporter.exportAudio(songId)
+                            }
+                        } else {
+                            // 只有音频条目:视频条目不存在→纯音频转存;存在但未完成→等它
+                            if (_downloads.value[songId]?.second == null) exporter.exportAudio(songId)
+                        }
+                    }
+                }
+            }
+        }
+        // 文件式下载的网络与并发设置(每次启动重放一次;设置页改动的实时重放在 collect 里)
+        applyNetworkRequirements()
+        applyParallelDownloads()
+        coroutineScope.launch {
+            dataStoreManager.downloadWifiOnly.collect { applyNetworkRequirements() }
+        }
+        coroutineScope.launch {
+            dataStoreManager.simultaneousDownloads.collect { applyParallelDownloads() }
+        }
         downloadManager.addListener(
             object : DownloadManager.Listener {
                 override fun onDownloadChanged(
@@ -387,6 +579,29 @@ internal class DownloadUtils(
                         when (download.state) {
                             Download.STATE_COMPLETED -> {
                                 playerCache.removeResource(id)
+                                // 文件式任务:COMPLETED → 转存真实文件(旧一代任务不进这里)
+                                if (isFileBasedRequest(download.request.data)) {
+                                    coroutineScope.launch {
+                                        runCatching {
+                                            if (isVideo) {
+                                                // 视频条目完成:音频也完成才 merge mp4(定稿:视频任务
+                                                // 不产独立 mp3,音频播放用 mp4 兜底)
+                                                val audioDone =
+                                                    _downloads.value[songId]?.first?.state == Download.STATE_COMPLETED
+                                                if (audioDone) exporter.exportVideo(songId)
+                                            } else {
+                                                // 音频条目完成:没有视频条目(纯音频任务)才独立转存;
+                                                // 视频任务由视频条目完成时统一 merge
+                                                if (_downloads.value[songId]?.second == null) {
+                                                    exporter.exportAudio(songId)
+                                                }
+                                            }
+                                        }.onFailure {
+                                            if (it is kotlinx.coroutines.CancellationException) throw it
+                                            Logger.e(TAG, "export dispatch failed for $songId: ${it.message}")
+                                        }
+                                    }
+                                }
                             }
 
                             Download.STATE_DOWNLOADING -> {

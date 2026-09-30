@@ -1716,6 +1716,11 @@ internal fun JsonElement.toSong(): NeteaseSong {
             (al?.str("picUrl") ?: al?.str("picUrl_str") ?: obj.str("picUrl"))?.toHttpsUrl(),
         fee = obj["fee"].nInt(),
         hasCopyright = obj["privilege"]?.let { (it as? JsonObject)?.get("st").nInt() == 0 },
+        // 文件下载 tag 用(2026-10-01 weapi 探针实证 v3 响应携带):no=音轨号/cd=碟号(字符串)/
+        // publishTime=毫秒;单曲与部分端点缺席时为 null
+        trackNumber = obj["no"].nInt()?.takeIf { it > 0 },
+        discNumber = obj.str("cd")?.takeIf { it.isNotBlank() && it != "0" },
+        publishTimeMs = obj["publishTime"].nLong()?.takeIf { it > 0 },
     )
 }
 

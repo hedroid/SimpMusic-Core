@@ -92,6 +92,12 @@ data class NeteaseSong(
     val coverUrl: String?,
     val fee: Int?, // 0免费 1VIP 4购票 8非会员可听低音质
     val hasCopyright: Boolean?,
+    /** 专辑内音轨号(v3 song detail 的 no;单曲/不在专辑=0/null)——文件下载 tag 用 */
+    val trackNumber: Int? = null,
+    /** 碟号(v3 song detail 的 cd,字符串如 "1")——文件下载 tag 用 */
+    val discNumber: String? = null,
+    /** 歌曲发布时间毫秒(v3 song detail 的 publishTime)——文件下载 tag 年份用 */
+    val publishTimeMs: Long? = null,
 )
 
 /** 歌单摘要 DTO(供 repository 映射成 PlaylistEntity) */

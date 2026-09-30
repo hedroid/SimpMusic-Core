@@ -478,15 +478,20 @@ class NeteaseRepositoryImpl(
         isDownload: Boolean,
     ): Result<NeteaseStreamInfo?> {
         val id = songId.toLongOrNull() ?: return Result.failure(IllegalArgumentException("netease songId 非数字: $songId"))
-        val levelName =
-            (
-                if (isDownload) {
-                    dataStoreManager.neteaseDownloadQuality
-                } else {
-                    dataStoreManager.neteaseQuality
+        // 文件式下载(2026-10):下载档位走统一三档(audioDownloadQuality)再映射回网易 8 档;
+        // 在线播放仍读 neteaseQuality 不变
+        val wanted: NeteaseQuality =
+            if (isDownload) {
+                when (dataStoreManager.audioDownloadQuality.first()) {
+                    DataStoreManager.AUDIO_DOWNLOAD_QUALITY_STANDARD -> NeteaseQuality.STANDARD
+                    DataStoreManager.AUDIO_DOWNLOAD_QUALITY_HIGH -> NeteaseQuality.EXHIGH
+                    // 无损档从 lossless 起走降级链(账号非 VIP 时自动落到可播档)
+                    else -> NeteaseQuality.LOSSLESS
                 }
-            ).first()
-        val wanted = NeteaseQuality.entries.firstOrNull { it.name == levelName } ?: NeteaseQuality.EXHIGH
+            } else {
+                val levelName = dataStoreManager.neteaseQuality.first()
+                NeteaseQuality.entries.firstOrNull { it.name == levelName } ?: NeteaseQuality.EXHIGH
+            }
         // 会话内已知不可播(队列标灰快照/探针实证)只试所选档位一档,保住"问过服务端"的
         // 实时性:版权恢复的歌这一档就返回 url 正常播,过期快照不会冤枉跳歌
         val knownUnavailable = id in knownUnavailableState.value

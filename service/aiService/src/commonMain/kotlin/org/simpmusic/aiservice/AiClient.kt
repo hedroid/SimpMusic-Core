@@ -73,4 +73,14 @@ class AiClient {
             aiService?.listModels()
                 ?: throw IllegalStateException("AI service is not initialized. Please set host and apiKey.")
         }
+
+    /** Plain-text completion (generic door — download tag enrichment etc.) */
+    suspend fun complete(
+        systemPrompt: String,
+        userPrompt: String,
+    ): Result<String> =
+        runCatching {
+            aiService?.complete(systemPrompt, userPrompt)
+                ?: throw IllegalStateException("AI service is not initialized. Please set host and apiKey.")
+        }
 }
