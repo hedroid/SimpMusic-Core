@@ -901,8 +901,12 @@ class YouTube {
             ytMusic.checkForGithubReleaseUpdate().body<GithubResponse>()
         }
 
-    /** HTML 重定向兜底:返回最新 release 的 tag 名,null=形状意外或无 release */
-    suspend fun checkForGithubReleaseUpdateViaRedirect(): String? = ytMusic.checkForGithubReleaseUpdateViaRedirect()
+    /**
+     * HTML 重定向兜底:成功时返回最新 release 的 tag 名,null=形状意外或无 release。
+     * 必须与上面的 API 路径一样包 runCatching——github.com 直连超时(SocketTimeoutException)
+     * 是无代理真机的常态,裸抛会沿 flow 直达 collector 崩掉 app(2026-09-30 真机崩溃实锤)。
+     */
+    suspend fun checkForGithubReleaseUpdateViaRedirect(): Result<String?> = runCatching { ytMusic.checkForGithubReleaseUpdateViaRedirect() }
 
     suspend fun checkForFdroidUpdate(): Result<FdroidResponse> =
         runCatching {

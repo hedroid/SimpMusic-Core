@@ -34,14 +34,21 @@ internal class UpdateRepositoryImpl(
     /**
      * HTML 重定向兜底:GET github.com/.../releases/latest(302→/releases/tag/<tag>),
      * 从最终 URL 提取 tag。不消耗 api.github.com 匿名限额,API 被限流时的后备路径。
+     * 网络异常(超时等)由 scraper 层的 Result 捕获,这里收敛成 Error——绝不能裸抛。
      */
     override fun checkForGithubReleaseUpdateViaRedirect(): Flow<Resource<UpdateData>> =
         flow {
             youTube
                 .checkForGithubReleaseUpdateViaRedirect()
-                ?.let { tag ->
-                    emit(Resource.Success(UpdateData(tagName = tag, releaseTime = null, body = "")))
-                } ?: emit(Resource.Error<UpdateData>("redirect fallback: no tag in final URL"))
+                .onSuccess { tag ->
+                    if (tag != null) {
+                        emit(Resource.Success(UpdateData(tagName = tag, releaseTime = null, body = "")))
+                    } else {
+                        emit(Resource.Error<UpdateData>("redirect fallback: no tag in final URL"))
+                    }
+                }.onFailure {
+                    emit(Resource.Error<UpdateData>(it.localizedMessage ?: "Unknown error"))
+                }
         }.flowOn(Dispatchers.IO)
 
     override fun checkForFdroidUpdate(): Flow<Resource<UpdateData>> =
