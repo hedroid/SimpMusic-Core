@@ -122,9 +122,9 @@ internal class DownloadUtils(
         return false
     }
 
-    override fun removeAudioDownload(videoId: String) = removeDownload(videoId)
+    override suspend fun removeAudioDownload(videoId: String) = removeDownload(videoId)
 
-    override fun removeVideoDownload(videoId: String) {
+    override suspend fun removeVideoDownload(videoId: String) {
         File(getDownloadPath())
             .listFiles()
             .filter { it.name.contains(videoId) }
@@ -228,7 +228,7 @@ internal class DownloadUtils(
         }
     }
 
-    override fun removeDownload(videoId: String) {
+    override suspend fun removeDownload(videoId: String) {
         File(getDownloadPath())
             .listFiles()
             .filter {
@@ -245,7 +245,7 @@ internal class DownloadUtils(
             }
     }
 
-    override fun removeAllDownloads() {
+    override suspend fun removeAllDownloads() {
         _downloadTask.value = emptyMap()
         File(getDownloadPath()).listFiles().forEach {
             it.delete()

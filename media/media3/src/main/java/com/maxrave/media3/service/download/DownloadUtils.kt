@@ -42,6 +42,7 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.lastOrNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import java.io.ByteArrayInputStream
@@ -328,21 +329,23 @@ internal class DownloadUtils(
         return true
     }
 
-    override fun removeDownload(videoId: String) {
+    override suspend fun removeDownload(videoId: String) {
         removeAudioDownload(videoId)
         removeVideoDownload(videoId)
     }
 
     /** 删音频:有文件→删文件+MediaStore 行+Room 清列;缓存条目一并清(转存失败残留) */
-    override fun removeAudioDownload(videoId: String) {
-        coroutineScope.launch {
+    override suspend fun removeAudioDownload(videoId: String) {
+        withContext(Dispatchers.IO) {
             runCatching {
                 songRepository.getSongById(videoId).firstOrNull()?.downloadedFilePath?.let { path ->
                     deleteMediaByPath(path)
                     File(path).delete()
                     songRepository.updateDownloadedFilePath(videoId, null)
                 }
-                // 文件已删:state 回落由缓存条目移除后的 collect 兜底置 0
+                // 先落 0 再发移除:collect 对 REMOVING 过渡有"文件在→保 3"防线(见 NOT_DOWNLOADED
+                // 分支),删除路径必须在条目移除事件到达前就把路径清掉+state 归 0,防误保 3
+                songRepository.updateDownloadState(videoId, DownloadState.STATE_NOT_DOWNLOADED)
             }
             DownloadService.sendRemoveDownload(
                 context,
@@ -353,14 +356,22 @@ internal class DownloadUtils(
         }
     }
 
-    override fun removeVideoDownload(videoId: String) {
-        coroutineScope.launch {
+    override suspend fun removeVideoDownload(videoId: String) {
+        withContext(Dispatchers.IO) {
             runCatching {
                 songRepository.getSongById(videoId).firstOrNull()?.downloadedVideoFilePath?.let { path ->
                     deleteMediaByPath(path)
                     File(path).delete()
                     songRepository.updateDownloadedVideoFilePath(videoId, null)
                 }
+                // 只删视频:音频文件还在则维持"已下载"(state 是歌曲级,音频仍是有效下载)
+                val audioExists =
+                    songRepository.getSongById(videoId).firstOrNull()?.downloadedFilePath
+                        ?.let { File(it).exists() } == true
+                songRepository.updateDownloadState(
+                    videoId,
+                    if (audioExists) DownloadState.STATE_DOWNLOADED else DownloadState.STATE_NOT_DOWNLOADED,
+                )
             }
             DownloadService.sendRemoveDownload(
                 context,
@@ -386,8 +397,8 @@ internal class DownloadUtils(
         }.onFailure { Logger.w(TAG, "deleteMediaByPath failed: ${it.message}") }
     }
 
-    override fun removeAllDownloads() {
-        coroutineScope.launch {
+    override suspend fun removeAllDownloads() {
+        withContext(Dispatchers.IO) {
             // 文件式:遍历删文件+Room 清列(下载管理页/设置入口共用)
             runCatching {
                 songRepository.getDownloadedSongs().firstOrNull()?.forEach { song ->
@@ -397,13 +408,14 @@ internal class DownloadUtils(
                     song.downloadedVideoFilePath?.let {
                         deleteMediaByPath(it); File(it).delete(); songRepository.updateDownloadedVideoFilePath(song.videoId, null)
                     }
+                    songRepository.updateDownloadState(song.videoId, DownloadState.STATE_NOT_DOWNLOADED)
                 }
             }
+            _downloads.value = emptyMap()
+            _downloadTask.value = emptyMap()
+            downloadingVideoIds.value = mutableSetOf()
+            downloadManager.removeAllDownloads()
         }
-        _downloads.value = emptyMap()
-        _downloadTask.value = emptyMap()
-        downloadingVideoIds.value = mutableSetOf()
-        downloadManager.removeAllDownloads()
     }
 
     override suspend fun isAudioFileDownloaded(videoId: String): Boolean =
@@ -576,7 +588,21 @@ internal class DownloadUtils(
                                     remove(videoId)
                                 }
                             }
-                            songRepository.updateDownloadState(videoId, DownloadState.STATE_NOT_DOWNLOADED)
+                            // 条目移除的两种来源要区分:转存成功后的清理(文件已落地,须保 3,
+                            // 否则 state 被打回 0=下载管理页误报"文件已丢失")vs 用户删除/取消
+                            // (removeAudio/VideoDownload 已先清路径+落 0,这里写 0 无害)
+                            if (videoId in fileBasedIds) {
+                                val row = runCatching { songRepository.getSongById(videoId).firstOrNull() }.getOrNull()
+                                val fileLanded =
+                                    row?.downloadedFilePath?.let { File(it).exists() } == true ||
+                                        row?.downloadedVideoFilePath?.let { File(it).exists() } == true
+                                songRepository.updateDownloadState(
+                                    videoId,
+                                    if (fileLanded) DownloadState.STATE_DOWNLOADED else DownloadState.STATE_NOT_DOWNLOADED,
+                                )
+                            } else {
+                                songRepository.updateDownloadState(videoId, DownloadState.STATE_NOT_DOWNLOADED)
+                            }
                         }
                         DownloadState.STATE_PREPARING -> {
                             downloadingVideoIds.update {
@@ -646,6 +672,25 @@ internal class DownloadUtils(
         // 文件式下载的网络与并发设置(每次启动重放一次;设置页改动的实时重放在 collect 里)
         applyNetworkRequirements()
         applyParallelDownloads()
+        // 冷启动队列自愈:DownloadManager 构造默认 downloadsPaused,只有 DownloadService
+        // onCreate 才 resume——app 重启后没人拉 service 的话,QUEUED 任务会死等(实测:
+        // 重启后 12 条 QUEUED 零条在跑)。普通 start() 起的 service 调 startForeground
+        // 会被 FGS 规则拒(无前台链路时 DENIED),必须 startForegroundService——仅在
+        // index 里确有在途条目时才用,无任务空启动不弹前台通知。
+        val hasInFlightQueue =
+            runCatching {
+                downloadManager.downloadIndex.getDownloads(
+                    Download.STATE_QUEUED,
+                    Download.STATE_DOWNLOADING,
+                ).use { it.count > 0 }
+            }.getOrDefault(false)
+        runCatching {
+            if (hasInFlightQueue) {
+                DownloadService.startForeground(context, MusicDownloadService::class.java)
+            } else {
+                DownloadService.start(context, MusicDownloadService::class.java)
+            }
+        }.onFailure { Logger.w(TAG, "queue bootstrap service start failed: ${it.message}") }
         coroutineScope.launch {
             dataStoreManager.downloadWifiOnly.collect { applyNetworkRequirements() }
         }

@@ -21,15 +21,20 @@ interface DownloadHandler {
         thumbnail: String,
     ): Boolean
 
-    fun removeDownload(videoId: String)
+    /**
+     * 删除是 suspend 的理由:覆盖重下路径必须"删完(文件+Room 路径+DownloadIndex 移除
+     * intent 已发出)"再入队——否则移除 intent 晚于 addDownload intent 到达 service,
+     * 会把刚入队的新任务删掉(文件已删+任务消失,实测踩过)。
+     */
+    suspend fun removeDownload(videoId: String)
 
     /** 只删音频文件/缓存条目,保留视频(下载管理页分列操作) */
-    fun removeAudioDownload(videoId: String)
+    suspend fun removeAudioDownload(videoId: String)
 
     /** 只删视频文件/条目,保留音频 */
-    fun removeVideoDownload(videoId: String)
+    suspend fun removeVideoDownload(videoId: String)
 
-    fun removeAllDownloads()
+    suspend fun removeAllDownloads()
 
     /** 文件式已下载判定:Room 有音频文件路径且文件真的在(旧 SimpleCache 下载恒 false) */
     suspend fun isAudioFileDownloaded(videoId: String): Boolean
