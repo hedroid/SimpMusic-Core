@@ -146,6 +146,20 @@ internal class DownloadUtils(
 
     override fun isVideoQueuedOrDownloading(videoId: String): Boolean = false
 
+    // ===== Android-only 下载管理操作在桌面端的占位:旧管线无队列概念,全部无操作 =====
+
+    override fun pauseDownload(videoId: String) = Unit
+
+    override fun resumeDownload(videoId: String) = Unit
+
+    override suspend fun retryDownload(videoId: String) = Unit
+
+    override fun pauseAllActiveDownloads() = Unit
+
+    override fun resumeAllPausedDownloads() = Unit
+
+    override suspend fun retryAllFailedDownloads(): Int = 0
+
     // ===== Desktop download notifications =====
     //
     // Grouped per batch, the same way Android collapses every queued download into the single

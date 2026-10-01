@@ -86,6 +86,8 @@ internal class LocalDataSource(
         offset,
     )
 
+    fun getDownloadActivitySongsAsFlow() = databaseDao.getDownloadActivitySongsAsFlow()
+
     fun getDownloadedVideoIdListFromListVideoIdAsFlow(listVideoId: List<String>) = databaseDao.getDownloadedVideoIdByListVideoId(listVideoId)
 
     suspend fun getDownloadingSongs(

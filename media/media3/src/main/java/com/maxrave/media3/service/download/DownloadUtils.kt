@@ -64,6 +64,9 @@ internal class DownloadUtils(
     private companion object {
         const val TAG = "DownloadUtils"
         const val FILE_REQUEST_PREFIX = "FILEv1|"
+
+        /** 单任务手动暂停的 stopReason 值(区别于移除过渡等 stopReason=0 的 STOPPED) */
+        const val MANUAL_PAUSE_REASON = 1
     }
 
     /** 文件式转存端(COMPLETED 后缓存→真实文件);惰性避免构造期碰 Koin */
@@ -240,6 +243,16 @@ internal class DownloadUtils(
 
     private fun buildFileRequestData(title: String): ByteArray = (FILE_REQUEST_PREFIX + title).toByteArray()
 
+    /** media3 Download → 契约层(含进度/字节/暂停原因,下载管理页消费) */
+    private fun toHandlerDownload(d: Download): DownloadHandler.Download =
+        DownloadHandler.Download(
+            state = d.state,
+            stopReason = d.stopReason,
+            bytesDownloaded = d.bytesDownloaded,
+            contentLength = d.contentLength,
+            percentDownloaded = d.percentDownloaded.toInt(),
+        )
+
     /** 磁盘预检:公共音乐卷剩余 <500MB 拒绝入队(无损 flac 单首几十 MB,写满=静默失败) */
     private fun hasEnoughDisk(): Boolean =
         runCatching {
@@ -415,19 +428,103 @@ internal class DownloadUtils(
         return videoBusy || (audioBusy && pair.second != null)
     }
 
+    /** 对单个条目(完整 id)发 stopReason;条目不在列表时跳过,避免 media3 侧 error log 噪音 */
+    private fun sendStopReasonIfPresent(
+        id: String,
+        stopReason: Int,
+        requireInFlight: Boolean,
+    ) {
+        val songId = id.removePrefix(MERGING_DATA_TYPE.VIDEO)
+        val entry = _downloads.value[songId] ?: return
+        val d = if (id.startsWith(MERGING_DATA_TYPE.VIDEO)) entry.second else entry.first
+        if (d == null) return
+        if (requireInFlight) {
+            val s = d.state
+            if (s != Download.STATE_QUEUED && s != Download.STATE_DOWNLOADING) return
+        } else {
+            // 恢复:只动"手动暂停"的条目,不碰其它状态
+            if (d.state != Download.STATE_STOPPED || d.stopReason == 0) return
+        }
+        DownloadService.sendSetStopReason(context, MusicDownloadService::class.java, id, stopReason, false)
+    }
+
+    override fun pauseDownload(videoId: String) {
+        sendStopReasonIfPresent(videoId, MANUAL_PAUSE_REASON, requireInFlight = true)
+        sendStopReasonIfPresent(MERGING_DATA_TYPE.VIDEO + videoId, MANUAL_PAUSE_REASON, requireInFlight = true)
+    }
+
+    override fun resumeDownload(videoId: String) {
+        sendStopReasonIfPresent(videoId, Download.STOP_REASON_NONE, requireInFlight = false)
+        sendStopReasonIfPresent(MERGING_DATA_TYPE.VIDEO + videoId, Download.STOP_REASON_NONE, requireInFlight = false)
+    }
+
+    override suspend fun retryDownload(videoId: String) {
+        listOf(videoId, MERGING_DATA_TYPE.VIDEO + videoId).forEach { id ->
+            runCatching { downloadManager.downloadIndex.getDownload(id) }.getOrNull()
+                ?.takeIf { it.state == Download.STATE_FAILED }
+                ?.let { DownloadService.sendAddDownload(context, MusicDownloadService::class.java, it.request, false) }
+        }
+    }
+
+    override fun pauseAllActiveDownloads() {
+        _downloads.value.forEach { (songId, pair) ->
+            val inFlight = { s: Int -> s == Download.STATE_QUEUED || s == Download.STATE_DOWNLOADING }
+            if (pair.first?.state?.let(inFlight) == true) {
+                DownloadService.sendSetStopReason(context, MusicDownloadService::class.java, songId, MANUAL_PAUSE_REASON, false)
+            }
+            if (pair.second?.state?.let(inFlight) == true) {
+                DownloadService.sendSetStopReason(context, MusicDownloadService::class.java, MERGING_DATA_TYPE.VIDEO + songId, MANUAL_PAUSE_REASON, false)
+            }
+        }
+    }
+
+    override fun resumeAllPausedDownloads() {
+        _downloads.value.forEach { (songId, pair) ->
+            val paused = { d: DownloadHandler.Download -> d.state == Download.STATE_STOPPED && d.stopReason != 0 }
+            if (pair.first?.let(paused) == true) {
+                DownloadService.sendSetStopReason(context, MusicDownloadService::class.java, songId, Download.STOP_REASON_NONE, false)
+            }
+            if (pair.second?.let(paused) == true) {
+                DownloadService.sendSetStopReason(context, MusicDownloadService::class.java, MERGING_DATA_TYPE.VIDEO + songId, Download.STOP_REASON_NONE, false)
+            }
+        }
+    }
+
+    override suspend fun retryAllFailedDownloads(): Int {
+        var retried = 0
+        runCatching {
+            downloadManager.downloadIndex.getDownloads(Download.STATE_FAILED).use { cursor ->
+                while (cursor.moveToNext()) {
+                    DownloadService.sendAddDownload(context, MusicDownloadService::class.java, cursor.download.request, false)
+                    retried++
+                }
+            }
+        }.onFailure { Logger.w(TAG, "retryAllFailedDownloads failed: ${it.message}") }
+        return retried
+    }
+
     init {
         coroutineScope.launch {
             downloads.collect { download ->
                 download.forEach {
                     val videoId = it.key
-                    val audio = it.value.first?.state
-                    val video = it.value.second?.state
+                    val audioDownload = it.value.first
+                    val videoDownload = it.value.second
+                    val audio = audioDownload?.state
+                    val video = videoDownload?.state
+                    // 手动暂停(stopReason!=0 的 STOPPED):保持可见,写成排队态——
+                    // 下载管理页从 downloads 流读"已暂停",song 表只保证它不出"已下载"
+                    val manuallyPaused =
+                        (audioDownload?.state == Download.STATE_STOPPED && audioDownload.stopReason != 0) ||
+                            (videoDownload?.state == Download.STATE_STOPPED && videoDownload.stopReason != 0)
                     val combineState =
                         // Removal transits through STOPPED/REMOVING/RESTARTING; classifying those
                         // as NOT_DOWNLOADED (rather than the "downloading" fall-through below)
                         // keeps removeDownload() from writing the song back as "downloading" —
                         // which container watchers read as a live download and re-queue.
-                        if (audio == Download.STATE_STOPPED ||
+                        if (manuallyPaused) {
+                            DownloadState.STATE_PREPARING
+                        } else if (audio == Download.STATE_STOPPED ||
                             audio == Download.STATE_REMOVING ||
                             audio == Download.STATE_RESTARTING ||
                             video == Download.STATE_STOPPED ||
@@ -482,6 +579,11 @@ internal class DownloadUtils(
                             songRepository.updateDownloadState(videoId, DownloadState.STATE_NOT_DOWNLOADED)
                         }
                         DownloadState.STATE_PREPARING -> {
+                            downloadingVideoIds.update {
+                                it.apply {
+                                    remove(videoId)
+                                }
+                            }
                             songRepository.updateDownloadState(videoId, DownloadState.STATE_PREPARING)
                         }
                     }
@@ -511,11 +613,11 @@ internal class DownloadUtils(
             }
             result[songId] =
                 if (isVideo) {
-                    result[songId]?.copy(second = DownloadHandler.Download(cursor.download.state))
-                        ?: Pair(null, DownloadHandler.Download(cursor.download.state))
+                    result[songId]?.copy(second = toHandlerDownload(cursor.download))
+                        ?: Pair(null, toHandlerDownload(cursor.download))
                 } else {
-                    result[songId]?.copy(first = DownloadHandler.Download(cursor.download.state))
-                        ?: Pair(DownloadHandler.Download(cursor.download.state), null)
+                    result[songId]?.copy(first = toHandlerDownload(cursor.download))
+                        ?: Pair(toHandlerDownload(cursor.download), null)
                 }
         }
         _downloads.value = result
@@ -572,14 +674,14 @@ internal class DownloadUtils(
                                 if (isVideo) {
                                     set(
                                         songId,
-                                        current?.copy(second = DownloadHandler.Download(download.state))
-                                            ?: Pair(null, DownloadHandler.Download(download.state)),
+                                        current?.copy(second = toHandlerDownload(download))
+                                            ?: Pair(null, toHandlerDownload(download)),
                                     )
                                 } else {
                                     set(
                                         songId,
-                                        current?.copy(first = DownloadHandler.Download(download.state))
-                                            ?: Pair(DownloadHandler.Download(download.state), null),
+                                        current?.copy(first = toHandlerDownload(download))
+                                            ?: Pair(toHandlerDownload(download), null),
                                     )
                                 }
                             }

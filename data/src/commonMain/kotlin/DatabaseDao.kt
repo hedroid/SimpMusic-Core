@@ -430,6 +430,13 @@ interface DatabaseDao {
         offset: Int,
     ): List<SongEntity>
 
+    /** 下载管理页数据源:一切有下载活动的行(在途/暂停/完成/旧缓存/文件丢失),Room 变更自动重发 */
+    @Query(
+        "SELECT * FROM song WHERE downloadState IN (1, 2, 3) OR downloadedFilePath IS NOT NULL " +
+            "OR downloadedVideoFilePath IS NOT NULL ORDER BY downloadedAt DESC",
+    )
+    fun getDownloadActivitySongsAsFlow(): Flow<List<SongEntity>>
+
     @Query("SELECT * FROM song WHERE downloadState = 1 OR downloadState = 2 LIMIT :limit OFFSET :offset")
     suspend fun getDownloadingSongs(
         limit: Int,

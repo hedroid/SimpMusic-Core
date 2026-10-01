@@ -89,6 +89,9 @@ internal class SongRepositoryImpl(
             )
         }.flowOn(Dispatchers.IO)
 
+    override fun getDownloadActivitySongs(): Flow<List<SongEntity>> =
+        localDataSource.getDownloadActivitySongsAsFlow().flowOn(Dispatchers.IO)
+
     override fun getPreparingSongs(): Flow<List<SongEntity>> =
         flow {
             emit(
@@ -112,10 +115,16 @@ internal class SongRepositoryImpl(
 
     override suspend fun downloadAllLikedSongs(): Int =
         withContext(Dispatchers.IO) {
+            // 文件式判定(二期):旧缓存代(state=3 无路径)按未下载入队=两代并存定稿;
+            // 路径在但文件被外部删的也重下;在途(排队/下载中)的跳过防重复入队
             val pending =
                 getFullDataFromDB { limit, offset ->
                     localDataSource.getLikedSongs(limit, offset)
-                }.filter { it.downloadState != DownloadState.STATE_DOWNLOADED }
+                }.filter { song ->
+                    song.downloadedFilePath?.let { java.io.File(it).exists() } != true &&
+                        song.downloadState != DownloadState.STATE_PREPARING &&
+                        song.downloadState != DownloadState.STATE_DOWNLOADING
+                }
             Logger.d(TAG, "Auto-download: queueing ${pending.size} liked songs")
             pending.forEach { song ->
                 downloadHandler.downloadTrack(song.videoId, song.title, song.thumbnails.orEmpty())

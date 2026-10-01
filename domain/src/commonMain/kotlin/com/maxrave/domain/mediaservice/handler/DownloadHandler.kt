@@ -43,6 +43,28 @@ interface DownloadHandler {
     /** 是否在视频任务队列里(音频或视频任一在途即算) */
     fun isVideoQueuedOrDownloading(videoId: String): Boolean
 
+    /**
+     * 暂停这首歌的下载(音频+视频条目都停)。media3 单任务语义=stopReason 置 1,
+     * 持久化进 DownloadIndex,重启后仍是暂停态;列表 UI 从 [downloads] 读
+     * state==STATE_STOPPED && stopReason!=0 判"已暂停"。
+     */
+    fun pauseDownload(videoId: String)
+
+    /** 恢复被 [pauseDownload] 暂停的任务(stopReason 清 0 → 重新排队) */
+    fun resumeDownload(videoId: String)
+
+    /** 重跑 FAILED 条目:media3 对 terminal 状态重发 addDownload 会 merge 成 QUEUED,缓存断点保留 */
+    suspend fun retryDownload(videoId: String)
+
+    /** 批量暂停所有在途(排队/下载中)条目;持久化同 [pauseDownload] */
+    fun pauseAllActiveDownloads()
+
+    /** 批量恢复所有手动暂停的条目 */
+    fun resumeAllPausedDownloads()
+
+    /** 重跑所有 FAILED 条目,返回重试条数 */
+    suspend fun retryAllFailedDownloads(): Int
+
     val downloads: StateFlow<Map<String, Pair<Download?, Download?>>>
 
     val downloadTask: StateFlow<Map<String, Int>>
@@ -74,5 +96,17 @@ interface DownloadHandler {
 
     data class Download(
         val state: Int,
-    )
+        /** 0=无;非 0=被单任务暂停([DownloadHandler.pauseDownload])——UI 据此区分"已暂停"与移除过渡 */
+        val stopReason: Int = 0,
+        /** 已下载字节;-1=未知 */
+        val bytesDownloaded: Long = -1L,
+        /** 总字节;-1=未知 */
+        val contentLength: Long = -1L,
+        /** 下载百分比 0..100;-1=未知 */
+        val percentDownloaded: Int = -1,
+    ) {
+        companion object {
+            const val UNKNOWN = -1L
+        }
+    }
 }

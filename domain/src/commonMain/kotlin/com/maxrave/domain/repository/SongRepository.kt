@@ -24,6 +24,13 @@ interface SongRepository {
 
     fun getDownloadingSongs(): Flow<List<SongEntity>?>
 
+    /**
+     * 下载管理页数据源:一切有下载活动的行——在途(state 1/2,含手动暂停)、完成(3,含
+     * 旧缓存代)、文件丢失(路径在但文件被外部删)。Room 变更自动重发;实时进度/暂停/
+     * 失败等 DownloadManager 侧状态由 DownloadHandler.downloads 流补充,两流在 VM 合并。
+     */
+    fun getDownloadActivitySongs(): Flow<List<SongEntity>>
+
     fun getPreparingSongs(): Flow<List<SongEntity>>
 
     fun getDownloadedVideoIdListFromListVideoIdAsFlow(listVideoId: List<String>): Flow<List<String>>
