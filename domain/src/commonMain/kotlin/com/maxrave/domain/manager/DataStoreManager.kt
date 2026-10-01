@@ -247,10 +247,11 @@ interface DataStoreManager {
     suspend fun setSimultaneousDownloads(count: Int)
 
     /**
-     * 统一音频下载档位: [AUDIO_DOWNLOAD_QUALITY_STANDARD]/[AUDIO_DOWNLOAD_QUALITY_HIGH]/[AUDIO_DOWNLOAD_QUALITY_LOSSLESS]
-     * (网易映射 NeteaseQuality 三档+FALLBACK 降级链;YT 映射 itag,无损档取最高码率)。
-     * 读时惰性迁移旧键(downloadQuality/neteaseDownloadQuality):网易 8 档按 档位相近 原则折叠,
-     * 迁移优先级=网易旧值(老版本下载默认 LOSSLESS,行为不突变),无旧值默认 HIGH。
+     * 音频下载档位(2026-10-01 对齐网易在线音质):网易 8 档 key 直存——STANDARD/HIGHER/
+     * EXHIGH/LOSSLESS/HIRES/JYEFFECT/SKY/JYMASTER,网易取流直传 NeteaseQuality(自带
+     * FALLBACK 降级链,非 VIP 落可播档);YT 按档位折 itag(≤HIGHER=129k,EXHIGH 起=256k
+     * Premium,YT 无无损)。旧三档值读时归一:HIGH→EXHIGH;旧键迁移=网易旧值(本就是 8 档
+     * key)直接透传,无旧值默认 EXHIGH。
      */
     val audioDownloadQuality: Flow<String>
 
@@ -808,8 +809,17 @@ interface DataStoreManager {
 
         /** 统一音频下载档位(网易→NeteaseQuality 映射并走 FALLBACK_ORDER 降级;YT→itag,LOSSLESS 取最高码率) */
         const val AUDIO_DOWNLOAD_QUALITY_STANDARD = "STANDARD"
-        const val AUDIO_DOWNLOAD_QUALITY_HIGH = "HIGH"
+        const val AUDIO_DOWNLOAD_QUALITY_HIGHER = "HIGHER"
+        const val AUDIO_DOWNLOAD_QUALITY_EXHIGH = "EXHIGH"
         const val AUDIO_DOWNLOAD_QUALITY_LOSSLESS = "LOSSLESS"
+        const val AUDIO_DOWNLOAD_QUALITY_HIRES = "HIRES"
+        const val AUDIO_DOWNLOAD_QUALITY_JYEFFECT = "JYEFFECT"
+        const val AUDIO_DOWNLOAD_QUALITY_SKY = "SKY"
+        const val AUDIO_DOWNLOAD_QUALITY_JYMASTER = "JYMASTER"
+
+        /** 旧三档值的读时归一(仅 HIGH 是 8 档之外的历史值) */
+        @Deprecated("历史三档值,读时归一到 8 档")
+        const val AUDIO_DOWNLOAD_QUALITY_HIGH = "HIGH"
 
         const val THEME_COLOR_DEFAULT = "DEFAULT"
         const val THEME_COLOR_WALLPAPER = "WALLPAPER"

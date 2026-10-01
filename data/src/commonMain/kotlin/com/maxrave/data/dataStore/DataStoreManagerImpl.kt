@@ -745,11 +745,21 @@ internal class DataStoreManagerImpl(
      */
     override val audioDownloadQuality =
         settingsDataStore.data.map { preferences ->
-            preferences[AUDIO_DOWNLOAD_QUALITY]
-                ?: migrateLegacyDownloadQuality(
-                    netease = preferences[NETEASE_DOWNLOAD_QUALITY],
-                    youtube = preferences[DOWNLOAD_QUALITY],
-                )
+            normalizeDownloadQuality(
+                preferences[AUDIO_DOWNLOAD_QUALITY]
+                    ?: migrateLegacyDownloadQuality(
+                        netease = preferences[NETEASE_DOWNLOAD_QUALITY],
+                        youtube = preferences[DOWNLOAD_QUALITY],
+                    ),
+            )
+        }
+
+    /** 8 档之外的存量值归一:HIGH(旧三档)→EXHIGH;未知→EXHIGH(默认) */
+    private fun normalizeDownloadQuality(saved: String): String =
+        when (saved) {
+            "STANDARD", "HIGHER", "EXHIGH", "LOSSLESS", "HIRES", "JYEFFECT", "SKY", "JYMASTER" -> saved
+            DataStoreManager.AUDIO_DOWNLOAD_QUALITY_HIGH -> DataStoreManager.AUDIO_DOWNLOAD_QUALITY_EXHIGH
+            else -> DataStoreManager.AUDIO_DOWNLOAD_QUALITY_EXHIGH
         }
 
     private fun migrateLegacyDownloadQuality(
@@ -757,22 +767,17 @@ internal class DataStoreManagerImpl(
         youtube: String?,
     ): String {
         netease?.let { saved ->
-            return when (saved) {
-                "STANDARD" -> DataStoreManager.AUDIO_DOWNLOAD_QUALITY_STANDARD
-                "HIGHER", "EXHIGH" -> DataStoreManager.AUDIO_DOWNLOAD_QUALITY_HIGH
-                // LOSSLESS/HIRES/SKY/JYEFFECT/JYMASTER 全部归无损档
-                else -> DataStoreManager.AUDIO_DOWNLOAD_QUALITY_LOSSLESS
-            }
+            // 网易旧键本来就是 8 档 key(在线音质同空间)——直接透传,归一交给上一层
+            return saved
         }
         youtube?.let { saved ->
             return when {
                 saved.contains("Low", ignoreCase = true) -> DataStoreManager.AUDIO_DOWNLOAD_QUALITY_STANDARD
                 saved.contains("Medium", ignoreCase = true) -> DataStoreManager.AUDIO_DOWNLOAD_QUALITY_STANDARD
-                saved.contains("High", ignoreCase = true) -> DataStoreManager.AUDIO_DOWNLOAD_QUALITY_HIGH
-                else -> DataStoreManager.AUDIO_DOWNLOAD_QUALITY_HIGH
+                else -> DataStoreManager.AUDIO_DOWNLOAD_QUALITY_EXHIGH
             }
         }
-        return DataStoreManager.AUDIO_DOWNLOAD_QUALITY_HIGH
+        return DataStoreManager.AUDIO_DOWNLOAD_QUALITY_EXHIGH
     }
 
     override suspend fun setAudioDownloadQuality(quality: String) {

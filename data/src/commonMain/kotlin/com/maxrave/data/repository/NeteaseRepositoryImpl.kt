@@ -478,16 +478,12 @@ class NeteaseRepositoryImpl(
         isDownload: Boolean,
     ): Result<NeteaseStreamInfo?> {
         val id = songId.toLongOrNull() ?: return Result.failure(IllegalArgumentException("netease songId 非数字: $songId"))
-        // 文件式下载(2026-10):下载档位走统一三档(audioDownloadQuality)再映射回网易 8 档;
-        // 在线播放仍读 neteaseQuality 不变
+        // 文件式下载(2026-10):下载档位与在线音质同为网易 8 档 key 直传(2026-10-01 对齐
+        // 在线选项;FALLBACK 降级链兜底非 VIP);在线播放仍读 neteaseQuality 不变
         val wanted: NeteaseQuality =
             if (isDownload) {
-                when (dataStoreManager.audioDownloadQuality.first()) {
-                    DataStoreManager.AUDIO_DOWNLOAD_QUALITY_STANDARD -> NeteaseQuality.STANDARD
-                    DataStoreManager.AUDIO_DOWNLOAD_QUALITY_HIGH -> NeteaseQuality.EXHIGH
-                    // 无损档从 lossless 起走降级链(账号非 VIP 时自动落到可播档)
-                    else -> NeteaseQuality.LOSSLESS
-                }
+                val levelName = dataStoreManager.audioDownloadQuality.first()
+                NeteaseQuality.entries.firstOrNull { it.name == levelName } ?: NeteaseQuality.EXHIGH
             } else {
                 val levelName = dataStoreManager.neteaseQuality.first()
                 NeteaseQuality.entries.firstOrNull { it.name == levelName } ?: NeteaseQuality.EXHIGH

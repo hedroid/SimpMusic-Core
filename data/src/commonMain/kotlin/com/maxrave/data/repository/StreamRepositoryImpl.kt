@@ -193,10 +193,12 @@ internal class StreamRepositoryImpl(
 
             val itag =
                 if (isDownloading) {
-                    // 文件式下载(2026-10):统一三档映射 itag——标准=129k Opus,高/无损=256k
-                    // Premium 档(YT 无无损,两档同值;legacy 标签经 QUALITY.normalize 归一)
+                    // 文件式下载(2026-10):8 档折 itag——STANDARD/HIGHER=129k Opus,EXHIGH 起
+                    // 全部 256k Premium(YT 无无损,高档同值;legacy 标签经 QUALITY.normalize 归一)
                     when (dataStoreManager.audioDownloadQuality.first()) {
-                        DataStoreManager.AUDIO_DOWNLOAD_QUALITY_STANDARD -> ITAG.AUDIO_OPUS_MEDIUM
+                        DataStoreManager.AUDIO_DOWNLOAD_QUALITY_STANDARD,
+                        DataStoreManager.AUDIO_DOWNLOAD_QUALITY_HIGHER,
+                        -> ITAG.AUDIO_OPUS_MEDIUM
                         else -> QUALITY.itagOf(QUALITY.items[2].toString())
                     }
                 } else {
