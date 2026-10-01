@@ -51,6 +51,8 @@ internal class FileDownloadExporter(
     private val songRepository: SongRepository,
     private val dataStoreManager: DataStoreManager,
     private val downloadManager: androidx.media3.exoplayer.offline.DownloadManager? = null,
+    /** 转存成功(videoId)回调:DownloadUtils 据此维护终态写入依据(landed 集) */
+    private val onLanded: (String) -> Unit = {},
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -160,6 +162,7 @@ internal class FileDownloadExporter(
 
                 // 7) 成功才清缓存
                 downloadCache.removeResource(videoId)
+                onLanded(videoId)
                 Logger.i(TAG, "exportAudio OK: $videoId -> $stored")
                 true
             } catch (e: Exception) {
@@ -225,6 +228,7 @@ internal class FileDownloadExporter(
                 songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADED)
                 downloadCache.removeResource(videoId)
                 downloadCache.removeResource(MERGING_DATA_TYPE.VIDEO + videoId)
+                onLanded(videoId)
                 Logger.i(TAG, "exportVideo OK: $videoId -> $stored")
                 true
             } catch (e: Exception) {

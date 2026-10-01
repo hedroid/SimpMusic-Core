@@ -72,11 +72,20 @@ internal class DownloadUtils(
 
     /** 文件式转存端(COMPLETED 后缓存→真实文件);惰性避免构造期碰 Koin */
     private val exporter by lazy {
-        FileDownloadExporter(context, downloadCache, songRepository, dataStoreManager, downloadManager)
+        FileDownloadExporter(context, downloadCache, songRepository, dataStoreManager, downloadManager) {
+            landedFileIds.add(it)
+        }
     }
 
     /** 文件式任务的 songId 集合(DownloadIndex 扫描+入队时填充):它们 COMPLETED≠已下载,要等转存 */
     private val fileBasedIds = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * 文件已落地的文件式 songId 集(collect 写终态的唯一依据):exporter 成功回调+启动
+     * 对账(Room 有路径)填充。没有它,并发期全量 collect 重放会把 exporter 刚写的 3
+     * 打回 2/0(state 列多写者竞态,实测 52 条并发后全表错乱)——终态写入只认这个集合。
+     */
+    private val landedFileIds = ConcurrentHashMap.newKeySet<String>()
 
     /** 仅 Wi-Fi 下载→DownloadManager requirements(原生排队语义:蜂窝下任务等待,回 Wi-Fi 自动续) */
     private fun applyNetworkRequirements() {
@@ -347,6 +356,7 @@ internal class DownloadUtils(
                 // 分支),删除路径必须在条目移除事件到达前就把路径清掉+state 归 0,防误保 3
                 songRepository.updateDownloadState(videoId, DownloadState.STATE_NOT_DOWNLOADED)
             }
+            landedFileIds.remove(videoId)
             DownloadService.sendRemoveDownload(
                 context,
                 MusicDownloadService::class.java,
@@ -372,6 +382,7 @@ internal class DownloadUtils(
                     videoId,
                     if (audioExists) DownloadState.STATE_DOWNLOADED else DownloadState.STATE_NOT_DOWNLOADED,
                 )
+                if (!audioExists) landedFileIds.remove(videoId)
             }
             DownloadService.sendRemoveDownload(
                 context,
@@ -409,6 +420,7 @@ internal class DownloadUtils(
                         deleteMediaByPath(it); File(it).delete(); songRepository.updateDownloadedVideoFilePath(song.videoId, null)
                     }
                     songRepository.updateDownloadState(song.videoId, DownloadState.STATE_NOT_DOWNLOADED)
+                    landedFileIds.remove(song.videoId)
                 }
             }
             _downloads.value = emptyMap()
@@ -570,11 +582,16 @@ internal class DownloadUtils(
                                     remove(videoId)
                                 }
                             }
-                            // 文件式(第二代):DownloadManager 完成≠文件就绪——转存落地前 song 行
-                            // 保持"下载中"(UI 读作转存中),exporter 成功时自己回写 3;
-                            // 旧一代(无 file 标记)维持完成即 3 的原语义。
+                            // 文件式:终态只认 landedFileIds(exporter 成功回调填充)——文件落地
+                            // 前 state 保持"下载中"(UI 读作转存中);旧一代维持完成即 3。
                             if (videoId in fileBasedIds) {
-                                songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADING)
+                                if (videoId in landedFileIds) {
+                                    if (_downloadTask.value[videoId] != DownloadState.STATE_DOWNLOADED) {
+                                        songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADED)
+                                    }
+                                } else {
+                                    songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADING)
+                                }
                             } else {
                                 songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADED)
                             }
@@ -588,19 +605,10 @@ internal class DownloadUtils(
                                     remove(videoId)
                                 }
                             }
-                            // 条目移除的两种来源要区分:转存成功后的清理(文件已落地,须保 3,
-                            // 否则 state 被打回 0=下载管理页误报"文件已丢失")vs 用户删除/取消
-                            // (removeAudio/VideoDownload 已先清路径+落 0,这里写 0 无害)
-                            if (videoId in fileBasedIds) {
-                                val row = runCatching { songRepository.getSongById(videoId).firstOrNull() }.getOrNull()
-                                val fileLanded =
-                                    row?.downloadedFilePath?.let { File(it).exists() } == true ||
-                                        row?.downloadedVideoFilePath?.let { File(it).exists() } == true
-                                songRepository.updateDownloadState(
-                                    videoId,
-                                    if (fileLanded) DownloadState.STATE_DOWNLOADED else DownloadState.STATE_NOT_DOWNLOADED,
-                                )
-                            } else {
+                            // 文件式:REMOVING/STOPPED 过渡不写终态——删除路径(removeAudio/Video
+                            // Download)自己清路径+落 0;这里写会把"文件已落地"的歌打回 0(实测
+                            // 转存完成清条目时触发,管理页误报文件已丢失)。旧一代维持原语义。
+                            if (videoId !in fileBasedIds) {
                                 songRepository.updateDownloadState(videoId, DownloadState.STATE_NOT_DOWNLOADED)
                             }
                         }
@@ -632,9 +640,17 @@ internal class DownloadUtils(
                 }
             if (isFileBasedRequest(cursor.download.request.data)) {
                 fileBasedIds.add(songId)
-                // 启动对账:COMPLETED 但文件还没落地(转存途中 app 被杀/上次失败)→重试转存
+                // 启动对账:COMPLETED 但文件还没落地(转存途中 app 被杀/上次失败)→重试转存。
+                // 必须查 Room 路径:转存成功的条目缓存已清(exporter removeResource),不查的话
+                // 每轮启动都白试一遍 cache-miss→清条目→REMOVING,把 map 抖成过渡态(实测
+                // landed=true 的行反复被打 combine=0 的元凶)。
                 if (cursor.download.state == Download.STATE_COMPLETED) {
-                    pendingExports += songId to isVideo
+                    val hasStoredPath =
+                        runCatching {
+                            runBlocking { songRepository.getSongById(songId).firstOrNull() }
+                                ?.let { it.downloadedFilePath != null || it.downloadedVideoFilePath != null } == true
+                        }.getOrDefault(false)
+                    if (!hasStoredPath) pendingExports += songId to isVideo
                 }
             }
             result[songId] =
@@ -647,6 +663,23 @@ internal class DownloadUtils(
                 }
         }
         _downloads.value = result
+        // 启动对账:Room 有路径的行=文件已落地——填充 landed 集,并把文件式条目被过渡态
+        // 写坏的 state(手动暂停/上代进程竞态残留的 0/1)纠正回 3
+        coroutineScope.launch {
+            runCatching {
+                songRepository.getDownloadActivitySongs().firstOrNull()?.forEach { song ->
+                    // 有路径=文件式已落地(不看 fileBased:条目可能已被 cache-miss 对账清掉,
+                    // 历史竞态写坏的 state 也要在此一并纠正——删除路径先清路径再落 0,不会
+                    // 被这里的"路径在"误纠)
+                    if (song.downloadedFilePath != null || song.downloadedVideoFilePath != null) {
+                        landedFileIds.add(song.videoId)
+                        if (song.downloadState != DownloadState.STATE_DOWNLOADED) {
+                            songRepository.updateDownloadState(song.videoId, DownloadState.STATE_DOWNLOADED)
+                        }
+                    }
+                }
+            }.onFailure { Logger.w(TAG, "landed reconcile failed: ${it.message}") }
+        }
         if (pendingExports.isNotEmpty()) {
             coroutineScope.launch {
                 // 同一首歌音视频都在列时按视频 merge 一次;纯音频按音频转存
