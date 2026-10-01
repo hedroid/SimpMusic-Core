@@ -30,7 +30,7 @@ private const val TAG = "DownloadEnricher"
  * - YT:作词/作曲无公开源(留空);歌词=本地 lyrics 表缓存(拉过才有,没有就跳过 lrc)
  * - 流派:Last.fm toptags(有 key 的构建)→ AI 兜底(开关)
  * - 语言:歌词字符脚本判别(本地,零成本)→ AI 兜底(开关)
- * - 作词/作曲:公开通道(weapi/明文)已探无字段,暂留空;后续 eapi 探针有果再补
+ * - 作词/作曲:公开通道(weapi/明文)已探无字段 → AI 兜底(开关;2026-10-02 用户定)
  */
 class DownloadEnricherImpl(
     private val dataStoreManager: DataStoreManager,
@@ -64,7 +64,8 @@ class DownloadEnricherImpl(
                 val lyrics = lyricsDeferred.await()
                 val lastfmGenre = lastfmGenreDeferred.await()
 
-                // 语言:脚本判别优先(零成本);流派/语言任一缺失且 AI 开着才问一次 AI
+                // 语言:脚本判别优先(零成本);流派/语言任一缺失且 AI 开着才问一次 AI。
+                // 作词/作曲无公开源(weapi/明文都探过没字段),AI 开着时一并兜底(2026-10-02 用户定)
                 val scriptLanguage = lyrics?.let { detectLanguageByScript(it) }
                 val aiPair =
                     if (aiEnabled && (lastfmGenre == null || scriptLanguage == null)) {
@@ -76,12 +77,20 @@ class DownloadEnricherImpl(
                     } else {
                         null
                     }
+                val aiCredits =
+                    if (aiEnabled) {
+                        runCatching {
+                            enrichCreditsByAi(song, mainArtist)
+                        }.getOrNull()
+                    } else {
+                        null
+                    }
 
                 EnrichedDownloadContent(
                     genre = lastfmGenre ?: aiPair?.first,
                     language = scriptLanguage ?: aiPair?.second,
-                    lyricist = null,
-                    composer = null,
+                    lyricist = aiCredits?.first,
+                    composer = aiCredits?.second,
                     copyright = netease?.company?.takeIf { it.isNotBlank() },
                     trackNumber = netease?.trackNumber,
                     discNumber = netease?.discNumber,
@@ -222,5 +231,43 @@ class DownloadEnricherImpl(
             Regex("language\\s*=\\s*(\\w{2})", RegexOption.IGNORE_CASE)
                 .find(answer)?.groupValues?.get(1)?.trim()?.lowercase()
         return genre to language
+    }
+
+    /**
+     * 作词/作曲 AI 兜底(2026-10-02 用户定):网易 songDetail 的词曲字段公开通道探不到,
+     * YT 更无来源——AI 开着就问一次模型(知名歌它的知识库里有,冷门歌模型会留空)。
+     * 30s 超时吞错,绝不阻塞下载。
+     */
+    private suspend fun enrichCreditsByAi(
+        song: SongEntity,
+        mainArtist: String,
+    ): Pair<String?, String?>? {
+        val prompt =
+            buildString {
+                append("Song title: ${song.title}\nArtist: $mainArtist")
+                song.albumName?.let { append("\nAlbum: $it") }
+                append("\n\nAnswer in one line of plain text, no explanation. Format: ")
+                append("lyricist=<lyricist name>; composer=<composer name>")
+                append("\nIf you are not sure about a field, omit that key. Do not guess.")
+            }
+        val answer =
+            withTimeoutOrNull(30.seconds) {
+                aiClient.complete(
+                    systemPrompt = "You tag music files with accurate credits. Reply ONLY with the requested key=value pairs. If unsure, omit that key.",
+                    userPrompt = prompt,
+                ).getOrNull()
+            } ?: return null
+        val lyricist =
+            Regex("lyricist\\s*=\\s*([^;\\r\\n]+)", RegexOption.IGNORE_CASE)
+                .find(answer)?.groupValues?.get(1)?.trim()?.take(60)
+                ?.takeIf { it.isNotBlank() && !it.equals("unknown", true) && !it.equals("omit", true) }
+        val composer =
+            Regex("composer\\s*=\\s*([^;\\r\\n]+)", RegexOption.IGNORE_CASE)
+                .find(answer)?.groupValues?.get(1)?.trim()?.take(60)
+                ?.takeIf { it.isNotBlank() && !it.equals("unknown", true) && !it.equals("omit", true) }
+        if (lyricist != null || composer != null) {
+            Logger.w(TAG, "AI credits: ${song.videoId} lyricist=$lyricist composer=$composer")
+        }
+        return lyricist to composer
     }
 }

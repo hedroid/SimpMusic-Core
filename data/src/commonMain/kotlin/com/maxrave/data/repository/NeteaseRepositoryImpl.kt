@@ -516,6 +516,8 @@ class NeteaseRepositoryImpl(
                     return Result.success(null)
                 }
                 val url = result.url
+                // 档位判定留痕(用户问"设置了 Hi-Res 为何下到 mp3"):命中档/类型/码率一眼可见
+                Logger.w(TAG, "songUrl $songId want=${wanted.key} try=${level.key} level=${result.level} type=${result.mimeType} br=${result.bitrate} trial=${result.freeTrialInfo != null}")
                 if (!url.isNullOrEmpty() && result.freeTrialInfo == null) {
                     // 付费 dj 节目/短剧的"占位试听":code 200 + 有效 url + freeTrialInfo=null,
                     // 但文件只有 26KB(320k 下≈0.7s,全库同一 md5 占位;实测 2026-09-28)——

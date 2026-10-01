@@ -113,21 +113,17 @@ internal class FileDownloadExporter(
                 Logger.w(TAG, "exportAudio probe: $videoId isNetease=$isNetease flacMagicOffset=$flacMagic")
 
                 // 2) tag/歌词尽力收集(失败全空字段,不阻塞);封面(升档 1080)用 okhttp 拉字节。
-                // 封面只嵌 mp3:flac 嵌 attached_pic 后 ExoPlayer 的 MediaCodec 路线会炸
-                // InsufficientCapacityException(实测 2026-10-01,129KB 帧超 32KB buffer),
-                // 且 flac 嵌图在部分播放器生态本就兼容性差——flac 封面走文件管理器缩略图
+                // mp3 嵌 ID3 attached_pic;flac 由手写器嵌标准 PICTURE block(2026-10-02 用户
+                // 反馈"flac 没有封面信息"——此前 flac 不嵌图是因 ffmpeg-kit 6.0.1 的 flac
+                // muxer 嵌 attached_pic 会炸 InsufficientCapacity,字节级写入器绕开了它)
                 val content: EnrichedDownloadContent =
                     runCatching { enricher?.enrich(song, song.thumbnails) ?: EnrichedDownloadContent() }
                         .getOrElse { EnrichedDownloadContent() }
                 val ext = if (isNetease && isFlac) "flac" else "mp3"
                 val coverFile =
-                    if (ext == "mp3") {
-                        song.thumbnails?.let { url -> downloadArtwork(hiResArtworkUrl(url)) }
-                            ?.let { bytes -> File(workDir, "$videoId.jpg").apply { writeBytes(bytes) } }
-                            ?.takeIf { it.length() > 0 }
-                    } else {
-                        null
-                    }
+                    song.thumbnails?.let { url -> downloadArtwork(hiResArtworkUrl(url)) }
+                        ?.let { bytes -> File(workDir, "$videoId.jpg").apply { writeBytes(bytes) } }
+                        ?.takeIf { it.length() > 0 }
 
                 // 3) 成品流:flac=原始字节直落(ffmpeg-kit 6.0.1 的 flac muxer 重封即损坏——
                 // 帧数据逐字节完好但头部 block 错位,ExoPlayer/ffmpeg 都解析失败;去 lyrics
@@ -139,10 +135,11 @@ internal class FileDownloadExporter(
                 val mime = if (ext == "flac") "audio/flac" else "audio/mpeg"
                 val tagged = File(workDir, "$videoId-tagged.$ext")
                 if (ext == "flac") {
-                    // Vorbis Comment 手写(ffmpeg-kit 6.0.1 flac muxer 重封即损坏,字节级
-                    // 绕开;二修:剥离网易自带 comment 块去重,只落我们一份);写失败退
-                    // 原始直落,不阻塞下载
-                    if (!writeFlacVorbisComment(rawInput, tagged, buildTags(song, content, includeLyrics = false))) {
+                    // Vorbis Comment + PICTURE 手写(ffmpeg-kit 6.0.1 flac muxer 重封即损坏,
+                    // 字节级绕开;二修:剥离网易自带 comment 块去重;三修 2026-10-02:歌词入
+                    // LYRICS 标签+封面入 PICTURE block,均为手写块不受坏 muxer 影响);
+                    // 写失败退原始直落,不阻塞下载
+                    if (!writeFlacTags(rawInput, tagged, buildTags(song, content, includeLyrics = true), coverFile)) {
                         rawInput.copyTo(tagged, overwrite = true)
                     }
                 } else if (!writeTaggedAudio(rawInput, tagged, coverFile, song, content, isNetease, ext)) {
@@ -358,8 +355,8 @@ internal class FileDownloadExporter(
         }
     }
 
-    /** ffmpeg 通用键 → FLAC Vorbis Comment 惯例大写键(lyrics 不映射:大体积换行文本
-     *  历史边界坑,歌词由同名 .lrc 文件承载) */
+    /** ffmpeg 通用键 → FLAC Vorbis Comment 惯例大写键(lyrics 走 LYRICS 标签:大体积换行
+     *  文本对坏 muxer 是坑,但字节级写入器的 24bit 块长装得下,2026-10-02 用户定歌词入标签) */
     private val flacTagKeys =
         mapOf(
             "title" to "TITLE",
@@ -375,6 +372,7 @@ internal class FileDownloadExporter(
             "composer" to "COMPOSER",
             "copyright" to "COPYRIGHT",
             "comment" to "COMMENT",
+            "lyrics" to "LYRICS",
         )
 
     /**
@@ -408,26 +406,27 @@ internal class FileDownloadExporter(
         }.getOrNull()
 
     /**
-     * 手写 FLAC Vorbis Comment(2026-10-01 用户反馈"tag 大部分没写进去"的根治)。
-     * ffmpeg-kit 6.0.1 的 flac muxer 重封即损坏(头部 block 错位,实测),flac 长期
-     * "原始字节直落=零 tag"。
+     * 手写 FLAC metadata(Vorbis Comment + 可选 PICTURE 封面)。ffmpeg-kit 6.0.1 的 flac
+     * muxer 重封即损坏(实测),一切手写绕开。
      *
-     * 2026-10-01 二修(用户复报"标签没写进 flac"):网易 flac 自带 VORBIS_COMMENT 块,
-     * 原实现**追加**第二个 comment 块——多数播放器只认第一个(读到网易旧 tag/空 tag,
-     * 我们写的全被忽略)。改为**剥离全部既有 type=4 块、只落我们一个**:可选 ID3 前缀
-     * 原样保留,其余 metadata 块 last 位清零,新 type=4 块作末块,音频帧区一字节不动。
+     * 规则:可选 ID3 前缀原样保留;既有 VORBIS_COMMENT(type=4)块全部剥离(网易自带空
+     * comment,追加会被"读第一个"的播放器忽略)替换为我们的;既有 PICTURE(type=6)块
+     * 同样剥离替换(有封面字节时);其余块 last 位清零原序保留;我们的 VORBIS_COMMENT
+     * 作末块;音频帧区一字节不动。
      */
-    private fun writeFlacVorbisComment(
+    private fun writeFlacTags(
         input: File,
         output: File,
         tags: Map<String, String>,
+        coverFile: File?,
     ): Boolean =
         runCatching {
             val entries =
                 tags.entries
                     .mapNotNull { (k, v) -> flacTagKeys[k]?.let { key -> "$key=$v" } }
-                    .filter { it.toByteArray(Charsets.UTF_8).size <= 0x7FFF } // 单条防超长(24bit 块长远够,保守)
-            if (entries.isEmpty()) return@runCatching false
+                    .filter { it.toByteArray(Charsets.UTF_8).size <= 0xFFFFFF } // 24bit 块长上限
+                    .also { list -> list.forEach { e -> require(e.toByteArray(Charsets.UTF_8).size < 0xFFFFFF) } }
+            if (entries.isEmpty() && coverFile == null) return@runCatching false
 
             // 1) 魔数(可能带 ID3 前缀)与 metadata 块表
             val magicOffset = flacMagicOffset(input) ?: error("not a flac stream")
@@ -477,11 +476,38 @@ internal class FileDownloadExporter(
                 leU32(b.size)
                 baos.write(b)
             }
-            val payload = baos.toByteArray()
+            val vorbisPayload = baos.toByteArray()
 
-            // 3) 重写:ID3 前缀(如有)原样 → 既有非 type-4 块(last 位清零)→ 新 type=4
-            //    末块 → 帧区原样。既有 type-4 块整个丢弃(去重,见方法注释)
-            val oldVorbisBytes = blocks.filter { it.type == 4 }.sumOf { 4L + it.len }
+            // 3) PICTURE block payload(type=6):picType=3(front cover)+MIME+空描述+
+            //    宽高深色全 0+图数据。宽高未探测写 0,符合规范(播放器自会解码)
+            var picturePayload: ByteArray? = null
+            if (coverFile != null && coverFile.exists() && coverFile.length() > 0) {
+                runCatching {
+                    val data = coverFile.readBytes()
+                    val mime = if (data.size > 3 && data[0] == 0xFF.toByte() && data[1] == 0xD8.toByte()) "image/jpeg" else "image/png"
+                    val p = java.io.ByteArrayOutputStream()
+                    fun u32(v: Int) {
+                        p.write((v shr 24) and 0xFF)
+                        p.write((v shr 16) and 0xFF)
+                        p.write((v shr 8) and 0xFF)
+                        p.write(v and 0xFF)
+                    }
+                    u32(3) // front cover
+                    val mimeB = mime.toByteArray(Charsets.US_ASCII)
+                    u32(mimeB.size)
+                    p.write(mimeB)
+                    u32(0) // 描述空
+                    u32(0); u32(0); u32(0); u32(0) // width/height/depth/colors
+                    u32(data.size)
+                    p.write(data)
+                    picturePayload = p.toByteArray()
+                }.onFailure { Logger.w(TAG, "picture payload failed: ${it.message}") }
+            }
+
+            // 4) 重写:ID3 前缀(如有)原样 → 既有非 type-4/6 块(last 位清零)→ PICTURE(如
+            //    有)→ 新 type=4 末块 → 帧区原样。既有 type-4/6 块整个丢弃(去重)
+            val strippedBytes =
+                blocks.filter { it.type == 4 || it.type == 6 }.sumOf { 4L + it.len }
             fun copyRange(
                 src: java.io.RandomAccessFile,
                 dst: java.io.RandomAccessFile,
@@ -511,30 +537,40 @@ internal class FileDownloadExporter(
                     // "fLaC" 魔数必须显式拷(实测首版漏拷:块拷从魔数之后起,产出文件
                     // 连头 4 字节都没有——size 断言拦下后退了原始直落)
                     copyRange(src, dst, magicOffset, magicOffset + 4)
-                    blocks.filter { it.type != 4 }.forEach { b ->
+                    blocks.filter { it.type != 4 && it.type != 6 }.forEach { b ->
                         copyRange(src, dst, b.headerOffset, b.headerOffset + 4 + b.len, maskFirst = true)
+                    }
+                    picturePayload?.let { pic ->
+                        // PICTURE 非末块(last=0|type=6)
+                        dst.write(6)
+                        dst.write((pic.size shr 16) and 0xFF)
+                        dst.write((pic.size shr 8) and 0xFF)
+                        dst.write(pic.size and 0xFF)
+                        dst.write(pic)
                     }
                     // 新 block header: last=1 + type=4(VORBIS_COMMENT) + 24bit 长度
                     dst.write(0x80 or 4)
-                    dst.write((payload.size shr 16) and 0xFF)
-                    dst.write((payload.size shr 8) and 0xFF)
-                    dst.write(payload.size and 0xFF)
-                    dst.write(payload)
+                    dst.write((vorbisPayload.size shr 16) and 0xFF)
+                    dst.write((vorbisPayload.size shr 8) and 0xFF)
+                    dst.write(vorbisPayload.size and 0xFF)
+                    dst.write(vorbisPayload)
                     // 音频帧区逐块拷
                     copyRange(src, dst, framesStart, input.length())
-                    require(dst.length() == input.length() - oldVorbisBytes + 4 + payload.size) {
-                        "size mismatch: ${dst.length()} vs ${input.length() - oldVorbisBytes + 4 + payload.size}"
+                    val expected = input.length() - strippedBytes + 4L + vorbisPayload.size +
+                        (picturePayload?.let { 4L + it.size } ?: 0L)
+                    require(dst.length() == expected) {
+                        "size mismatch: ${dst.length()} vs $expected"
                     }
                 }
             }
             Logger.w(
                 TAG,
-                "flac vorbis rewritten: entries=${entries.size} id3Prefix=${magicOffset > 0} " +
-                    "oldVorbisBlocks=${blocks.count { it.type == 4 }} in=${input.length()} out=${output.length()}",
+                "flac tags rewritten: entries=${entries.size} picture=${picturePayload?.size ?: 0}B " +
+                    "id3Prefix=${magicOffset > 0} stripped=${blocks.count { it.type == 4 || it.type == 6 }} in=${input.length()} out=${output.length()}",
             )
             true
         }.getOrElse {
-            Logger.w(TAG, "writeFlacVorbisComment failed: ${it.message}")
+            Logger.w(TAG, "writeFlacTags failed: ${it.message}")
             false
         }
 
