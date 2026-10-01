@@ -353,6 +353,7 @@ internal class DownloadUtils(
                 songRepository.getSongById(videoId).firstOrNull()?.downloadedFilePath?.let { path ->
                     deleteMediaByPath(path)
                     File(path).delete()
+                    deleteLrcAndEmptyDirs(path)
                     songRepository.updateDownloadedFilePath(videoId, null)
                 }
                 // 先落 0 再发移除:collect 对 REMOVING 过渡有"文件在→保 3"防线(见 NOT_DOWNLOADED
@@ -411,6 +412,55 @@ internal class DownloadUtils(
         }.onFailure { Logger.w(TAG, "deleteMediaByPath failed: ${it.message}") }
     }
 
+    /**
+     * 删除歌曲同名 .lrc 歌词 + 级联清理空目录(2026-10-02 用户定)。
+     * 歌词与音频同名同目录(writeLrc 落的 nameWithoutExtension+".lrc");音频删除后,
+     * 所在目录若已空则向上逐层删除(专辑层→艺人层),到 Music/SimpMusic 根为止——
+     * 根是应用专属目录,保留不删。lrc 的 MediaStore Files 残行一并清(自己贡献的行免权限)。
+     */
+    private fun deleteLrcAndEmptyDirs(audioPath: String) {
+        runCatching {
+            val audio = File(audioPath)
+            val dir = audio.parentFile ?: return
+            val root =
+                File(
+                    android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC),
+                    "SimpMusic",
+                )
+            val lrc = File(dir, audio.nameWithoutExtension + ".lrc")
+            if (lrc.exists()) {
+                // 先走 MediaStore 行删除(provider 连文件一起清,且自动同步自己的库);
+                // 行不存在(残占/已清)退 File.delete。反过来先 File.delete 会留 E 级
+                // "Couldn't find file" 噪音(provider 删行时文件已没了)
+                val removedRow =
+                    runCatching {
+                        context.contentResolver.delete(
+                            MediaStore.Files.getContentUri("external"),
+                            "${MediaStore.MediaColumns.DATA}=?",
+                            arrayOf(lrc.absolutePath),
+                        )
+                    }.getOrDefault(0) > 0
+                if (removedRow || lrc.delete()) {
+                    Logger.w(TAG, "lrc deleted with song: $lrc")
+                } else {
+                    Logger.w(TAG, "lrc delete failed: $lrc")
+                }
+            }
+            // 从歌曲所在目录向上删空目录;根目录(及一切越界路径)不动
+            var cur: File? = dir
+            while (cur != null &&
+                cur.absolutePath.startsWith(root.absolutePath + File.separator) &&
+                cur != root
+            ) {
+                val children = cur.listFiles()
+                if (children == null || children.isNotEmpty()) break
+                if (!cur.delete()) break
+                Logger.w(TAG, "removed empty download dir: $cur")
+                cur = cur.parentFile
+            }
+        }.onFailure { Logger.w(TAG, "deleteLrcAndEmptyDirs failed: ${it.message}") }
+    }
+
     override suspend fun removeAllDownloads() {
         withContext(Dispatchers.IO) {
             // 文件式:遍历删文件+Room 清列(下载管理页/设置入口共用)。必须走全量活动查询
@@ -421,7 +471,8 @@ internal class DownloadUtils(
             runCatching {
                 songRepository.getDownloadActivitySongs().firstOrNull()?.forEach { song ->
                     song.downloadedFilePath?.let {
-                        deleteMediaByPath(it); File(it).delete(); songRepository.updateDownloadedFilePath(song.videoId, null)
+                        deleteMediaByPath(it); File(it).delete(); deleteLrcAndEmptyDirs(it)
+                        songRepository.updateDownloadedFilePath(song.videoId, null)
                     }
                     song.downloadedVideoFilePath?.let {
                         deleteMediaByPath(it); File(it).delete(); songRepository.updateDownloadedVideoFilePath(song.videoId, null)
