@@ -690,21 +690,21 @@ internal class DownloadUtils(
         }
         if (pendingExports.isNotEmpty()) {
             coroutineScope.launch {
-                // 同一首歌音视频都在列时按视频 merge 一次;纯音频按音频转存
+                // 同一首歌音视频都在列时按视频 merge 一次;纯音频按音频转存。派发与
+                // onDownloadChanged 同一套 index 规则(见那里的注释):视频条目没到
+                // COMPLETED 就不产独立 mp3,等它;无视频条目才纯音频转存
                 val bySong = pendingExports.groupBy({ it.first }, { it.second })
-                bySong.forEach { (songId, entries) ->
+                bySong.keys.forEach { songId ->
                     runCatching {
-                        if (entries.any { it }) {
-                            val audioDone = _downloads.value[songId]?.first?.state == Download.STATE_COMPLETED
-                            val videoDone = _downloads.value[songId]?.second?.state == Download.STATE_COMPLETED
-                            if (audioDone && videoDone) {
+                        val audioEntry = runCatching { downloadManager.downloadIndex.getDownload(songId) }.getOrNull()
+                        val videoEntry = runCatching { downloadManager.downloadIndex.getDownload(MERGING_DATA_TYPE.VIDEO + songId) }.getOrNull()
+                        when {
+                            videoEntry?.state == Download.STATE_COMPLETED &&
+                                (audioEntry == null || audioEntry.state == Download.STATE_COMPLETED) ->
                                 exporter.exportVideo(songId)
-                            } else if (audioDone) {
+                            videoEntry == null && audioEntry?.state == Download.STATE_COMPLETED ->
                                 exporter.exportAudio(songId)
-                            }
-                        } else {
-                            // 只有音频条目:视频条目不存在→纯音频转存;存在但未完成→等它
-                            if (_downloads.value[songId]?.second == null) exporter.exportAudio(songId)
+                            else -> Logger.w(TAG, "pending export waits: $songId audio=${audioEntry?.state} video=${videoEntry?.state}")
                         }
                     }
                 }
@@ -779,18 +779,26 @@ internal class DownloadUtils(
                                 if (isFileBasedRequest(download.request.data)) {
                                     coroutineScope.launch {
                                         runCatching {
-                                            if (isVideo) {
-                                                // 视频条目完成:音频也完成才 merge mp4(定稿:视频任务
-                                                // 不产独立 mp3,音频播放用 mp4 兜底)
-                                                val audioDone =
-                                                    _downloads.value[songId]?.first?.state == Download.STATE_COMPLETED
-                                                if (audioDone) exporter.exportVideo(songId)
-                                            } else {
-                                                // 音频条目完成:没有视频条目(纯音频任务)才独立转存;
-                                                // 视频任务由视频条目完成时统一 merge
-                                                if (_downloads.value[songId]?.second == null) {
-                                                    exporter.exportAudio(songId)
-                                                }
+                                            // 转存派发读持久 DownloadIndex(权威),不读 _downloads 内存
+                                            // map——两条发狠场景(2026-10-01 真机反馈"下载视频下出
+                                            // mp3"):①音频秒完成(缓存已在/断点续满)会赶在视频条目
+                                            // 事件入图前触发 exportAudio,独立产出 mp3;②视频先完成
+                                            // 时旧逻辑互相等待,双双 COMPLETED 却无人 merge(卡转存中)。
+                                            // 规则:无视频条目=纯音频转存;视频条目也完成=merge mp4
+                                            // (音频条目缺席也 merge——exportVideo 有已落地文件兜底);
+                                            // 否则等另一条完成时再派发。
+                                            val audioEntry = runCatching { downloadManager.downloadIndex.getDownload(songId) }.getOrNull()
+                                            val videoEntry = runCatching { downloadManager.downloadIndex.getDownload(MERGING_DATA_TYPE.VIDEO + songId) }.getOrNull()
+                                            Logger.w(
+                                                TAG,
+                                                "export dispatch: $songId completedId=$id audio=${audioEntry?.state} video=${videoEntry?.state}",
+                                            )
+                                            when {
+                                                videoEntry == null -> exporter.exportAudio(songId)
+                                                videoEntry.state == Download.STATE_COMPLETED &&
+                                                    (audioEntry == null || audioEntry.state == Download.STATE_COMPLETED) ->
+                                                    exporter.exportVideo(songId)
+                                                else -> Unit // 另一条还在途:等它 COMPLETED 时统一派发
                                             }
                                         }.onFailure {
                                             if (it is kotlinx.coroutines.CancellationException) throw it

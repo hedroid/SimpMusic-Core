@@ -108,7 +108,9 @@ internal class FileDownloadExporter(
                     return@withContext false
                 }
                 val isNetease = videoId.toLongOrNull() != null
-                val isFlac = rawInput.inputStream().use { s -> ByteArray(4).also { s.read(it) }.decodeToString().startsWith("fLaC") }
+                val flacMagic = flacMagicOffset(rawInput)
+                val isFlac = flacMagic != null
+                Logger.w(TAG, "exportAudio probe: $videoId isNetease=$isNetease flacMagicOffset=$flacMagic")
 
                 // 2) tag/歌词尽力收集(失败全空字段,不阻塞);封面(升档 1080)用 okhttp 拉字节。
                 // 封面只嵌 mp3:flac 嵌 attached_pic 后 ExoPlayer 的 MediaCodec 路线会炸
@@ -138,7 +140,8 @@ internal class FileDownloadExporter(
                 val tagged = File(workDir, "$videoId-tagged.$ext")
                 if (ext == "flac") {
                     // Vorbis Comment 手写(ffmpeg-kit 6.0.1 flac muxer 重封即损坏,字节级
-                    // 绕开);写失败退原始直落,不阻塞下载
+                    // 绕开;二修:剥离网易自带 comment 块去重,只落我们一份);写失败退
+                    // 原始直落,不阻塞下载
                     if (!writeFlacVorbisComment(rawInput, tagged, buildTags(song, content, includeLyrics = false))) {
                         rawInput.copyTo(tagged, overwrite = true)
                     }
@@ -211,6 +214,7 @@ internal class FileDownloadExporter(
                         }
                     }
                 if (!dumpCacheTo(MERGING_DATA_TYPE.VIDEO + videoId, videoRaw)) return@withContext false
+                Logger.w(TAG, "exportVideo inputs: $videoId audio=${audioSource.length()}B video=${videoRaw.length()}B")
 
                 // merge:流 copy 不重编码,标题/艺人 tag 简版写入
                 val cmd =
@@ -374,11 +378,44 @@ internal class FileDownloadExporter(
         )
 
     /**
+     * 探测 flac 魔数偏移:0=规范开头;部分网易 flac 带 ID3v2 前缀(非规范但生态常见),
+     * 跳过 ID3 头后应见 "fLaC"。null=不是 flac 流。
+     */
+    private fun flacMagicOffset(input: File): Long? =
+        runCatching {
+            java.io.RandomAccessFile(input, "r").use { r ->
+                val head = ByteArray(10)
+                r.readFully(head)
+                if (String(head, 0, 3, Charsets.US_ASCII) == "ID3") {
+                    // syncsafe size(6..9)+10 字节头;footer 标志位再 +10
+                    var size =
+                        ((head[6].toInt() and 0x7F) shl 21) or
+                            ((head[7].toInt() and 0x7F) shl 14) or
+                            ((head[8].toInt() and 0x7F) shl 7) or
+                            (head[9].toInt() and 0x7F)
+                    size += 10
+                    if (head[5].toInt() and 0x10 != 0) size += 10
+                    r.seek(size.toLong())
+                    val m = ByteArray(4)
+                    r.readFully(m)
+                    if (m.decodeToString() != "fLaC") return@runCatching null
+                    size.toLong()
+                } else {
+                    if (!head.copyOfRange(0, 4).decodeToString().startsWith("fLaC")) return@runCatching null
+                    0L
+                }
+            }
+        }.getOrNull()
+
+    /**
      * 手写 FLAC Vorbis Comment(2026-10-01 用户反馈"tag 大部分没写进去"的根治)。
      * ffmpeg-kit 6.0.1 的 flac muxer 重封即损坏(头部 block 错位,实测),flac 长期
-     * "原始字节直落=零 tag"。Vorbis Comment 结构简单:在 metadata 区末尾插入
-     * type=4 block,原末块 last 位清零、新块 last=1,音频帧区一个字节不动——完全
-     * 绕开坏 muxer,任何符合规范的 flac 解码器都能读到。
+     * "原始字节直落=零 tag"。
+     *
+     * 2026-10-01 二修(用户复报"标签没写进 flac"):网易 flac 自带 VORBIS_COMMENT 块,
+     * 原实现**追加**第二个 comment 块——多数播放器只认第一个(读到网易旧 tag/空 tag,
+     * 我们写的全被忽略)。改为**剥离全部既有 type=4 块、只落我们一个**:可选 ID3 前缀
+     * 原样保留,其余 metadata 块 last 位清零,新 type=4 块作末块,音频帧区一字节不动。
      */
     private fun writeFlacVorbisComment(
         input: File,
@@ -392,27 +429,36 @@ internal class FileDownloadExporter(
                     .filter { it.toByteArray(Charsets.UTF_8).size <= 0x7FFF } // 单条防超长(24bit 块长远够,保守)
             if (entries.isEmpty()) return@runCatching false
 
-            // 1) 扫 metadata 区找插入点(末块 header 偏移 + 区结束偏移;头部最多几十 KB)
-            val (lastBlockHeaderOffset, metadataEnd) =
-                java.io.RandomAccessFile(input, "r").use { r ->
-                    val m = ByteArray(4)
-                    r.readFully(m)
-                    require(m.decodeToString() == "fLaC") { "not a flac stream" }
-                    var off = 4L
-                    var lastBlockAt = -1L
-                    var last = false
-                    while (!last) {
-                        lastBlockAt = off
-                        r.seek(off)
-                        last = (r.readByte().toInt() and 0x80) != 0
-                        val len =
-                            ((r.readByte().toLong() and 0xFF) shl 16) or
-                                ((r.readByte().toLong() and 0xFF) shl 8) or
-                                (r.readByte().toLong() and 0xFF)
-                        off += 4 + len
+            // 1) 魔数(可能带 ID3 前缀)与 metadata 块表
+            val magicOffset = flacMagicOffset(input) ?: error("not a flac stream")
+
+            data class Block(
+                val headerOffset: Long,
+                val len: Int,
+                val type: Int,
+            )
+
+            val blocks = mutableListOf<Block>()
+            var framesStart = 0L
+            java.io.RandomAccessFile(input, "r").use { r ->
+                var off = magicOffset + 4
+                while (true) {
+                    r.seek(off)
+                    val h = r.readByte().toInt() and 0xFF
+                    val type = h and 0x7F
+                    val last = (h and 0x80) != 0
+                    val len =
+                        ((r.readByte().toLong() and 0xFF) shl 16) or
+                            ((r.readByte().toLong() and 0xFF) shl 8) or
+                            (r.readByte().toLong() and 0xFF)
+                    blocks += Block(off, len.toInt(), type)
+                    off += 4 + len
+                    if (last) {
+                        framesStart = off
+                        break
                     }
-                    Pair(lastBlockAt, off)
                 }
+            }
 
             // 2) vorbis comment payload(little-endian 长度前缀)
             val vendor = "SimpMusic-Hedroid".toByteArray(Charsets.UTF_8)
@@ -433,22 +479,40 @@ internal class FileDownloadExporter(
             }
             val payload = baos.toByteArray()
 
-            // 3) 重写:头部(末块 last 位清零) + 新 block(last=1|type=4) + 帧区原样
+            // 3) 重写:ID3 前缀(如有)原样 → 既有非 type-4 块(last 位清零)→ 新 type=4
+            //    末块 → 帧区原样。既有 type-4 块整个丢弃(去重,见方法注释)
+            val oldVorbisBytes = blocks.filter { it.type == 4 }.sumOf { 4L + it.len }
+            fun copyRange(
+                src: java.io.RandomAccessFile,
+                dst: java.io.RandomAccessFile,
+                from: Long,
+                until: Long,
+                maskFirst: Boolean = false,
+            ) {
+                src.seek(from)
+                val buf = ByteArray(64 * 1024)
+                var pos = from
+                var first = true
+                while (pos < until) {
+                    val n = src.read(buf, 0, minOf(buf.size.toLong(), until - pos).toInt())
+                    if (n <= 0) break
+                    if (first && maskFirst && n > 0) {
+                        buf[0] = (buf[0].toInt() and 0x7F).toByte()
+                        first = false
+                    }
+                    dst.write(buf, 0, n)
+                    pos += n
+                }
+            }
             java.io.RandomAccessFile(input, "r").use { src ->
                 java.io.RandomAccessFile(output, "rw").use { dst ->
                     dst.setLength(0)
-                    var pos = 0L
-                    while (pos < metadataEnd) {
-                        val chunk = minOf(64L * 1024, metadataEnd - pos).toInt()
-                        val buf = ByteArray(chunk)
-                        src.seek(pos)
-                        src.readFully(buf)
-                        val inBuf = (lastBlockHeaderOffset - pos).toInt()
-                        if (inBuf in 0 until chunk) {
-                            buf[inBuf] = (buf[inBuf].toInt() and 0x7F).toByte()
-                        }
-                        dst.write(buf)
-                        pos += chunk
+                    if (magicOffset > 0) copyRange(src, dst, 0, magicOffset)
+                    // "fLaC" 魔数必须显式拷(实测首版漏拷:块拷从魔数之后起,产出文件
+                    // 连头 4 字节都没有——size 断言拦下后退了原始直落)
+                    copyRange(src, dst, magicOffset, magicOffset + 4)
+                    blocks.filter { it.type != 4 }.forEach { b ->
+                        copyRange(src, dst, b.headerOffset, b.headerOffset + 4 + b.len, maskFirst = true)
                     }
                     // 新 block header: last=1 + type=4(VORBIS_COMMENT) + 24bit 长度
                     dst.write(0x80 or 4)
@@ -457,16 +521,17 @@ internal class FileDownloadExporter(
                     dst.write(payload.size and 0xFF)
                     dst.write(payload)
                     // 音频帧区逐块拷
-                    src.seek(metadataEnd)
-                    val buf = ByteArray(64 * 1024)
-                    while (true) {
-                        val n = src.read(buf)
-                        if (n < 0) break
-                        dst.write(buf, 0, n)
+                    copyRange(src, dst, framesStart, input.length())
+                    require(dst.length() == input.length() - oldVorbisBytes + 4 + payload.size) {
+                        "size mismatch: ${dst.length()} vs ${input.length() - oldVorbisBytes + 4 + payload.size}"
                     }
-                    require(dst.length() == input.length() + 4 + payload.size) { "size mismatch" }
                 }
             }
+            Logger.w(
+                TAG,
+                "flac vorbis rewritten: entries=${entries.size} id3Prefix=${magicOffset > 0} " +
+                    "oldVorbisBlocks=${blocks.count { it.type == 4 }} in=${input.length()} out=${output.length()}",
+            )
             true
         }.getOrElse {
             Logger.w(TAG, "writeFlacVorbisComment failed: ${it.message}")
@@ -573,7 +638,7 @@ internal class FileDownloadExporter(
         }.onFailure { Logger.e(TAG, "insertMediaStore failed: ${it.message}") }
             .getOrNull()
 
-    /** lrc 落盘:同目录同名;先删残占(FUSE 下同名目标常 EEXIST,老朋友),失败仅 log */
+    /** lrc 落盘:同目录同名,三级尝试,失败仅 log 不阻塞下载 */
     private fun writeLrc(
         dir: File?,
         name: String,
@@ -581,19 +646,58 @@ internal class FileDownloadExporter(
     ) {
         val dir_ = dir ?: return
         val target = File(dir_, name)
-        // staged write:FUSE 对"新建同名文件"常 EEXIST(残占),delete 也清不掉目录项的同名
-        // 冲突记忆——写 .part 再原子 rename(同目录 rename 对已存在目标=覆盖),老配方
-        val part = File(dir_, "$name.part")
-        part.writeText(text)
-        try {
-            if (!part.renameTo(target)) {
-                target.delete()
-                check(part.renameTo(target)) { "lrc commit failed" }
+        // ① 直写(staged .part→rename:防 FUSE 同名残占 EEXIST)——Download/ 根或部分 OEM 有效
+        runCatching {
+            val part = File(dir_, "$name.part")
+            part.writeText(text)
+            try {
+                if (!part.renameTo(target)) {
+                    target.delete()
+                    check(part.renameTo(target)) { "lrc commit failed" }
+                }
+            } finally {
+                part.delete()
             }
-        } finally {
-            part.delete()
+            Logger.i(TAG, "lrc written: $target")
+            return
+        }.onFailure { Logger.w(TAG, "lrc direct write failed (${it.message})") }
+        // ② 媒体扩展名暂存再改名:API 30+ FUSE 对 Music/ 下非媒体扩展名(.lrc/.part)的
+        // File API 新建直接 EPERM;先用媒体扩展名(.mp3)创建(过创建门),写完 rename 成
+        // .lrc——应用是文件的贡献者,对自家文件持有 FUSE 写权(2026-10-01 实测验证)
+        var staged: File? = null
+        runCatching {
+            val s = File(dir_, "$name.mp3")
+            staged = s
+            s.writeText(text)
+            if (!s.renameTo(target)) {
+                target.delete()
+                check(s.renameTo(target)) { "lrc rename failed" }
+            }
+            Logger.i(TAG, "lrc written via staged rename: $target")
+            return
+        }.onFailure {
+            staged?.delete()
+            Logger.w(TAG, "lrc staged rename failed (${it.message})")
         }
-        Logger.i(TAG, "lrc written: $target")
+        // ③ MediaStore Files 兜底:MediaProvider 仅放行 Download/Documents 主目录
+        // (Music/ 拒非媒体,"Primary directory Music not allowed"),留作目录规则变化时兜底
+        runCatching {
+            val resolver = context.contentResolver
+            val relDir = dir_.absolutePath.substringAfter("/storage/emulated/0/")
+            val values =
+                ContentValues().apply {
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, relDir)
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+            val uri = resolver.insert(MediaStore.Files.getContentUri("external"), values) ?: error("insert null")
+            resolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) } ?: error("stream null")
+            values.clear()
+            values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+            check(resolver.update(uri, values, null, null) > 0) { "unpend failed" }
+            Logger.i(TAG, "lrc written via MediaStore: $relDir/$name")
+        }.onFailure { Logger.w(TAG, "lrc MediaStore failed: ${it.message}") }
     }
 
     // ============================================================ 封面
