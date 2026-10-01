@@ -50,6 +50,13 @@ data class SongEntity(
     /** 文件式下载的视频版(音视频 merge 后的 mp4),语义同上;音频播放可用它兜底 */
     @ColumnInfo(defaultValue = "NULL")
     val downloadedVideoFilePath: String? = null,
+    /**
+     * 网易播客节目 id(2026-10-01 下载页播客 tab):非空=song 行是播客节目而非歌曲。
+     * 取流/播放仍用主键(videoId=mainSong.id),此列只承载"这是播客"的归类语义
+     * (队列隔离:点播客下载项组纯播客队列,不与歌曲混排)。
+     */
+    @ColumnInfo(defaultValue = "NULL")
+    val neteaseProgramId: Long? = null,
 ) : RecentlyType {
     override fun objectType(): RecentlyType.Type = RecentlyType.Type.SONG
 }

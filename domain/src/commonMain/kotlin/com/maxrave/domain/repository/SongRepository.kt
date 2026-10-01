@@ -134,6 +134,12 @@ interface SongRepository {
         path: String?,
     ): Int
 
+    /** 播客归类回填:仅当 neteaseProgramId 还空时写(播客起播处补历史行) */
+    suspend fun updateNeteaseProgramIdIfNull(
+        videoId: String,
+        programId: Long?,
+    ): Int
+
     /** 文件式下载:写/清视频文件绝对路径(null=清列),返回影响行数(0=无此行) */
     suspend fun updateDownloadedVideoFilePath(
         videoId: String,

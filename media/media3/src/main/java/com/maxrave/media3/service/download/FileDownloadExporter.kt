@@ -137,7 +137,11 @@ internal class FileDownloadExporter(
                 val mime = if (ext == "flac") "audio/flac" else "audio/mpeg"
                 val tagged = File(workDir, "$videoId-tagged.$ext")
                 if (ext == "flac") {
-                    rawInput.copyTo(tagged, overwrite = true)
+                    // Vorbis Comment 手写(ffmpeg-kit 6.0.1 flac muxer 重封即损坏,字节级
+                    // 绕开);写失败退原始直落,不阻塞下载
+                    if (!writeFlacVorbisComment(rawInput, tagged, buildTags(song, content, includeLyrics = false))) {
+                        rawInput.copyTo(tagged, overwrite = true)
+                    }
                 } else if (!writeTaggedAudio(rawInput, tagged, coverFile, song, content, isNetease, ext)) {
                     Logger.e(TAG, "exportAudio: ffmpeg failed for $videoId")
                     return@withContext false
@@ -349,6 +353,125 @@ internal class FileDownloadExporter(
             }
         }
     }
+
+    /** ffmpeg 通用键 → FLAC Vorbis Comment 惯例大写键(lyrics 不映射:大体积换行文本
+     *  历史边界坑,歌词由同名 .lrc 文件承载) */
+    private val flacTagKeys =
+        mapOf(
+            "title" to "TITLE",
+            "artist" to "ARTIST",
+            "album_artist" to "ALBUMARTIST",
+            "album" to "ALBUM",
+            "date" to "DATE",
+            "genre" to "GENRE",
+            "language" to "LANGUAGE",
+            "track" to "TRACKNUMBER",
+            "disc" to "DISCNUMBER",
+            "lyricist" to "LYRICIST",
+            "composer" to "COMPOSER",
+            "copyright" to "COPYRIGHT",
+            "comment" to "COMMENT",
+        )
+
+    /**
+     * 手写 FLAC Vorbis Comment(2026-10-01 用户反馈"tag 大部分没写进去"的根治)。
+     * ffmpeg-kit 6.0.1 的 flac muxer 重封即损坏(头部 block 错位,实测),flac 长期
+     * "原始字节直落=零 tag"。Vorbis Comment 结构简单:在 metadata 区末尾插入
+     * type=4 block,原末块 last 位清零、新块 last=1,音频帧区一个字节不动——完全
+     * 绕开坏 muxer,任何符合规范的 flac 解码器都能读到。
+     */
+    private fun writeFlacVorbisComment(
+        input: File,
+        output: File,
+        tags: Map<String, String>,
+    ): Boolean =
+        runCatching {
+            val entries =
+                tags.entries
+                    .mapNotNull { (k, v) -> flacTagKeys[k]?.let { key -> "$key=$v" } }
+                    .filter { it.toByteArray(Charsets.UTF_8).size <= 0x7FFF } // 单条防超长(24bit 块长远够,保守)
+            if (entries.isEmpty()) return@runCatching false
+
+            // 1) 扫 metadata 区找插入点(末块 header 偏移 + 区结束偏移;头部最多几十 KB)
+            val (lastBlockHeaderOffset, metadataEnd) =
+                java.io.RandomAccessFile(input, "r").use { r ->
+                    val m = ByteArray(4)
+                    r.readFully(m)
+                    require(m.decodeToString() == "fLaC") { "not a flac stream" }
+                    var off = 4L
+                    var lastBlockAt = -1L
+                    var last = false
+                    while (!last) {
+                        lastBlockAt = off
+                        r.seek(off)
+                        last = (r.readByte().toInt() and 0x80) != 0
+                        val len =
+                            ((r.readByte().toLong() and 0xFF) shl 16) or
+                                ((r.readByte().toLong() and 0xFF) shl 8) or
+                                (r.readByte().toLong() and 0xFF)
+                        off += 4 + len
+                    }
+                    Pair(lastBlockAt, off)
+                }
+
+            // 2) vorbis comment payload(little-endian 长度前缀)
+            val vendor = "SimpMusic-Hedroid".toByteArray(Charsets.UTF_8)
+            val baos = java.io.ByteArrayOutputStream()
+            fun leU32(v: Int) {
+                baos.write(v and 0xFF)
+                baos.write((v shr 8) and 0xFF)
+                baos.write((v shr 16) and 0xFF)
+                baos.write((v shr 24) and 0xFF)
+            }
+            leU32(vendor.size)
+            baos.write(vendor)
+            leU32(entries.size)
+            entries.forEach { e ->
+                val b = e.toByteArray(Charsets.UTF_8)
+                leU32(b.size)
+                baos.write(b)
+            }
+            val payload = baos.toByteArray()
+
+            // 3) 重写:头部(末块 last 位清零) + 新 block(last=1|type=4) + 帧区原样
+            java.io.RandomAccessFile(input, "r").use { src ->
+                java.io.RandomAccessFile(output, "rw").use { dst ->
+                    dst.setLength(0)
+                    var pos = 0L
+                    while (pos < metadataEnd) {
+                        val chunk = minOf(64L * 1024, metadataEnd - pos).toInt()
+                        val buf = ByteArray(chunk)
+                        src.seek(pos)
+                        src.readFully(buf)
+                        val inBuf = (lastBlockHeaderOffset - pos).toInt()
+                        if (inBuf in 0 until chunk) {
+                            buf[inBuf] = (buf[inBuf].toInt() and 0x7F).toByte()
+                        }
+                        dst.write(buf)
+                        pos += chunk
+                    }
+                    // 新 block header: last=1 + type=4(VORBIS_COMMENT) + 24bit 长度
+                    dst.write(0x80 or 4)
+                    dst.write((payload.size shr 16) and 0xFF)
+                    dst.write((payload.size shr 8) and 0xFF)
+                    dst.write(payload.size and 0xFF)
+                    dst.write(payload)
+                    // 音频帧区逐块拷
+                    src.seek(metadataEnd)
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        val n = src.read(buf)
+                        if (n < 0) break
+                        dst.write(buf, 0, n)
+                    }
+                    require(dst.length() == input.length() + 4 + payload.size) { "size mismatch" }
+                }
+            }
+            true
+        }.getOrElse {
+            Logger.w(TAG, "writeFlacVorbisComment failed: ${it.message}")
+            false
+        }
 
     // ============================================================ 路径与文件名
 

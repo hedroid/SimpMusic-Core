@@ -110,8 +110,11 @@ import com.maxrave.domain.data.entities.analytics.PlaybackEventEntity
         // 31 adds song.downloadedFilePath / downloadedVideoFilePath (nullable ADD COLUMN,
         // file-based downloads). Plain enough for the generator.
         AutoMigration(30, 31),
+        // 32 adds song.neteaseProgramId (nullable ADD COLUMN, podcast row tagging for the
+        // download page's Podcasts tab). Plain enough for the generator.
+        AutoMigration(31, 32),
     ],
-    version = 31,
+    version = 32,
 )
 @TypeConverters(Converters::class)
 abstract class MusicDatabase : RoomDatabase() {

@@ -267,6 +267,11 @@ internal class LocalDataSource(
         videoId: String,
     ) = databaseDao.updateDownloadedFilePath(path, videoId)
 
+    suspend fun updateNeteaseProgramIdIfNull(
+        videoId: String,
+        programId: Long?,
+    ) = databaseDao.updateNeteaseProgramIdIfNull(videoId, programId)
+
     suspend fun updateDownloadedVideoFilePath(
         path: String?,
         videoId: String,

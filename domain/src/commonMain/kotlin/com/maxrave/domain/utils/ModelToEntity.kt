@@ -129,6 +129,8 @@ fun Track.toSongEntity(): SongEntity {
         liked = false,
         totalPlayTime = 0,
         downloadState = 0,
+        // 播客节目归类(下载页 tab):Track 带了就落库,普通歌 null
+        neteaseProgramId = this.neteaseProgramId,
     )
 }
 

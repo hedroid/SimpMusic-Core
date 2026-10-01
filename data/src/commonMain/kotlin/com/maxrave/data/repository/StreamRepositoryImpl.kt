@@ -273,7 +273,10 @@ internal class StreamRepositoryImpl(
                         } else {
                             audioFormat
                         }
-                    if (format == null) {
+                    if (format == null && !isVideo) {
+                        // 音频可兜底任意流;视频不能——ATV 纯音频曲目没有视频流,拿音频
+                        // 冒充视频会 merge 出"只有声音的 mp4"(2026-10-01 用户反馈"下载
+                        // 视频下出来是音乐"),宁可使任务失败
                         format = formatList.lastOrNull { it.url.isNullOrEmpty().not() }
                     }
                     if (muxed) {

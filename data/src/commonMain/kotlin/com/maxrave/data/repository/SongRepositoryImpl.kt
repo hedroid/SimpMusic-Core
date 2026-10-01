@@ -302,6 +302,13 @@ internal class SongRepositoryImpl(
         localDataSource.updateDownloadedFilePath(path, videoId)
     }
 
+    override suspend fun updateNeteaseProgramIdIfNull(
+        videoId: String,
+        programId: Long?,
+    ): Int = withContext(Dispatchers.Main) {
+        localDataSource.updateNeteaseProgramIdIfNull(videoId, programId)
+    }
+
     override suspend fun updateDownloadedVideoFilePath(
         videoId: String,
         path: String?,

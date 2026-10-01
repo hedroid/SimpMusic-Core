@@ -815,6 +815,31 @@ internal class DownloadUtils(
                         }
                     }
                 }
+
+                override fun onDownloadRemoved(
+                    downloadManager: DownloadManager,
+                    download: Download,
+                ) {
+                    // 删除兜底对账(2026-10-01 播客删除实测):removeAudioDownload 的"先落 0
+                    // 再移除"会被移除窗口内 STATE_DOWNLOADING 的重放写回 2,条目没了之后
+                    // 再无人纠正 → 卡"文件已丢失"。条目移除且无任何文件落地才归 0——
+                    // 转存成功后清缓存条目的路径已写好,不满足条件,不受影响
+                    val id = download.request.id
+                    val songId =
+                        if (id.contains(MERGING_DATA_TYPE.VIDEO)) {
+                            id.removePrefix(MERGING_DATA_TYPE.VIDEO)
+                        } else {
+                            id
+                        }
+                    coroutineScope.launch {
+                        runCatching {
+                            val song = songRepository.getSongById(songId).firstOrNull()
+                            if (song?.downloadedFilePath == null && song?.downloadedVideoFilePath == null) {
+                                songRepository.updateDownloadState(songId, DownloadState.STATE_NOT_DOWNLOADED)
+                            }
+                        }
+                    }
+                }
             },
         )
     }

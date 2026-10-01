@@ -414,6 +414,14 @@ interface DatabaseDao {
         videoId: String,
     ): Int
 
+    /** 播客归类回填:仅当列还空时写入(UPDATE 通道绕开 insertSong IGNORE 的冻结;
+     *  播客起播处对队列行补值,让下载页播客 tab 识别 v32 前建的历史行) */
+    @Query("UPDATE song SET neteaseProgramId = :programId WHERE videoId = :videoId AND neteaseProgramId IS NULL")
+    suspend fun updateNeteaseProgramIdIfNull(
+        videoId: String,
+        programId: Long?,
+    ): Int
+
     /** 同名冲突判定:这个绝对路径已被哪首歌占用(null=没人占;返回 videoId 与要下的歌不同=冲突) */
     @Query("SELECT videoId FROM song WHERE downloadedFilePath = :path OR downloadedVideoFilePath = :path LIMIT 1")
     suspend fun getSongIdByDownloadedPath(path: String): String?
