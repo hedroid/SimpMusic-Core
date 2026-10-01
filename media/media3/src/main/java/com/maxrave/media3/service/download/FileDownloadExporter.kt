@@ -130,12 +130,15 @@ internal class FileDownloadExporter(
                 // 3) 成品流:flac=原始字节直落(ffmpeg-kit 6.0.1 的 flac muxer 重封即损坏——
                 // 帧数据逐字节完好但头部 block 错位,ExoPlayer/ffmpeg 都解析失败;去 lyrics
                 // 也一样,宿主 ffmpeg 同命令对照完好=构建级 bug,实测 2026-10-01。tag 由
-                // 文件名+同名 lrc 承载);mp3(网易标准档/YT 转码)走 ffmpeg 写 tag
+                // 文件名+同名 lrc 承载);mp3 走 ffmpeg 写 tag——网易 mp3 用 -c copy 容器级
+                // 重封(原格式直存,免二次有损;ID3/attached_pic 在容器层不受流 copy 影响,
+                // CR P2-5:原条件 isNetease&&isFlac 在非 flac 分支恒 false,网易 mp3 全被
+                // libmp3lame 重编码),YT webm 输入才 libmp3lame
                 val mime = if (ext == "flac") "audio/flac" else "audio/mpeg"
                 val tagged = File(workDir, "$videoId-tagged.$ext")
                 if (ext == "flac") {
                     rawInput.copyTo(tagged, overwrite = true)
-                } else if (!writeTaggedAudio(rawInput, tagged, coverFile, song, content, isNetease && isFlac, ext)) {
+                } else if (!writeTaggedAudio(rawInput, tagged, coverFile, song, content, isNetease, ext)) {
                     Logger.e(TAG, "exportAudio: ffmpeg failed for $videoId")
                     return@withContext false
                 }

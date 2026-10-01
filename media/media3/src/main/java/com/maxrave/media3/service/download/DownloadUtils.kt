@@ -413,9 +413,13 @@ internal class DownloadUtils(
 
     override suspend fun removeAllDownloads() {
         withContext(Dispatchers.IO) {
-            // 文件式:遍历删文件+Room 清列(下载管理页/设置入口共用)
+            // 文件式:遍历删文件+Room 清列(下载管理页/设置入口共用)。必须走全量活动查询
+            // (state 1/2/3 OR 路径非空):getDownloadedSongs 只查 state=3,"音频已落地但视频
+            // 在下"的 state2 行会被漏掉——文件不删+随后清空运行态/移除 index,留下卡死行
+            // (CR P1-4)。顺序保持"先清路径+落 0+清 landed,再移除 index"——文件式移除
+            // 事件不回写 state 的防线依赖这个顺序。
             runCatching {
-                songRepository.getDownloadedSongs().firstOrNull()?.forEach { song ->
+                songRepository.getDownloadActivitySongs().firstOrNull()?.forEach { song ->
                     song.downloadedFilePath?.let {
                         deleteMediaByPath(it); File(it).delete(); songRepository.updateDownloadedFilePath(song.videoId, null)
                     }
