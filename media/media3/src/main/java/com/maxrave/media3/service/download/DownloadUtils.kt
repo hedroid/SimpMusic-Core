@@ -87,6 +87,9 @@ internal class DownloadUtils(
      */
     private val landedFileIds = ConcurrentHashMap.newKeySet<String>()
 
+    /** 启动对账(landed 填充)是否完成——完成前 collect 不写"转存中(2)",防把 3 打成 2 后无人修 */
+    private val landedInitialized = java.util.concurrent.atomic.AtomicBoolean(false)
+
     /** 仅 Wi-Fi 下载→DownloadManager requirements(原生排队语义:蜂窝下任务等待,回 Wi-Fi 自动续) */
     private fun applyNetworkRequirements() {
         runBlocking {
@@ -589,7 +592,7 @@ internal class DownloadUtils(
                                     if (_downloadTask.value[videoId] != DownloadState.STATE_DOWNLOADED) {
                                         songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADED)
                                     }
-                                } else {
+                                } else if (landedInitialized.get()) {
                                     songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADING)
                                 }
                             } else {
@@ -679,6 +682,7 @@ internal class DownloadUtils(
                     }
                 }
             }.onFailure { Logger.w(TAG, "landed reconcile failed: ${it.message}") }
+            if (landedFileIds.isNotEmpty()) landedInitialized.set(true)
         }
         if (pendingExports.isNotEmpty()) {
             coroutineScope.launch {
