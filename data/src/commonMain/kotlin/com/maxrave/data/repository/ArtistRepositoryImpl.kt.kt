@@ -6,6 +6,7 @@ import com.maxrave.data.parser.parseArtistData
 import com.maxrave.data.parser.parseLibraryArtistsFromGrid
 import com.maxrave.data.parser.parseLibraryArtistsFromShelf
 import com.maxrave.domain.data.entities.ArtistEntity
+import com.maxrave.domain.data.entities.ArtistMotionEntity
 import com.maxrave.domain.data.model.browse.artist.ArtistBrowse
 import com.maxrave.domain.repository.ArtistRepository
 import com.maxrave.domain.utils.Resource
@@ -64,6 +65,16 @@ internal class ArtistRepositoryImpl(
     ) = withContext(Dispatchers.IO) {
         localDataSource.updateArtistNameLogo(channelId, nameLogoUrl, nameLogoColor)
     }
+
+    override suspend fun getArtistMotion(channelId: String): ArtistMotionEntity? =
+        withContext(Dispatchers.IO) {
+            localDataSource.getArtistMotion(channelId)
+        }
+
+    override suspend fun upsertArtistMotion(motion: ArtistMotionEntity) =
+        withContext(Dispatchers.IO) {
+            localDataSource.upsertArtistMotion(motion)
+        }
 
     /**
      * Unfollowing also drops what only existed to serve the follow.

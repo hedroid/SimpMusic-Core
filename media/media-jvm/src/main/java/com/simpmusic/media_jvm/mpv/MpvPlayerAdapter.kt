@@ -2,8 +2,11 @@ package com.simpmusic.media_jvm.mpv
 
 import com.maxrave.common.MERGING_DATA_TYPE
 import com.maxrave.domain.data.player.AudioEffects
+import com.maxrave.domain.data.player.AudioOutput
+import com.maxrave.domain.data.player.AudioOutputKind
 import com.maxrave.domain.data.player.GenericMediaItem
 import com.maxrave.domain.data.player.GenericPlaybackParameters
+import com.maxrave.domain.data.player.LiveStreamRegistry
 import com.maxrave.domain.data.player.PlayerConstants
 import com.maxrave.domain.data.player.PlayerError
 import com.maxrave.domain.extension.isVideo
@@ -26,6 +29,11 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.lastOrNull
@@ -277,6 +285,8 @@ class MpvPlayerAdapter(
         val isVideo: Boolean,
         val url: String,
         val audioSlaveUrl: String? = null, // For merging: audio URL, becomes a second edl:// stream
+        // A live broadcast's HLS playlist; its handle is opened differently (MpvPlayer.create).
+        val isLive: Boolean = false,
     )
 
     // ========== Playback Control ==========
@@ -383,6 +393,8 @@ class MpvPlayerAdapter(
     }
 
     override fun seekTo(positionMs: Long) {
+        // A live broadcast is followed at its live edge: its seek bar shows LIVE, not a length.
+        if (isCurrentTrackLive()) return
         // Updated here rather than inside the coroutine so the UI reflects the seek immediately.
         cachedPosition = positionMs
         // The mpv call hops to the player thread, same as the volume setters: reaching into a
@@ -478,7 +490,8 @@ class MpvPlayerAdapter(
             // Position > 3s → seek to start of current track
             // Position <= 3s → go to previous track
             val positionThresholdMs = 3000L
-            if (cachedPosition > positionThresholdMs) {
+            // A live broadcast has no start to go back to, so Previous always means the previous track.
+            if (cachedPosition > positionThresholdMs && !isCurrentTrackLive()) {
                 Logger.d(TAG, "seekToPrevious: pos=${cachedPosition}ms > ${positionThresholdMs}ms — seeking to start")
                 currentPlayer?.seekTo(0)
                 cachedPosition = 0
@@ -640,41 +653,51 @@ class MpvPlayerAdapter(
     }
 
     /**
-     * Drops `[fromIndex, toIndex)` in one pass: one shuffle rebuild, one precache pass, one timeline
-     * notification — the per-item versions of those are what the queue trim must not repeat 50 times.
+     * Drops `[fromIndex, toIndex)` of already-played tracks in one pass: one precache pass, one
+     * timeline notification — the per-item versions of those are what the queue trim must not
+     * repeat 50 times.
      *
-     * Indices count the UNSHUFFLED playlist, like [removeMediaItem] and [currentMediaItemIndex] —
-     * NOT the shuffled timeline the listeners see. A caller working from timeline positions must
-     * map them first, or skip this while shuffle is on.
-     *
-     * Only the range strictly BELOW the current track is supported, which is all the trim needs.
-     * Anything else (an empty or inverted range, a range reaching the playing track) is refused
-     * outright rather than guessed at, because getting it wrong would stop playback.
+     * Indices count the UNSHUFFLED playlist, like [removeMediaItem] and [currentMediaItemIndex].
+     * Only a range strictly BELOW the current track is accepted; anything else is refused rather
+     * than guessed at, because getting it wrong would stop playback. [onRemoved] hears back exactly
+     * once either way, from inside this block — the listeners here are called through a queue
+     * ([notifyListeners]), so a caller that waited for the timeline event would see snapshots taken
+     * before the removal.
      */
     override fun removeMediaItems(
         fromIndex: Int,
         toIndex: Int,
+        onRemoved: (removedIds: List<String>) -> Unit,
     ) {
         coroutineScope.launch {
-            // Bounds re-checked inside the launch, on the player thread, for the reason in
-            // removeMediaItem above (issue #2156).
-            if (fromIndex < 0 || toIndex <= fromIndex) return@launch
-            if (toIndex > playlist.size || toIndex > localCurrentMediaItemIndex) return@launch
-            // crossfadeFromIndex is an index into this same playlist and is NOT shifted here; a
-            // cancelled fade would revert to a track ~toIndex positions away. Trims can wait.
-            if (isCrossfading) return@launch
+            // Re-checked inside the launch, on the player thread, for the reason in removeMediaItem
+            // above (issue #2156).
+            val refused =
+                fromIndex < 0 ||
+                    toIndex <= fromIndex ||
+                    toIndex > playlist.size ||
+                    toIndex > localCurrentMediaItemIndex ||
+                    // crossfadeFromIndex is a position in this same playlist and is NOT shifted here;
+                    // a cancelled fade would revert to a track ~toIndex positions away.
+                    isCrossfading ||
+                    // With shuffle on, the tracks before the current one in this unshuffled list are
+                    // not the played ones — they are part of what is still to come.
+                    internalShuffleModeEnabled
+            if (refused) {
+                onRemoved(emptyList())
+                return@launch
+            }
 
             val removed = playlist.subList(fromIndex, toIndex).toList()
             playlist.subList(fromIndex, toIndex).clear()
+            localCurrentMediaItemIndex -= removed.size
+            // Before anything else can run, so the caller cuts its copy of the queue in this same step.
+            onRemoved(removed.map { it.mediaId })
+
             removed.forEach { track ->
                 precachedPlayers.remove(track.mediaId)?.let { cached ->
                     cleanupPlayerInternal(cached.player)
                 }
-            }
-            localCurrentMediaItemIndex -= removed.size
-
-            if (internalShuffleModeEnabled) {
-                createShuffleOrder()
             }
             // The removed tracks are all behind the current one and precache is keyed by mediaId,
             // so the window ahead needs no rebuild — clearing it here would throw away the handle
@@ -781,9 +804,10 @@ class MpvPlayerAdapter(
         index: Int,
         mediaItem: GenericMediaItem,
     ) {
-        if (index !in playlist.indices) return
-
         coroutineScope.launch {
+            // Same reason as removeMediaItem (issue #2156): a queued removal — a radio trimming its
+            // history — can shrink the playlist between an outside check and this body.
+            if (index !in playlist.indices) return@launch
             playlist[index] = mediaItem
 
             precachedPlayers.remove(mediaItem.mediaId)?.let { cached ->
@@ -1127,6 +1151,9 @@ class MpvPlayerAdapter(
         if (effects != AudioEffects.NONE) {
             setAudioEffects(effects, ensureReverbIr(effects))
         }
+        // And the output: a fresh handle opens the system default, so without this the next track
+        // would quietly leave the device the user picked.
+        preferredAudioDevice?.let { setAudioDevice(it) }
     }
 
     /**
@@ -1238,6 +1265,44 @@ class MpvPlayerAdapter(
         val before = previous.reverb ?: return false
         val after = next.reverb ?: return false
         return previous.delay == next.delay && before.preset == after.preset
+    }
+
+    // ========== Audio Output ==========
+
+    private val _audioOutputs = MutableStateFlow<List<AudioOutput>>(emptyList())
+    override val audioOutputs: StateFlow<List<AudioOutput>> = _audioOutputs.asStateFlow()
+
+    /** The mpv device the user picked, or null for mpv's `auto` (the system default). */
+    @Volatile
+    private var preferredAudioDevice: String? = null
+
+    override fun selectAudioOutput(id: String?) {
+        preferredAudioDevice = id?.takeIf { it != MPV_AUTO_DEVICE }
+        // Same hop as setEqualizer: mpv properties are written on the player thread, and every live
+        // handle has to move together or the two halves of a crossfade play out of different speakers.
+        coroutineScope.launch {
+            forEachLiveHandle { it.setAudioDevice(preferredAudioDevice ?: MPV_AUTO_DEVICE) }
+            readAudioOutputs()
+        }
+    }
+
+    override fun refreshAudioOutputs() {
+        coroutineScope.launch { readAudioOutputs() }
+    }
+
+    /** The driver the outputs belong to. Player thread only, like every read below. */
+    private var audioOutputDriver: String? = MpvPlayer.pinnedAudioOutputDriver
+
+    // mpv only answers for a handle, so with nothing loaded yet the list stays as it was. Its driver
+    // is only named while the handle's audio is up — and switching device tears that down, so the
+    // read right after selectAudioOutput finds no `current-ao`. The driver seen last stands in;
+    // without it that read published an empty list, which emptied the sheet and the caption.
+    private fun readAudioOutputs() {
+        val handle = currentPlayer ?: return
+        handle.currentAudioOutputDriver()?.let { audioOutputDriver = it }
+        val driver = audioOutputDriver ?: return
+        val json = handle.audioDeviceListJson() ?: return
+        _audioOutputs.value = parseAudioOutputs(json, driver, handle.audioDevice())
     }
 
     // ========== Listener Management ==========
@@ -1538,10 +1603,10 @@ class MpvPlayerAdapter(
         val cacheSeconds = if (source.isVideo) 15 else 10
         return if (source.isVideo) {
             Logger.d(TAG, "Creating video player with software render surface")
-            MpvPlayer.create(audioOnly = false, networkCacheSeconds = cacheSeconds)
+            MpvPlayer.create(audioOnly = false, networkCacheSeconds = cacheSeconds, liveStream = source.isLive)
         } else {
             Logger.d(TAG, "Creating audio-only player")
-            MpvPlayer.create(audioOnly = true, networkCacheSeconds = cacheSeconds)
+            MpvPlayer.create(audioOnly = true, networkCacheSeconds = cacheSeconds, liveStream = source.isLive)
         }
     }
 
@@ -1645,6 +1710,9 @@ class MpvPlayerAdapter(
                             retryCount = 0
                             retryVideoId = null
                         }
+                        // Audio is up, so mpv can name its driver: the output caption has its answer
+                        // before anyone opens the sheet, and again once a device switch has settled.
+                        readAudioOutputs()
                     }
                 }
 
@@ -1766,6 +1834,16 @@ class MpvPlayerAdapter(
     private fun isCurrentTrackVideo(): Boolean = watchVideoEnabled && currentMediaItem?.isVideo() == true
 
     /**
+     * A live broadcast never reaches an end to fade out of. mpv reports its duration as the length of
+     * the window it can seek in, so "time remaining" is only how far behind the live edge playback
+     * is — near the edge that looks like the last seconds of a song and would set off a crossfade.
+     */
+    private fun isCurrentTrackLive(): Boolean = currentMediaItem?.mediaId?.let(LiveStreamRegistry::isLive) == true
+
+    /** Nor does a live broadcast fade in: started early in the background, it would begin behind the live edge. */
+    private fun isNextTrackLive(): Boolean = playlist.getOrNull(getNextMediaItemIndex())?.mediaId?.let(LiveStreamRegistry::isLive) == true
+
+    /**
      * Crossfade needs a track long enough that both sides of the blend are still worth hearing. At
      * the default 5s fade a 20s track would spend half its length fading in or out, and a longer
      * fade setting swallows it whole — so the bar scales with the fade rather than being fixed.
@@ -1824,6 +1902,8 @@ class MpvPlayerAdapter(
                 hasNextMediaItem() &&
                 !isCurrentTrackVideo() &&
                 !isNextTrackVideo() &&
+                !isCurrentTrackLive() &&
+                !isNextTrackLive() &&
                 !isCurrentTrackTooShortForCrossfade() &&
                 !isWithinAlbum()
 
@@ -2706,6 +2786,8 @@ class MpvPlayerAdapter(
                                 internalPlayWhenReady &&
                                 !isCurrentTrackVideo() &&
                                 !isNextTrackVideo() &&
+                                !isCurrentTrackLive() &&
+                                !isNextTrackLive() &&
                                 !isCurrentTrackTooShortForCrossfade() &&
                                 !isWithinAlbum()
                             ) {
@@ -2776,8 +2858,12 @@ class MpvPlayerAdapter(
                                 }
                             }
 
+                        val nextVideoId = playlist.getOrNull(nextIndex)?.mediaId
+                        // A live broadcast is not precached: buffered ahead, it would start behind
+                        // the live edge by however long it waited in the queue.
                         if (nextIndex != localCurrentMediaItemIndex &&
-                            !precachedPlayers.containsKey(playlist.getOrNull(nextIndex)?.mediaId)
+                            !precachedPlayers.containsKey(nextVideoId) &&
+                            nextVideoId?.let(LiveStreamRegistry::isLive) != true
                         ) {
                             indicesToPrecache.add(nextIndex)
                         }
@@ -2966,6 +3052,10 @@ class MpvPlayerAdapter(
             }
         }
 
+        // A live broadcast is one HLS playlist carrying audio and video together: there is nothing
+        // to merge, and nothing about it is in the format table (see StreamRepositoryImpl).
+        if (LiveStreamRegistry.isLive(videoId)) return liveStreamSource(videoId, asVideo = shouldFindVideo)
+
         // Try new format API (returns both audio and video URLs)
         streamRepository.getNewFormat(videoId).lastOrNull()?.let { format ->
             val audioUrl = format.audioUrl
@@ -3022,6 +3112,9 @@ class MpvPlayerAdapter(
                         // request, so muxed=true silently drops the login for that call).
                     ).lastOrNull()
             if (videoUrl != null) {
+                // getStream is where a live broadcast is first recognised, and its playlist
+                // already carries the audio — there is no separate audio stream to merge in.
+                if (LiveStreamRegistry.isLive(videoId)) return PlayableSource(isVideo = true, url = videoUrl, isLive = true)
                 // The stream above is video-ONLY. Dropping `muxed = true` traded the HLS
                 // manifest (audio and video in one URL) for a real DASH stream, which carries
                 // no audio track at all — so the audio URL has to be fetched separately and
@@ -3053,10 +3146,70 @@ class MpvPlayerAdapter(
                     ).lastOrNull()
             if (audioUrl != null) {
                 Logger.d(TAG, "Stream Audio $audioUrl")
-                return PlayableSource(isVideo = false, url = audioUrl)
+                // getStream above is also where a live broadcast is first recognised.
+                return PlayableSource(isVideo = false, url = audioUrl, isLive = LiveStreamRegistry.isLive(videoId))
             }
         }
 
         return null
     }
+
+    /** A live broadcast's HLS playlist, resolved afresh on every play — it expires within hours. */
+    private suspend fun liveStreamSource(
+        videoId: String,
+        asVideo: Boolean,
+    ): PlayableSource? =
+        streamRepository
+            .getStream(
+                dataStoreManager,
+                videoId,
+                isDownloading = false,
+                isVideo = asVideo,
+            ).lastOrNull()
+            ?.let { liveHlsUrl ->
+                Logger.d(TAG, "Live stream $videoId: $liveHlsUrl")
+                PlayableSource(isVideo = asVideo, url = liveHlsUrl, isLive = true)
+            }
+}
+
+private const val MPV_AUTO_DEVICE = "auto"
+
+/**
+ * The outputs [driver] can route to, read off mpv's `audio-device-list`, with [activeDevice] marked.
+ *
+ * mpv lists every driver's devices in one array (`coreaudio/…` and `avfoundation/…` both, on a Mac),
+ * and naming another driver's device switches the handle to that driver — on macOS, back to the
+ * coreaudio one the whole player is pinned away from. Only [driver]'s own entries are offered, and
+ * nothing at all while the driver is unknown, rather than guessing. `auto` comes first as the system
+ * default, with an empty name for the UI to label in the user's language.
+ */
+internal fun parseAudioOutputs(
+    json: String?,
+    driver: String?,
+    activeDevice: String?,
+): List<AudioOutput> {
+    if (json == null || driver == null) return emptyList()
+    val entries = runCatching { Json.parseToJsonElement(json).jsonArray }.getOrNull() ?: return emptyList()
+    val active = activeDevice ?: MPV_AUTO_DEVICE
+    val devices =
+        entries.mapNotNull { entry ->
+            val fields = runCatching { entry.jsonObject }.getOrNull() ?: return@mapNotNull null
+            val name = fields["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            if (!name.startsWith("$driver/")) return@mapNotNull null
+            AudioOutput(
+                id = name,
+                name = fields["description"]?.jsonPrimitive?.contentOrNull ?: name.substringAfter('/'),
+                // mpv says nothing about what a device is, so the type is left open.
+                kind = AudioOutputKind.OTHER,
+                isActive = name == active,
+            )
+        }
+    val systemDefault =
+        AudioOutput(
+            id = MPV_AUTO_DEVICE,
+            name = "",
+            kind = AudioOutputKind.DEVICE_SPEAKER,
+            isActive = active == MPV_AUTO_DEVICE || devices.none { it.isActive },
+        )
+    return listOf(systemDefault) + devices
 }

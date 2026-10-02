@@ -421,4 +421,8 @@ sealed class ToastType(
 
     /** 整队都不可播放,防循环护栏停住(暂停),没有可继续的歌 */
     data object UnavailableQueueExhausted : ToastType()
+
+    data class SponsorBlockSkip(
+        val category: String,
+    ) : ToastType(category)
 }

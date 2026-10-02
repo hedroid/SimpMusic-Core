@@ -9,6 +9,7 @@ import androidx.room.execSQL
 import androidx.room.useWriterConnection
 import com.maxrave.domain.data.entities.AlbumEntity
 import com.maxrave.domain.data.entities.ArtistEntity
+import com.maxrave.domain.data.entities.ArtistMotionEntity
 import com.maxrave.domain.data.entities.AutoEqCurveEntity
 import com.maxrave.domain.data.entities.AutoEqEntryEntity
 import com.maxrave.domain.data.entities.AutoEqIndexMetaEntity
@@ -40,7 +41,8 @@ import com.maxrave.domain.data.entities.analytics.PlaybackEventEntity
         SetVideoIdEntity::class, PairSongLocalPlaylist::class, GoogleAccountEntity::class, NeteaseAccountEntity::class, FollowedArtistSingleAndAlbum::class,
         NotificationEntity::class, TranslatedLyricsEntity::class, PodcastsEntity::class, EpisodeEntity::class,
         YourYouTubePlaylistList::class, PlaybackEventEntity::class, EventArtistEntity::class,
-        AutoEqEntryEntity::class, AutoEqIndexMetaEntity::class, AutoEqCurveEntity::class
+        AutoEqEntryEntity::class, AutoEqIndexMetaEntity::class, AutoEqCurveEntity::class,
+        ArtistMotionEntity::class
     ],
     exportSchema = true,
     autoMigrations = [
@@ -113,8 +115,13 @@ import com.maxrave.domain.data.entities.analytics.PlaybackEventEntity
         // 32 adds song.neteaseProgramId (nullable ADD COLUMN, podcast row tagging for the
         // download page's Podcasts tab). Plain enough for the generator.
         AutoMigration(31, 32),
+        // 33 adds the artist_motion table (Apple Music animated artist artwork). Upstream
+        // shipped this as their v27 — same number, different schema — so it is renumbered to 33
+        // here; our v27 history stays frozen for fork users. One new table and nothing else, so
+        // Room generates the migration itself.
+        AutoMigration(32, 33),
     ],
-    version = 32,
+    version = 33,
 )
 @TypeConverters(Converters::class)
 abstract class MusicDatabase : RoomDatabase() {
