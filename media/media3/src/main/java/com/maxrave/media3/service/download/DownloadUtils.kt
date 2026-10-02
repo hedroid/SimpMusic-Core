@@ -70,7 +70,8 @@ internal class DownloadUtils(
         const val MANUAL_PAUSE_REASON = 1
     }
 
-    /** 文件式转存端(COMPLETED 后缓存→真实文件);惰性避免构造期碰 Koin */
+    /** 文件式转存端(COMPLETED 后缓存→真实文件);惰性避免构造期碰 Koin。
+     *  onLanded 只在 exporter 内部通过代际门(转存未被删除作废)后才会回调 */
     private val exporter by lazy {
         FileDownloadExporter(context, downloadCache, songRepository, dataStoreManager, downloadManager) {
             landedFileIds.add(it)
@@ -86,6 +87,17 @@ internal class DownloadUtils(
      * 打回 2/0(state 列多写者竞态,实测 52 条并发后全表错乱)——终态写入只认这个集合。
      */
     private val landedFileIds = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * 删除代际(2026-10-02 CR P1-2):转存协程与删除并发——"转存中"删歌只清路径+移除
+     * 条目,不取消已在跑的 export(缓存拷完/进 ffmpeg 的转存停不住),它随后写
+     * MediaStore+回填路径+置 3 = 文件复活。代际表放 exporter 侧(见 FileDownloadExporter
+     * onDeleted/isStale),DownloadUtils 删除路径统一 bumpDeleteGeneration 转发。
+     */
+
+    private fun bumpDeleteGeneration(videoId: String) {
+        exporter.onDeleted(videoId)
+    }
 
     /** 启动对账(landed 填充)是否完成——完成前 collect 不写"转存中(2)",防把 3 打成 2 后无人修 */
     private val landedInitialized = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -348,6 +360,8 @@ internal class DownloadUtils(
 
     /** 删音频:有文件→删文件+MediaStore 行+Room 清列;缓存条目一并清(转存失败残留) */
     override suspend fun removeAudioDownload(videoId: String) {
+        // 代际+1:在跑的转存落盘回写前会核对,旧代际的写回全部作废(防"转存中删除"幻影文件)
+        bumpDeleteGeneration(videoId)
         withContext(Dispatchers.IO) {
             runCatching {
                 songRepository.getSongById(videoId).firstOrNull()?.downloadedFilePath?.let { path ->
@@ -371,6 +385,7 @@ internal class DownloadUtils(
     }
 
     override suspend fun removeVideoDownload(videoId: String) {
+        bumpDeleteGeneration(videoId)
         withContext(Dispatchers.IO) {
             runCatching {
                 songRepository.getSongById(videoId).firstOrNull()?.downloadedVideoFilePath?.let { path ->
@@ -463,6 +478,12 @@ internal class DownloadUtils(
 
     override suspend fun removeAllDownloads() {
         withContext(Dispatchers.IO) {
+            // 全删也过代际门:先给所有活动行 bump(在跑的转存回写前核对,作废旧代际)
+            runCatching {
+                songRepository.getDownloadActivitySongs().firstOrNull()?.forEach { song ->
+                    bumpDeleteGeneration(song.videoId)
+                }
+            }
             // 文件式:遍历删文件+Room 清列(下载管理页/设置入口共用)。必须走全量活动查询
             // (state 1/2/3 OR 路径非空):getDownloadedSongs 只查 state=3,"音频已落地但视频
             // 在下"的 state2 行会被漏掉——文件不删+随后清空运行态/移除 index,留下卡死行
@@ -702,13 +723,21 @@ internal class DownloadUtils(
                 // 必须查 Room 路径:转存成功的条目缓存已清(exporter removeResource),不查的话
                 // 每轮启动都白试一遍 cache-miss→清条目→REMOVING,把 map 抖成过渡态(实测
                 // landed=true 的行反复被打 combine=0 的元凶)。
+                // 视频条目(COMPLETED)按**视频路径**单独判:音频已落地而 mp4 没写回(merge 中
+                // 被杀)时,旧逻辑"任一路径在"会跳过——视频永不重转,UI 却显示已完成(CR P1-1)。
+                // exportVideo 幂等:音频缓存已清时自动用已落盘文件当 ffmpeg 输入。
                 if (cursor.download.state == Download.STATE_COMPLETED) {
-                    val hasStoredPath =
+                    val stored =
                         runCatching {
                             runBlocking { songRepository.getSongById(songId).firstOrNull() }
-                                ?.let { it.downloadedFilePath != null || it.downloadedVideoFilePath != null } == true
-                        }.getOrDefault(false)
-                    if (!hasStoredPath) pendingExports += songId to isVideo
+                        }.getOrNull()
+                    val audioLanded = stored?.downloadedFilePath != null
+                    val videoLanded = stored?.downloadedVideoFilePath != null
+                    if (isVideo) {
+                        if (!videoLanded) pendingExports += songId to true
+                    } else {
+                        if (!audioLanded && !videoLanded) pendingExports += songId to false
+                    }
                 }
             }
             result[songId] =

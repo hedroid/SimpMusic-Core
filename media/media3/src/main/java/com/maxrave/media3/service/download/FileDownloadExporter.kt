@@ -65,6 +65,25 @@ internal class FileDownloadExporter(
 
     fun close() = scope.cancel()
 
+    // ===== 删除代际门(2026-10-02 CR P1-2) =====
+    // 转存是长跑协程(缓存拷贝+enricher+ffmpeg+MediaStore),删除停不住它;删除方在
+    // DownloadUtils 维护每歌代际,转存开始时快照,两个提交点(写 MediaStore 前/写回
+    // Room 前)核对——代际变了=用户已删,放弃写回(文件/MediaStore 行可能已多写,
+    // 由 insertMediaStore 的 stale 清理与用户重下覆盖,不回滚已产生的临时文件)。
+    private val deleteGenerations = ConcurrentHashMap<String, Long>()
+
+    /** DownloadUtils 在每次删除时调:该歌代际+1,在跑转存的快照随即过期 */
+    fun onDeleted(videoId: String) {
+        deleteGenerations.merge(videoId, 1L) { old, _ -> old + 1 }
+    }
+
+    /** 转存开始时取当前代际快照 */
+    fun currentGeneration(videoId: String): Long = deleteGenerations[videoId] ?: 0L
+
+    /** 快照与当前代际是否一致(不一致=期间发生过删除) */
+    fun isStale(videoId: String, snapshot: Long): Boolean =
+        (deleteGenerations[videoId] ?: 0L) != snapshot
+
     /** 音频条目 COMPLETED → 转存 mp3/flac。失败保留缓存,返回 false(调用方不重复触发)。 */
     suspend fun exportAudio(videoId: String): Boolean {
         if (!exporting.add(videoId)) return false
@@ -94,6 +113,8 @@ internal class FileDownloadExporter(
                 Logger.e(TAG, "exportAudio: no song row for $videoId")
                 return@withContext false
             }
+            // 代际快照:此后的每个提交点核对,期间发生过删除则整次转存作废(CR P1-2)
+            val generation = currentGeneration(videoId)
             val workDir = File(context.cacheDir, "dl_export").apply { mkdirs() }
             val rawInput = File(workDir, "$videoId.bin")
             try {
@@ -151,10 +172,21 @@ internal class FileDownloadExporter(
                 val fileName = computeAudioFileName(song, ext)
                 val relPath = computeAudioRelPath(song)
 
-                // 5) MediaStore 落盘 + Room 回写
+                // 5) MediaStore 落盘 + Room 回写。提交点①:转存期间被删除则放弃(文件可能
+                // 已写入 MediaStore,由 insertMediaStore 的 stale 清理与重下覆盖兜底)
+                if (isStale(videoId, generation)) {
+                    Logger.w(TAG, "exportAudio stale (deleted mid-export), discarding: $videoId")
+                    return@withContext false
+                }
                 val stored = insertMediaStore(tagged, relPath, fileName, mime, MediaStore.Audio.Media.EXTERNAL_CONTENT_URI)
                 if (stored == null) {
                     Logger.e(TAG, "exportAudio: MediaStore write failed for $videoId")
+                    return@withContext false
+                }
+                // 提交点②:MediaStore 写入耗时长,写完再核一次才敢回写 Room 路径/状态
+                if (isStale(videoId, generation)) {
+                    Logger.w(TAG, "exportAudio stale after MediaStore write, discarding path writeback: $videoId")
+                    runCatching { deleteMediaByPath(stored.absolutePath); stored.delete() }
                     return@withContext false
                 }
                 songRepository.updateDownloadedFilePath(videoId, stored.absolutePath)
@@ -192,6 +224,8 @@ internal class FileDownloadExporter(
                 Logger.e(TAG, "exportVideo: no song row for $videoId")
                 return@withContext false
             }
+            // 代际快照(同 exportAudio,CR P1-2):merge/写 MediaStore 都长跑,逐点核对
+            val generation = currentGeneration(videoId)
             val workDir = File(context.cacheDir, "dl_export").apply { mkdirs() }
             val audioRaw = File(workDir, "$videoId-audio.webm")
             val videoRaw = File(workDir, "$videoId-video.mp4")
@@ -225,12 +259,30 @@ internal class FileDownloadExporter(
                     return@withContext false
                 }
 
+                // 提交点①:merge 完成、准备写 MediaStore 前核对
+                if (isStale(videoId, generation)) {
+                    Logger.w(TAG, "exportVideo stale (deleted mid-export), discarding: $videoId")
+                    return@withContext false
+                }
                 val stored =
                     insertMediaStore(
                         merged, "Movies/SimpMusic", sanitizeFileName(song.title, videoId) + ".mp4",
                         "video/mp4", MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
                     )
                 if (stored == null) return@withContext false
+                // 提交点②:回写 Room 前再核;已写的 MediaStore 行/文件一并清掉
+                if (isStale(videoId, generation)) {
+                    Logger.w(TAG, "exportVideo stale after MediaStore write, cleaning: $videoId")
+                    runCatching {
+                        context.contentResolver.delete(
+                            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                            "${MediaStore.MediaColumns.DATA}=?",
+                            arrayOf(stored.absolutePath),
+                        )
+                    }
+                    stored.delete()
+                    return@withContext false
+                }
                 songRepository.updateDownloadedVideoFilePath(videoId, stored.absolutePath)
                 // 视频完成也置下载完成态(音频文件可能没有,但音频播放可用 mp4 兜底)
                 songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADED)
@@ -251,6 +303,18 @@ internal class FileDownloadExporter(
         }
 
     // ============================================================ 公共件
+
+    /** 代际门清理:按 DATA 删音频 MediaStore 行+文件(自己贡献的行免权限) */
+    private fun deleteMediaByPath(path: String) {
+        runCatching {
+            context.contentResolver.delete(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                "${MediaStore.MediaColumns.DATA}=?",
+                arrayOf(path),
+            )
+        }
+        File(path).delete()
+    }
 
     /** 把 downloadCache 的完整流抄到文件;缓存缺失/不全直接 false(上游兜底不在这里做)。 */
     private fun dumpCacheTo(
