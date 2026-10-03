@@ -550,6 +550,23 @@ internal class DownloadUtils(
                     landedFileIds.remove(song.videoId)
                 }
             }
+            // 孤儿视频兜底清扫(2026-10-03 用户反馈"清除全部下载后视频文件仍有残留"):
+            // 两代视频落点(Movies/SimpMusic 与 Music/SimpMusic 树)里已无歌曲行路径引用的
+            // mp4 一并删除——旧管线/路径列写入失败年代留下的文件按 Room 路径清不到。
+            // 清空语义下两棵 SimpMusic 树里的 mp4 恒为应用下载产物,可安全全扫
+            runCatching {
+                listOf(
+                    android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES),
+                    android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC),
+                ).forEach { base ->
+                    File(base, "SimpMusic").walkTopDown()
+                        .filter { it.isFile && it.extension.equals("mp4", ignoreCase = true) }
+                        .forEach { f ->
+                            deleteMediaByPath(f.absolutePath)
+                            if (f.delete()) Logger.w(TAG, "orphan video swept: $f")
+                        }
+                }
+            }.onFailure { Logger.w(TAG, "orphan video sweep failed: ${it.message}") }
             _downloads.value = emptyMap()
             _downloadTask.value = emptyMap()
             downloadingVideoIds.value = mutableSetOf()
@@ -578,6 +595,11 @@ internal class DownloadUtils(
         // 只有视频条目在途才算"视频下载中";纯音频任务不算(视频入口的三态判定用)
         return videoBusy || (audioBusy && pair.second != null)
     }
+
+    /** 视频歌判定:videoType 为真实视频类型(OMV/UGC);ATV=纯音频曲目,空=未知按音频 */
+    private suspend fun isVideoSongEntity(songId: String): Boolean =
+        runCatching { songRepository.getSongById(songId).firstOrNull()?.videoType }
+            .getOrNull()?.let { it.isNotEmpty() && it != "MUSIC_VIDEO_TYPE_ATV" } == true
 
     /** 对单个条目(完整 id)发 stopReason;条目不在列表时跳过,避免 media3 侧 error log 噪音 */
     private fun sendStopReasonIfPresent(
@@ -839,6 +861,16 @@ internal class DownloadUtils(
                             videoEntry?.state == Download.STATE_COMPLETED &&
                                 (audioEntry == null || audioEntry.state == Download.STATE_COMPLETED) ->
                                 exporter.exportVideo(songId)
+                            isVideoSongEntity(songId) -> {
+                                // 视频歌(MV)不产独立 mp3(2026-10-03 用户定):音频条目只是
+                                // merge 素材。视频没到 COMPLETED 就等;视频终态失败/条目已移除
+                                // 时撤掉音频缓存条目,防"转存中"卡行
+                                if ((videoEntry == null || videoEntry.state == Download.STATE_FAILED) &&
+                                    audioEntry?.state == Download.STATE_COMPLETED
+                                ) {
+                                    DownloadService.sendRemoveDownload(context, MusicDownloadService::class.java, songId, false)
+                                }
+                            }
                             videoEntry == null && audioEntry?.state == Download.STATE_COMPLETED ->
                                 exporter.exportAudio(songId)
                             else -> Logger.w(TAG, "pending export waits: $songId audio=${audioEntry?.state} video=${videoEntry?.state}")
@@ -926,15 +958,31 @@ internal class DownloadUtils(
                                             // 否则等另一条完成时再派发。
                                             val audioEntry = runCatching { downloadManager.downloadIndex.getDownload(songId) }.getOrNull()
                                             val videoEntry = runCatching { downloadManager.downloadIndex.getDownload(MERGING_DATA_TYPE.VIDEO + songId) }.getOrNull()
+                                            val isVideoSong = isVideoSongEntity(songId)
                                             Logger.w(
                                                 TAG,
-                                                "export dispatch: $songId completedId=$id audio=${audioEntry?.state} video=${videoEntry?.state}",
+                                                "export dispatch: $songId completedId=$id audio=${audioEntry?.state} video=${videoEntry?.state} videoSong=$isVideoSong",
                                             )
                                             when {
-                                                videoEntry == null -> exporter.exportAudio(songId)
-                                                videoEntry.state == Download.STATE_COMPLETED &&
+                                                videoEntry?.state == Download.STATE_COMPLETED &&
                                                     (audioEntry == null || audioEntry.state == Download.STATE_COMPLETED) ->
                                                     exporter.exportVideo(songId)
+                                                isVideoSong -> {
+                                                    // 视频歌(MV)不产独立 mp3(2026-10-03 用户定):
+                                                    // 音频条目只是 merge 素材,视频没到 COMPLETED 就等;
+                                                    // 视频终态失败/条目已移除时撤音频缓存条目防卡行
+                                                    if ((videoEntry == null || videoEntry.state == Download.STATE_FAILED) &&
+                                                        audioEntry?.state == Download.STATE_COMPLETED
+                                                    ) {
+                                                        DownloadService.sendRemoveDownload(
+                                                            context,
+                                                            MusicDownloadService::class.java,
+                                                            songId,
+                                                            false,
+                                                        )
+                                                    }
+                                                }
+                                                videoEntry == null -> exporter.exportAudio(songId)
                                                 else -> Unit // 另一条还在途:等它 COMPLETED 时统一派发
                                             }
                                         }.onFailure {

@@ -252,7 +252,6 @@ internal class FileDownloadExporter(
                     mutableListOf("-i", audioSource.path, "-i", videoRaw.path, "-map", "0:a", "-map", "1:v", "-c", "copy")
                 song.title.takeIf { it.isNotBlank() }?.let { cmd += listOf("-metadata", "title=${it}") }
                 song.artistName?.firstOrNull()?.takeIf { it.isNotBlank() }?.let { cmd += listOf("-metadata", "artist=${it}") }
-                cmd += listOf("-metadata", "comment=SimpMusic-Hedroid")
                 cmd.add(merged.path)
                 if (!runFfmpeg(cmd)) {
                     Logger.e(TAG, "exportVideo: ffmpeg merge failed for $videoId")
@@ -437,7 +436,7 @@ internal class FileDownloadExporter(
         return runFfmpeg(cmd)
     }
 
-    /** ffmpeg 通用 metadata 键(空值不写;注释 tag 固定为发布来源标记)。
+    /** ffmpeg 通用 metadata 键(空值不写;注释 tag 已按用户要求去除,2026-10-03)。
      *  flac 不写 lyrics:ffmpeg-kit 6.0.1 的 flac muxer 对大体积带换行的 vorbis comment
      *  长度计算有 bug——4KB LRC 文本入 tag 后 block 边界错位,帧区解析全毁("First frame
      *  does not start with sync code",宿主 ffmpeg 同命令完好=构建差异;实测 2026-10-01
@@ -460,7 +459,6 @@ internal class FileDownloadExporter(
             c.lyricist?.let { put("lyricist", it) }
             c.composer?.let { put("composer", it) }
             c.copyright?.let { put("copyright", it) }
-            put("comment", "SimpMusic-Hedroid")
             if (includeLyrics) c.lrcText?.let { put("lyrics", it) }
         }
 
@@ -491,7 +489,6 @@ internal class FileDownloadExporter(
             "lyricist" to "LYRICIST",
             "composer" to "COMPOSER",
             "copyright" to "COPYRIGHT",
-            "comment" to "COMMENT",
             "lyrics" to "LYRICS",
         )
 
