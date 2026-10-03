@@ -36,10 +36,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.lastOrNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -65,6 +69,7 @@ internal class DownloadUtils(
     private companion object {
         const val TAG = "DownloadUtils"
         const val FILE_REQUEST_PREFIX = "FILEv1|"
+        const val PROGRESS_REFRESH_INTERVAL_MS = 500L
 
         /** 单任务手动暂停的 stopReason 值(区别于移除过渡等 stopReason=0 的 STOPPED) */
         const val MANUAL_PAUSE_REASON = 1
@@ -277,6 +282,49 @@ internal class DownloadUtils(
             contentLength = d.contentLength,
             percentDownloaded = d.percentDownloaded.toInt(),
         )
+
+    private data class DownloadLifecycleSnapshot(
+        val state: Int,
+        val stopReason: Int,
+    )
+
+    private fun DownloadHandler.Download.toLifecycleSnapshot() =
+        DownloadLifecycleSnapshot(state = state, stopReason = stopReason)
+
+    /**
+     * DownloadManager 的 Listener 只保证任务状态变化回调；下载中的 DownloadProgress 会在
+     * Download 对象里原地增长，不会为每次字节变化触发 onDownloadChanged。管理页消费的是
+     * 不可变的契约层快照，因此需要在确有活动任务时定时重新取样并发布。
+     */
+    private fun refreshActiveDownloadProgress() {
+        val activeDownloads = downloadManager.currentDownloads
+        if (activeDownloads.isEmpty()) return
+        _downloads.update { current ->
+            var changed = false
+            val refreshed = current.toMutableMap()
+            activeDownloads.forEach { download ->
+                if (download.state != Download.STATE_DOWNLOADING && download.state != Download.STATE_RESTARTING) {
+                    return@forEach
+                }
+                val rawId = download.request.id
+                val isVideo = rawId.startsWith(MERGING_DATA_TYPE.VIDEO)
+                val songId = if (isVideo) rawId.removePrefix(MERGING_DATA_TYPE.VIDEO) else rawId
+                val oldPair = refreshed[songId]
+                val snapshot = toHandlerDownload(download)
+                val newPair =
+                    if (isVideo) {
+                        oldPair?.copy(second = snapshot) ?: Pair(null, snapshot)
+                    } else {
+                        oldPair?.copy(first = snapshot) ?: Pair(snapshot, null)
+                    }
+                if (newPair != oldPair) {
+                    refreshed[songId] = newPair
+                    changed = true
+                }
+            }
+            if (changed) refreshed else current
+        }
+    }
 
     /** 磁盘预检:公共音乐卷剩余 <500MB 拒绝入队(无损 flac 单首几十 MB,写满=静默失败) */
     private fun hasEnoughDisk(): Boolean =
@@ -608,7 +656,16 @@ internal class DownloadUtils(
 
     init {
         coroutineScope.launch {
-            downloads.collect { download ->
+            // 进度刷新会高频发布 bytes/percent；Room 这里只消费生命周期变化，避免每 500ms
+            // 对所有活动歌曲重复写同一个 downloadState。
+            val lifecycleDownloads =
+                downloads
+                    .map { rows ->
+                        rows.mapValues { (_, pair) ->
+                            pair.first?.toLifecycleSnapshot() to pair.second?.toLifecycleSnapshot()
+                        }
+                    }.distinctUntilChanged()
+            lifecycleDownloads.collect { download ->
                 download.forEach {
                     val videoId = it.key
                     val audioDownload = it.value.first
@@ -930,5 +987,23 @@ internal class DownloadUtils(
                 }
             },
         )
+        coroutineScope.launch {
+            downloads
+                .map { rows ->
+                    rows.values.any { (audio, video) ->
+                        audio?.state == Download.STATE_DOWNLOADING ||
+                            audio?.state == Download.STATE_RESTARTING ||
+                            video?.state == Download.STATE_DOWNLOADING ||
+                            video?.state == Download.STATE_RESTARTING
+                    }
+                }.distinctUntilChanged()
+                .collectLatest { hasActiveDownload ->
+                    if (!hasActiveDownload) return@collectLatest
+                    while (true) {
+                        refreshActiveDownloadProgress()
+                        delay(PROGRESS_REFRESH_INTERVAL_MS)
+                    }
+                }
+        }
     }
 }
