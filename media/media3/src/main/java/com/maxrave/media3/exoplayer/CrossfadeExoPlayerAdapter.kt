@@ -1897,6 +1897,19 @@ internal class CrossfadeExoPlayerAdapter(
                     crossfadeJob?.cancel()
                     crossfadeJob = null
                     setCrossfading(false)
+                    // seekTo's crossfade-cancelling branch releases the secondary player, but this
+                    // load path never did: a crossfade interrupted mid-fade (user seeks via queue
+                    // tap / setQueueData while the fade coroutine is between suspensions) left the
+                    // fully-buffered secondary player referenced with isCrossfading=false — every
+                    // later triggerCrossfadeTransition overwrote the field without releasing it.
+                    // Under high-frequency track changes those orphans (each carrying its buffered
+                    // audio) piled up toward the OOM. Keep this symmetric with seekTo.
+                    secondaryPlayer?.takeIf { it !== player }?.let { orphan ->
+                        secondaryPlayerFilter?.enabled = false
+                        cleanupPlayerInternal(orphan)
+                        secondaryPlayer = null
+                        secondaryPlayerFilter = null
+                    }
 
                     // 2. Save old player reference
                     val oldPlayer = currentPlayer
@@ -2450,6 +2463,13 @@ internal class CrossfadeExoPlayerAdapter(
                     nextPlayer.prepare()
                 }
 
+                // Defensive: a stale secondary left over from an interrupted fade must not be
+                // silently overwritten — release it before the field moves to nextPlayer.
+                secondaryPlayer?.takeIf { it !== nextPlayer }?.let { stale ->
+                    Logger.w(TAG, "Releasing stale secondary player before crossfade")
+                    secondaryPlayerFilter?.enabled = false
+                    cleanupPlayerInternal(stale)
+                }
                 // Setup secondary player
                 secondaryPlayer = nextPlayer
                 secondaryPlayerFilter = nextFilter
