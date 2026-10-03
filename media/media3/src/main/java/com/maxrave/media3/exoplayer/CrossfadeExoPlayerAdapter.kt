@@ -622,7 +622,13 @@ internal class CrossfadeExoPlayerAdapter(
      * Audio focus is NOT handled per-player: it is managed once at the adapter level
      * (see the Audio Focus section) so it survives every player swap (#2155).
      */
-    private fun createExoPlayerInstance(): PlayerWithFilter {
+    /** 当前播放器的采样缓冲字节上限:无损 200s≈24MB 完整保留,只截断 Hi-Res 级病态码率。 */
+    private val CURRENT_TARGET_BUFFER_BYTES = 32 * 1024 * 1024
+
+    /** 预缓存播放器的上限:足够无缝接棒(无损 ~2 分钟),不背隧道续航的指标。 */
+    private val PRECACHE_TARGET_BUFFER_BYTES = 16 * 1024 * 1024
+
+    private fun createExoPlayerInstance(precache: Boolean = false): PlayerWithFilter {
         val crossfadeFilter = CrossfadeFilterAudioProcessor()
         val sleepFade = SleepFadeAudioProcessor { internalSleepFadeFactor }
         val equalizer = EqualizerAudioProcessor { internalEqualizerCurve }
@@ -683,6 +689,19 @@ internal class CrossfadeExoPlayerAdapter(
                         // can be less than a minute of high-bitrate lossless audio. Make the time
                         // target authoritative so every quality tier gets the same resilience.
                         .setPrioritizeTimeOverSizeThresholds(true)
+                        // ...but bounded by an explicit byte cap (verified against media3 1.11
+                        // bytecode: totalBufferBytesAllocated >= targetBufferBytes returns BEFORE
+                        // the time-priority branch, so the cap holds even with the flag above).
+                        // Without it, "current + 2 precaches × 200s of sample data IN THE JAVA
+                        // HEAP" walks straight into the 192MB Dalvik limit on long sessions
+                        // (user crash: ~25min listening → OOM in shouldContinueLoading; FLAC
+                        // ~27MB/player, Hi-Res tiers up to ~75MB). Current player keeps the full
+                        // 200s for lossless (24MB < 32MB cap); only pathologically high bitrates
+                        // are cut short. Precaches need only enough head of audio for a seamless
+                        // promote, not tunnel resilience - 16MB is ~2 minutes of lossless.
+                        .setTargetBufferBytes(
+                            if (precache) PRECACHE_TARGET_BUFFER_BYTES else CURRENT_TARGET_BUFFER_BYTES,
+                        )
                         .build(),
                 ).setWakeMode(C.WAKE_MODE_NETWORK)
                 .setHandleAudioBecomingNoisy(true)
@@ -3355,7 +3374,7 @@ internal class CrossfadeExoPlayerAdapter(
                         val mediaItem = playlist.getOrNull(idx) ?: continue
 
                         try {
-                            val pwf = createExoPlayerInstance()
+                            val pwf = createExoPlayerInstance(precache = true)
                             pwf.player.setMediaItem(mediaItem.toMedia3MediaItem())
                             pwf.player.prepare()
                             // putIfAbsent:trigger 会在恢复队列等场景毫秒级连发数次(实测 3ms 内
