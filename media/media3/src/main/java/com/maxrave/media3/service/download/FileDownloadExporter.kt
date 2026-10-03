@@ -42,7 +42,7 @@ private const val TAG = "FileDownloadExporter"
  * 失败语义:任何一步失败都**保留缓存条目**返回 false,数据不丢;下次启动的
  * "COMPLETED 但 Room 无路径"对账会重试转存(见 DownloadUtils.init)。
  *
- * 音频落 Music/SimpMusic[/<主艺人>/<专辑>],视频落 Movies/SimpMusic。
+ * 音频落 Music/SimpMusic[/<主艺人>/<专辑>],视频同树(2026-10-03 用户定;MediaStore.Video 不放行 Music/,走 FUSE 直写,失败回落 Movies/SimpMusic)。
  */
 @UnstableApi
 internal class FileDownloadExporter(
@@ -264,11 +264,7 @@ internal class FileDownloadExporter(
                     Logger.w(TAG, "exportVideo stale (deleted mid-export), discarding: $videoId")
                     return@withContext false
                 }
-                val stored =
-                    insertMediaStore(
-                        merged, "Movies/SimpMusic", sanitizeFileName(song.title, videoId) + ".mp4",
-                        "video/mp4", MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                    )
+                val stored = storeVideoFile(merged, song)
                 if (stored == null) return@withContext false
                 // 提交点②:回写 Room 前再核;已写的 MediaStore 行/文件一并清掉
                 if (isStale(videoId, generation)) {
@@ -303,6 +299,66 @@ internal class FileDownloadExporter(
         }
 
     // ============================================================ 公共件
+
+    /**
+     * 视频落盘(2026-10-03 用户定:与音频同树 Music/SimpMusic[/主艺人/专辑],文件管理器
+     * 一处看全)。MediaStore.Video 只放行 DCIM/Movies 主目录("Primary directory Music
+     * not allowed"),Music/ 下走 FUSE 直写:①.mp4 直接新建(部分 ROM 放行);②失败退
+     * .mp3 媒体扩展名暂存+rename——应用是贡献者,对自家文件持有 FUSE 改名权(lrc 同款
+     * 已实测);③两级都失败回落 Movies/SimpMusic 树(MediaStore.Video,目录开关同样
+     * 生效)。返回实际落盘文件;全失败=null。
+     */
+    private suspend fun storeVideoFile(
+        merged: File,
+        song: SongEntity,
+    ): File? {
+        val stem = sanitizeFileName(song.title, song.videoId)
+        val relDir = computeAudioRelPath(song)
+        fuseWriteVideo(merged, relDir, stem, song.videoId, song.downloadedVideoFilePath)?.let { return it }
+        // 回落:Movies/SimpMusic[/主艺人/专辑],结构对齐 Music 树
+        val moviesRelDir = "Movies/" + relDir.removePrefix("Music/")
+        return insertMediaStore(
+            merged, moviesRelDir, "$stem.mp4",
+            "video/mp4", MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+        )
+    }
+
+    /** FUSE 把 mp4 写进 Music 树;同名文件且非本歌残留时追加 videoId 防误删他人文件 */
+    private fun fuseWriteVideo(
+        merged: File,
+        relDir: String,
+        stem: String,
+        videoId: String,
+        ownStoredPath: String?,
+    ): File? =
+        runCatching {
+            val dir = relPathToDir(relDir)
+            if (!dir.exists() && !dir.mkdirs()) error("mkdirs failed: $dir")
+            var displayName = "$stem.mp4"
+            var target = File(dir, displayName)
+            if (target.exists() && target.absolutePath != ownStoredPath) {
+                displayName = "$stem-$videoId.mp4"
+                target = File(dir, displayName)
+            }
+            target.delete()
+            runCatching {
+                merged.copyTo(target, overwrite = true)
+            }.onFailure { direct ->
+                Logger.w(TAG, "video direct FUSE write failed (${direct.message}), try staged rename")
+                val staged = File(dir, "$stem.mp3")
+                staged.delete()
+                merged.copyTo(staged, overwrite = true)
+                if (!staged.renameTo(target)) {
+                    target.delete()
+                    check(staged.renameTo(target)) { "video staged rename failed" }
+                }
+            }
+            check(target.exists() && target.length() > 0) { "video target missing after write" }
+            Logger.i(TAG, "video stored via FUSE: $relDir/$displayName")
+            target
+        }.onFailure {
+            Logger.w(TAG, "video FUSE write into $relDir failed: ${it.message}")
+        }.getOrNull()
 
     /** 代际门清理:按 DATA 删音频 MediaStore 行+文件(自己贡献的行免权限) */
     private fun deleteMediaByPath(path: String) {

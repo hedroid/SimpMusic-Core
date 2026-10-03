@@ -13,7 +13,7 @@ interface DownloadHandler {
 
     /**
      * 视频下载(文件式,仅 YT 歌):音视频双流任务,双双完成后 merge 成 mp4 落
-     * Movies/SimpMusic。与音频下载相互独立——同一首歌可以只有其中之一。
+     * Music/SimpMusic[/主艺人/专辑](与音频同树,FUSE 写入,回落 Movies/SimpMusic)。与音频下载相互独立——同一首歌可以只有其中之一。
      */
     suspend fun downloadVideo(
         videoId: String,

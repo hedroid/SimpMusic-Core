@@ -372,7 +372,7 @@ internal class DownloadUtils(
 
     /**
      * 视频文件下载(仅 YT):音视频两条任务,双双 COMPLETED 后 merge 成 mp4 落
-     * Movies/SimpMusic。音频条目与纯音频下载共用同一 cacheKey——已下载过音频则
+     * Music/SimpMusic[/主艺人/专辑](与音频同树)。音频条目与纯音频下载共用同一 cacheKey——已下载过音频则
      * 该条目直接 COMPLETED,只补视频条目,对账逻辑天然兼容。
      */
     override suspend fun downloadVideo(
