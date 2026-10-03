@@ -3304,6 +3304,9 @@ internal class CrossfadeExoPlayerAdapter(
                     val indicesToPrecache = mutableListOf<Int>()
 
                     val index = localCurrentMediaItemIndex
+                    // 本轮期望保留的预缓存集合(当前曲前方的 maxPrecacheCount 首):除了它
+                    // 们与当前曲,map 里的任何陈旧条目都要在这轮被释放掉。
+                    val desiredIds = mutableSetOf<String>()
                     for (i in 1..maxPrecacheCount) {
                         val nextIndex =
                             when (internalRepeatMode) {
@@ -3317,6 +3320,7 @@ internal class CrossfadeExoPlayerAdapter(
                             }
 
                         val nextVideoId = playlist.getOrNull(nextIndex)?.mediaId
+                        nextVideoId?.let { desiredIds.add(it) }
                         // A live broadcast is not precached: buffered ahead, it would start behind
                         // the live edge by however long it waited in the queue.
                         if (nextIndex != localCurrentMediaItemIndex &&
@@ -3324,6 +3328,24 @@ internal class CrossfadeExoPlayerAdapter(
                             nextVideoId?.let(LiveStreamRegistry::isLive) != true
                         ) {
                             indicesToPrecache.add(nextIndex)
+                        }
+                    }
+
+                    // Evict stale precaches that no longer sit ahead of the current track. 连续
+                    // previous 时每轮都会给"新当前曲的下一首"建一个全新播放器,而上一轮为更
+                    // 前方曲目留下的预缓存永远等不到被消费(cancelPrecaching 只取消任务不清
+                    // map)——每个陈旧播放器都带着 ~200s 目标的 Java 堆采样缓冲(本适配器的
+                    // LoadControl 以时间为准),几次 previous 就把 192MB 堆吃满 OOM(堆 dump
+                    // 实证:3 次 previous 后 6 个 ExoPlayerImpl、byte[] 145MB)。next 方向
+                    // 预缓存会被顺次消费所以从未暴露。
+                    val currentId = currentMediaItem?.mediaId
+                    precachedPlayers.entries.removeIf { (videoId, cached) ->
+                        if (videoId != currentId && videoId !in desiredIds) {
+                            Logger.d(TAG, "Evicting stale precache for $videoId")
+                            cleanupPlayerInternal(cached.player)
+                            true
+                        } else {
+                            false
                         }
                     }
 
@@ -3336,7 +3358,18 @@ internal class CrossfadeExoPlayerAdapter(
                             val pwf = createExoPlayerInstance()
                             pwf.player.setMediaItem(mediaItem.toMedia3MediaItem())
                             pwf.player.prepare()
-                            precachedPlayers[mediaItem.mediaId] = PrecachedPlayer(pwf.player, mediaItem, pwf.filter)
+                            // putIfAbsent:trigger 会在恢复队列等场景毫秒级连发数次(实测 3ms 内
+                            // 三个),两个协程都可能在对方 put 之前通过 containsKey 检查各自建
+                            // 播放器——裸 put 覆盖掉赢家时输家永不 release,又一个播放器级泄漏。
+                            val loser =
+                                precachedPlayers.putIfAbsent(
+                                    mediaItem.mediaId,
+                                    PrecachedPlayer(pwf.player, mediaItem, pwf.filter),
+                                )
+                            if (loser != null) {
+                                Logger.w(TAG, "Concurrent precache race for ${mediaItem.mediaId}, discarding duplicate")
+                                cleanupPlayerInternal(pwf.player)
+                            }
                             Logger.d(TAG, "Precached player for index $idx")
                         } catch (e: Exception) {
                             Logger.e(TAG, "Precaching error for $idx: ${e.message}")
