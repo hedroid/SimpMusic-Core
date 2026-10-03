@@ -254,6 +254,7 @@ private fun provideResolvingDataSourceFactory(
     playerCache: SimpleCache,
     dataStoreManager: DataStoreManager,
     streamRepository: StreamRepository,
+    context: android.content.Context,
     coroutineScope: CoroutineScope,
 ): DataSource.Factory {
     return ResolvingDataSource.Factory(cacheDataSourceFactory) { dataSpec ->
@@ -282,9 +283,20 @@ private fun provideResolvingDataSourceFactory(
                 } else {
                     song?.downloadedFilePath ?: song?.downloadedVideoFilePath
                 }
-            if (localFile != null && java.io.File(localFile).exists()) {
+            // canRead 而非 exists:归属判定失效的文件(OEM FUSE 怪癖/外部恢复,视频 mp4
+            // 实测)exists() 通过但 FileDataSource open 被拒 EACCES——装载错误会以 legacy
+            // "网络错误" toast 冒出来极具误导性。直读不行先试 MediaStore content://
+            // (app 自贡献的行凭归属恒可读,不受路径层怪癖影响,DefaultDataSource 原生
+            // 支持 content scheme 且可 seek);再不行放弃本地分支走网络,歌还能播。
+            if (localFile != null && java.io.File(localFile).let { it.exists() && it.canRead() }) {
                 Logger.w("Stream", "Local file for $mediaId: $localFile")
                 return@Factory dataSpec.withUri(android.net.Uri.fromFile(java.io.File(localFile)))
+            }
+            if (localFile != null && java.io.File(localFile).exists()) {
+                contentUriForPath(context, localFile)?.let { uri ->
+                    Logger.w("Stream", "Local file via MediaStore for $mediaId: $localFile")
+                    return@Factory dataSpec.withUri(uri)
+                }
             }
         }.onFailure { Logger.w("Stream", "local-file lookup failed for $mediaId: ${it.message}") }
         val fullyCached =
@@ -389,6 +401,32 @@ private class UnresolvableTrackException(
     mediaId: String,
 ) : java.io.IOException("Track $mediaId is confirmed unresolvable this session")
 
+/** 按绝对路径查 MediaStore 行(Audio/Video 两集合),返回 content 条目 URI;无行=null */
+private fun contentUriForPath(
+    context: android.content.Context,
+    path: String,
+): android.net.Uri? =
+    runCatching {
+        val resolver = context.contentResolver
+        listOf(
+            android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+            android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+        ).forEach { collection ->
+            resolver.query(
+                collection,
+                arrayOf(android.provider.MediaStore.MediaColumns._ID),
+                "${android.provider.MediaStore.MediaColumns.DATA}=?",
+                arrayOf(path),
+                null,
+            )?.use { c ->
+                if (c.moveToFirst()) {
+                    return android.net.Uri.withAppendedPath(collection, c.getLong(0).toString())
+                }
+            }
+        }
+        null
+    }.getOrNull()
+
 /**
  * 已实证不可解的歌与直播流探测异常都不重试(重试必败,默认退避梯只是白等几秒);
  * 其余 IO 错误沿用默认策略(网络抖动的退避重试仍是有效语义)。上游的
@@ -448,6 +486,7 @@ private fun provideMediaSourceFactory(
             playerCache,
             dataStoreManager,
             streamRepository,
+            context,
             coroutineScope,
         ),
         provideExtractorFactory(),
