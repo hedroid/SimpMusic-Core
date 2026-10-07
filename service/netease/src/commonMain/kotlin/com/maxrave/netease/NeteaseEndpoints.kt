@@ -1202,6 +1202,10 @@ suspend fun NeteaseClient.djRadioPrograms(
                 "/dj/program/byradio",
                 mapOf("radioId" to radioId, "limit" to limit, "offset" to offset, "asc" to asc),
             )
+        // 业务 code 必须看(2026-10-07):风控形态之一是 code=405"操作频繁"(HTTP 200 包着),
+        // 不校验会被解析成"成功空列表",下架电台(declared programCount 未知)会把风控误显成
+        // "暂无节目";校验后落 Result.failure,UI 走"拉取失败+重试"分支与真没内容区分
+        check((body["code"]?.nLong() ?: 200L) == 200L) { "byradio code=${body["code"]}" }
         val programs = body.array("programs")?.mapNotNull { it.toDjProgramOrNull() }.orEmpty()
         val more = (body["more"] as? JsonPrimitive)?.booleanOrNull ?: false
         programs to more
