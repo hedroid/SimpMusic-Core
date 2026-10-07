@@ -1203,8 +1203,9 @@ suspend fun NeteaseClient.djRadioPrograms(
                 mapOf("radioId" to radioId, "limit" to limit, "offset" to offset, "asc" to asc),
             )
         // 业务 code 必须看(2026-10-07):风控形态之一是 code=405"操作频繁"(HTTP 200 包着),
-        // 不校验会被解析成"成功空列表",下架电台(declared programCount 未知)会把风控误显成
-        // "暂无节目";校验后落 Result.failure,UI 走"拉取失败+重试"分支与真没内容区分
+        // 不校验会被解析成"成功空列表"。注意:成功空响应(200+programs 空+count=0)是内容
+        // 权威——电台元数据 programCount 会因下架删内容变脏(单田芳评书探针实证:详情声明
+        // 100 期,列表稳定空),调用方不得拿声明数反推"空=被限流"
         check((body["code"]?.nLong() ?: 200L) == 200L) { "byradio code=${body["code"]}" }
         val programs = body.array("programs")?.mapNotNull { it.toDjProgramOrNull() }.orEmpty()
         val more = (body["more"] as? JsonPrimitive)?.booleanOrNull ?: false
